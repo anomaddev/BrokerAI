@@ -130,6 +130,14 @@ async def run_orchestrator() -> None:
         loop.add_signal_handler(sig, _handle_signal)
 
     await orchestrator.start_all()
+
+    try:
+        from brokerai.db.indexes import ensure_indexes
+
+        await ensure_indexes()
+    except Exception:
+        logger.warning("MongoDB unavailable — indexes not ensured", exc_info=True)
+
     heartbeat_task = asyncio.create_task(orchestrator.heartbeat_loop())
     control_task = asyncio.create_task(orchestrator.control_loop())
 

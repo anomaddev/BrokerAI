@@ -1,7 +1,7 @@
 [Unit]
 Description=BrokerAI Orchestrator
-After=network-online.target
-Wants=network-online.target
+After=network-online.target mongod.service
+Wants=network-online.target mongod.service
 
 [Service]
 Type=simple

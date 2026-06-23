@@ -1,23 +1,30 @@
 # BrokerAI
 
-Multi-bot trading platform for Proxmox LXC. BrokerAI orchestrates sub-bots (Research, Execution, Analysis), exposes a web dashboard, and is managed via the `brokerai` CLI.
+Multi-bot trading platform for Proxmox LXC. BrokerAI orchestrates sub-bots, caches analysis data in local MongoDB, exposes an auth-gated React dashboard, and is managed via the `brokerai` CLI.
+
+**Alpha 0.0.1** — structural scaffold. See [`.prompts/BrokerAI-Memory.md`](.prompts/BrokerAI-Memory.md) for current project context.
 
 ## Overview
 
 | Component | Description |
 |-----------|-------------|
 | **Orchestrator** | Manages sub-bot lifecycle, heartbeat, and control IPC |
-| **Web UI** | FastAPI dashboard + REST API on port **1989** |
+| **Web UI** | React dashboard + REST API on port **1989** (auth required) |
 | **CLI** | `brokerai` command for status, bot control, updates, and services |
+| **MongoDB** | Local cache for market data, research, and analysis results |
 | **Auto-update** | Systemd timer checks GitHub every 6 hours |
 
-### Sub-bots
+### Sub-bots (Alpha taxonomy)
 
-| Bot | Role |
-|-----|------|
-| `research` | Market research (stub) |
-| `execution` | Trade execution (stub) |
-| `analysis` | Post-trade analysis (stub) |
+| Bot | Role | Status |
+|-----|------|--------|
+| `brokers` | Routes actions to asset-class sub-brokers | stub |
+| `researcher` | Daily research / news for model input | stub |
+| `data_manager` | Caches market data from APIs | stub |
+| `data_analyzer` | Analyzes cached data; parallel exit-signal monitors | stub |
+| `executor` | Executes trades when requested by brokers | stub |
+
+Sub-brokers under **Brokers**: crypto, forex, stocks, futures, options (stubs).
 
 ## Architecture
 
@@ -26,8 +33,17 @@ Proxmox Host
   └── ct/brokerai.sh  →  LXC Container (Debian 13)
                             ├── brokerai-orchestrator.service
                             ├── brokerai-web.service  (:1989)
+                            ├── mongod  (:27017, localhost)
                             ├── brokerai-update.timer
                             └── /usr/local/bin/brokerai
+```
+
+**Data flow:**
+
+```
+Researcher ──► research_cache ──┐
+                                 ├──► Data Analyzer ──► analysis_results ──► Brokers ──► Executor
+Data Manager ──► market_data ────┘
 ```
 
 **Runtime paths (container):**
@@ -36,16 +52,48 @@ Proxmox Host
 |------|---------|
 | `/opt/brokerai` | Application code + Python venv |
 | `/etc/brokerai/config.env` | Configuration |
-| `/var/lib/brokerai/data/` | Heartbeat, control IPC |
+| `/var/lib/brokerai/data/` | Heartbeat, control IPC, auth |
 | `/var/log/brokerai/` | Update and application logs |
+| `/var/lib/mongodb` | MongoDB data files |
 
-Control flow:
+## First-run setup
 
+**Proxmox install:** When running [`ct/brokerai.sh`](ct/brokerai.sh), after you pick **Default Install** (or Advanced / App Defaults), a **BrokerAI Setup** screen asks for an optional admin account before the container is created. If you configure it there, the Web UI opens straight to login.
+
+Pre-set credentials without prompts:
+
+```bash
+BROKERAI_ADMIN_USER=admin BROKERAI_ADMIN_PASSWORD='YourStr0ng!Pass' \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/ct/brokerai.sh)"
 ```
-brokerai bots start/stop  →  data/control/inbox/  →  orchestrator  →  data/control/outbox/
-brokerai status           →  reads heartbeat.json
-Web UI / API              →  reads heartbeat.json (bot start/stop via API are stubs)
+
+**Standalone install:** Same env vars work with [`scripts/install-lxc.sh`](scripts/install-lxc.sh).
+
+1. Open **http://\<container-ip\>:1989**
+2. If no admin was pre-configured, complete the setup wizard (username + strong password).
+3. Otherwise, sign in with the credentials you set at install time.
+4. SSH with the same username and password: `ssh youruser@<container-ip>`
+
+## MongoDB
+
+Local MongoDB binds to **127.0.0.1:27017** only. Browse data with [MongoDB Compass](https://www.mongodb.com/products/compass):
+
+```bash
+ssh -L 27017:127.0.0.1:27017 youruser@<container-ip>
 ```
+
+Connect Compass to `mongodb://127.0.0.1:27017/brokerai`.
+
+| Collection | Purpose |
+|------------|---------|
+| `market_data` | Cached OHLCV / API payloads |
+| `research_cache` | Daily research summaries |
+| `analysis_results` | Analyzer output for brokers |
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BROKERAI_MONGODB_URI` | `mongodb://127.0.0.1:27017` | MongoDB connection |
+| `BROKERAI_MONGODB_DB` | `brokerai` | Database name |
 
 ## Installation
 
@@ -57,131 +105,70 @@ Run on the **Proxmox host**:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/ct/brokerai.sh)"
 ```
 
-Uses [community-scripts build.func](https://github.com/community-scripts/ProxmoxVE). Default resources: 4 CPU, 8 GB RAM, 32 GB disk.
-
 ### Option 2: Standalone (existing container or VM)
 
-Run **inside** Debian/Ubuntu:
+Run **inside** Debian/Ubuntu as root:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/scripts/install-lxc.sh)"
 ```
 
-```bash
-bash scripts/install-lxc.sh --branch develop
-bash scripts/install-lxc.sh --repo https://github.com/you/BrokerAI
-bash scripts/install-lxc.sh --skip-clone   # use files already in /opt/brokerai
-```
-
-### Post-install
-
-1. Open **http://\<container-ip\>:1989**
-2. Verify: `brokerai status`
-3. Config lives at `/etc/brokerai/config.env` (created automatically on first install)
+Installs MongoDB, Node.js (frontend build), Python venv, and systemd units.
 
 ## CLI
 
-The primary way to manage BrokerAI. Installed at `/usr/local/bin/brokerai`.
-
 ```bash
-brokerai help                    # all commands
-brokerai help bots               # help for a command group
-brokerai status                  # orchestrator + bot status
-brokerai bots list               # list sub-bot states
-brokerai bots stop research      # stop a sub-bot
-brokerai bots start research     # start a sub-bot
-brokerai update check            # check for updates (exit 0=current, 1=available, 2=error)
-brokerai update apply            # apply updates (requires root)
-brokerai services status         # systemd service status
-brokerai services restart        # restart orchestrator + web UI (requires root)
-brokerai version                 # package + installed commit
+brokerai help
+brokerai status
+brokerai bots list
+brokerai bots stop researcher
+brokerai bots start researcher
+brokerai update check
+brokerai services restart   # root
+brokerai version
 ```
 
-Add `--json` to `status`, `bots`, and `version` for scripting.
-
-Bot control uses **direct file IPC** — the orchestrator must be running. The web UI is not required.
-
-**Legacy shortcuts** (still available):
-
-```bash
-brokerai-check-update            # same as brokerai update check
-sudo /opt/brokerai/scripts/update-now.sh
-```
+Add `--json` to `status`, `bots`, and `version`.
 
 ## Configuration
 
-On the container, edit `/etc/brokerai/config.env`. For local development, use `.env` in the repo root.
-
-```bash
-nano /etc/brokerai/config.env
-brokerai services restart
-```
+Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BROKERAI_SECRET_KEY` | _(generated on install)_ | Application secret |
+| `BROKERAI_SECRET_KEY` | _(generated on install)_ | Session signing secret |
 | `BROKERAI_WEB_PORT` | `1989` | Web UI port |
-| `BROKERAI_LOG_LEVEL` | `INFO` | Log verbosity (`DEBUG`, `INFO`, `WARNING`) |
-| `BROKERAI_ENABLED_BOTS` | `research,execution,analysis` | Comma-separated active bots |
-| `BROKERAI_AUTO_UPDATE` | `true` | Enable automatic updates |
-| `BROKERAI_REPO` | `https://github.com/anomaddev/BrokerAI` | Git repository URL |
-| `BROKERAI_UPDATE_TRACK` | `branch` | `branch`, `release`, or `latest-release` |
-| `BROKERAI_BRANCH` | `main` | Branch to track (when `UPDATE_TRACK=branch`) |
-| `BROKERAI_RELEASE` | _(empty)_ | Tag to pin (when `UPDATE_TRACK=release`) |
-| `BROKERAI_DATA_DIR` | `/var/lib/brokerai/data` | Runtime state directory |
-| `BROKERAI_LOG_DIR` | `/var/log/brokerai` | Log directory |
-
-### Update tracks (SPM-style)
-
-| Mode | Config | Behavior |
-|------|--------|----------|
-| `branch` | `BROKERAI_BRANCH=main` | Latest commit on branch |
-| `release` | `BROKERAI_RELEASE=0.1.0` | Pinned to tag |
-| `latest-release` | _(none)_ | Newest GitHub release |
+| `BROKERAI_ENABLED_BOTS` | `brokers,researcher,data_manager,data_analyzer,executor` | Active bots |
+| `BROKERAI_MONGODB_URI` | `mongodb://127.0.0.1:27017` | MongoDB URI |
+| `BROKERAI_MONGODB_DB` | `brokerai` | MongoDB database |
+| `BROKERAI_DATA_DIR` | `/var/lib/brokerai/data` | Runtime state |
+| `BROKERAI_LOG_DIR` | `/var/log/brokerai` | Logs |
 
 Template: [`config/config.env.example`](config/config.env.example)
 
-## Updating
+### Migrating from pre-Alpha bot names
 
-Auto-update runs **15 minutes after boot**, then every **6 hours**.
-
-```bash
-brokerai update check            # check only
-sudo brokerai update apply       # apply now
-tail -f /var/log/brokerai/update.log
-systemctl status brokerai-update.timer
-```
-
-**Web UI:** click **Update Now** in the dashboard header.
-
-**API:**
+Update config:
 
 ```bash
-curl -X POST http://localhost:1989/api/update
-curl http://localhost:1989/api/update/status
+BROKERAI_ENABLED_BOTS=brokers,researcher,data_manager,data_analyzer,executor
 ```
-
-**Proxmox update mode** (re-run ct script on existing container):
-
-```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/ct/brokerai.sh)"
-```
-
-Set `BROKERAI_AUTO_UPDATE=false` to disable the timer.
 
 ## Web API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Dashboard |
-| `/api/health` | GET | Health, version, update pin |
-| `/api/bots` | GET | Sub-bot statuses |
-| `/api/bots/{name}/start` | POST | Start sub-bot (stub) |
-| `/api/bots/{name}/stop` | POST | Stop sub-bot (stub) |
-| `/api/update` | POST | Trigger update |
-| `/api/update/status` | GET | Installed version + update log |
-
-Use `brokerai bots start/stop` for direct bot control until the API is wired to IPC.
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `/api/auth/setup/status` | No | Setup complete flag |
+| `/api/auth/setup` | No | First-run account creation |
+| `/api/auth/login` | No | Login |
+| `/api/auth/logout` | Yes | Logout |
+| `/api/auth/me` | Yes | Current user |
+| `/api/health` | No | Health, version, MongoDB status |
+| `/api/bots` | Yes | Sub-bot statuses |
+| `/api/bots/{name}/start` | Yes | Start bot (IPC) |
+| `/api/bots/{name}/stop` | Yes | Stop bot (IPC) |
+| `/api/system/db` | Yes | MongoDB collection counts |
+| `/api/update` | Yes | Trigger update |
 
 ## Development
 
@@ -193,75 +180,45 @@ source venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 
-cp config/config.env.example .env   # or create .env manually
+cp config/config.env.example .env
 mkdir -p data logs
-```
 
-Run in two terminals:
+# MongoDB (Docker)
+docker run -d --name brokerai-mongo -p 27017:27017 mongo:7
 
-```bash
-# Terminal 1 — orchestrator
+# Frontend
+cd frontend && npm install && npm run dev   # :5173, proxies /api → :1989
+
+# Backend (two terminals)
 brokerai run orchestrator
-
-# Terminal 2 — web UI
 uvicorn brokerai.web.app:app --reload --port 1989
 ```
 
-```bash
-brokerai status
-brokerai bots list
-brokerai bots stop research
-```
-
-Local `.env` overrides container paths (`BROKERAI_DATA_DIR=data`, `BROKERAI_LOG_DIR=logs`).
-
-**Dev update** (no systemd):
+Build frontend for production:
 
 ```bash
-./scripts/update-now.sh
+./scripts/build-frontend.sh
 ```
 
 ## Project structure
 
 ```
 BrokerAI/
-├── ct/brokerai.sh                  Proxmox host script
-├── install/brokerai-install.sh     In-container install
-├── scripts/
-│   ├── install-lxc.sh              Standalone installer
-│   ├── auto-update.sh              Update logic
-│   ├── check-update.sh             Read-only update check
-│   ├── update-now.sh               Manual update trigger
-│   └── lib/update-track.sh         Branch/release track helpers
+├── frontend/                       React + Vite dashboard
 ├── src/brokerai/
-│   ├── bots/                       Sub-bot modules
+│   ├── auth/                       Setup, login, sessions
+│   ├── bots/                       Sub-bot modules (Alpha taxonomy)
+│   ├── db/                         MongoDB client + repositories
 │   ├── cli/                        brokerai command
 │   ├── core/                       Orchestrator + control IPC
-│   └── web/                        FastAPI app + dashboard
+│   └── web/                        FastAPI + static SPA
+├── scripts/
+│   ├── install-lxc.sh
+│   ├── build-frontend.sh
+│   ├── provision-admin-user.sh
+│   └── lib/install-mongodb.sh
 ├── config/
-│   ├── config.env.example          Config template
-│   └── sudoers/brokerai-update     Web UI update permissions
-└── systemd/                        Service unit files
-```
-
-## Upgrade an existing install
-
-If your container was installed before CLI or auto-update support:
-
-```bash
-pct enter 108                        # your container ID
-cd /opt/brokerai && git pull
-pip install -e .
-chmod +x scripts/{auto-update,update-now,check-update}.sh
-cp systemd/*.service systemd/*.timer /etc/systemd/system/
-cp config/sudoers/brokerai-update /etc/sudoers.d/brokerai-update
-chmod 440 /etc/sudoers.d/brokerai-update
-ln -sf /opt/brokerai/venv/bin/brokerai /usr/local/bin/brokerai
-ln -sf /opt/brokerai/scripts/check-update.sh /usr/local/bin/brokerai-check-update
-systemctl daemon-reload
-systemctl enable --now brokerai-update.timer
-systemctl restart brokerai-orchestrator brokerai-web
-brokerai status
+└── systemd/
 ```
 
 ## License

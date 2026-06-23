@@ -1,0 +1,1 @@
+brokerai ALL=(root) NOPASSWD: /opt/brokerai/scripts/provision-admin-user.sh *

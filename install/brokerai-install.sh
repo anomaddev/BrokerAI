@@ -29,8 +29,18 @@ $STD apt-get install -y \
   python3-venv \
   python3-pip \
   build-essential \
-  openssl
+  openssl \
+  openssh-server \
+  gnupg \
+  ca-certificates
 msg_ok "Installed Dependencies"
+
+msg_info "Installing Node.js"
+if ! command -v npm &>/dev/null; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  $STD apt-get install -y nodejs
+fi
+msg_ok "Node.js ready"
 
 msg_info "Creating brokerai system user"
 if ! id brokerai &>/dev/null; then
@@ -49,6 +59,11 @@ else
 fi
 msg_ok "Cloned BrokerAI"
 
+msg_info "Installing MongoDB"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
+$STD bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
+msg_ok "MongoDB ready"
+
 msg_info "Setting up Python virtual environment"
 cd "${BROKERAI_INSTALL_DIR}"
 $STD python3 -m venv venv
@@ -56,6 +71,11 @@ $STD "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install --upgrade pip
 $STD "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install -r requirements.txt
 $STD "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install -e .
 msg_ok "Python environment ready"
+
+msg_info "Building frontend"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/build-frontend.sh"
+$STD "${BROKERAI_INSTALL_DIR}/scripts/build-frontend.sh"
+msg_ok "Frontend built"
 
 msg_info "Configuring BrokerAI"
 mkdir -p "${BROKERAI_CONFIG_DIR}" "${BROKERAI_DATA_DIR}" "${BROKERAI_LOG_DIR}"
@@ -81,11 +101,15 @@ cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-update.timer" /etc/systemd/system/
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/auto-update.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/update-now.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/provision-admin-user.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
 ln -sf "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
 ln -sf "${BROKERAI_INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
-chmod 440 /etc/sudoers.d/brokerai-update
+cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
+chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin
 visudo -cf /etc/sudoers.d/brokerai-update
+visudo -cf /etc/sudoers.d/brokerai-admin
 $STD systemctl daemon-reload
 $STD systemctl enable -q --now brokerai-orchestrator brokerai-web brokerai-update.timer
 msg_ok "Installed systemd services"
@@ -103,6 +127,14 @@ else
   msg_error "One or more BrokerAI services failed to start"
   journalctl -u brokerai-orchestrator -u brokerai-web -n 20 --no-pager
   exit 1
+fi
+
+if [[ -n "${BROKERAI_ADMIN_USER:-}" && -n "${BROKERAI_ADMIN_PASSWORD:-}" ]]; then
+  msg_info "Bootstrapping BrokerAI admin account"
+  chmod +x "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
+  export BROKERAI_ADMIN_USER BROKERAI_ADMIN_PASSWORD
+  $STD "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
+  msg_ok "Admin account configured"
 fi
 
 motd_ssh

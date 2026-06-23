@@ -40,6 +40,10 @@ Options:
   --branch NAME    Git branch to install (default: ${BROKERAI_BRANCH})
   --skip-clone     Skip git clone; use files already in ${BROKERAI_INSTALL_DIR}
   -h, --help       Show this help message
+
+Optional environment (skip web setup wizard):
+  BROKERAI_ADMIN_USER       Admin username (lowercase, 3-32 chars)
+  BROKERAI_ADMIN_PASSWORD   Strong password (12+ chars, mixed case, digit, special)
 EOF
 }
 
@@ -89,8 +93,16 @@ apt-get update -qq
 
 msg_info "Installing dependencies"
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  curl wget git python3 python3-venv python3-pip build-essential openssl
+  curl wget git python3 python3-venv python3-pip build-essential openssl \
+  openssh-server gnupg ca-certificates
 msg_ok "Dependencies installed"
+
+msg_info "Installing Node.js (for frontend build)"
+if ! command -v npm >/dev/null 2>&1; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs
+fi
+msg_ok "Node.js ready"
 
 msg_info "Creating brokerai system user"
 if ! id brokerai &>/dev/null; then
@@ -116,6 +128,11 @@ else
   msg_ok "Cloned BrokerAI"
 fi
 
+msg_info "Installing MongoDB"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
+bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
+msg_ok "MongoDB ready"
+
 msg_info "Setting up Python virtual environment"
 cd "${BROKERAI_INSTALL_DIR}"
 python3 -m venv venv
@@ -123,6 +140,11 @@ python3 -m venv venv
 "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install -r requirements.txt -q
 "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install -e . -q
 msg_ok "Python environment ready"
+
+msg_info "Building frontend"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/build-frontend.sh"
+"${BROKERAI_INSTALL_DIR}/scripts/build-frontend.sh"
+msg_ok "Frontend built"
 
 msg_info "Configuring BrokerAI"
 mkdir -p "${BROKERAI_CONFIG_DIR}" "${BROKERAI_DATA_DIR}" "${BROKERAI_LOG_DIR}"
@@ -148,11 +170,15 @@ cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-update.timer" /etc/systemd/system/
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/auto-update.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/update-now.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/provision-admin-user.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
 ln -sf "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
 ln -sf "${BROKERAI_INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
-chmod 440 /etc/sudoers.d/brokerai-update
+cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
+chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin
 visudo -cf /etc/sudoers.d/brokerai-update
+visudo -cf /etc/sudoers.d/brokerai-admin
 systemctl daemon-reload
 systemctl enable --now brokerai-orchestrator brokerai-web brokerai-update.timer
 msg_ok "Systemd services installed"
@@ -168,6 +194,13 @@ if systemctl is-active --quiet brokerai-orchestrator && systemctl is-active --qu
   msg_ok "BrokerAI services running"
 else
   msg_error "One or more BrokerAI services failed to start. Check: journalctl -u brokerai-orchestrator -u brokerai-web"
+fi
+
+if [[ -n "${BROKERAI_ADMIN_USER:-}" && -n "${BROKERAI_ADMIN_PASSWORD:-}" ]]; then
+  msg_info "Bootstrapping BrokerAI admin account"
+  export BROKERAI_ADMIN_USER BROKERAI_ADMIN_PASSWORD
+  "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
+  msg_ok "Admin account configured"
 fi
 
 WEB_PORT=$(grep -E '^BROKERAI_WEB_PORT=' "${BROKERAI_CONFIG_DIR}/config.env" | cut -d= -f2 || echo "1989")

@@ -126,9 +126,14 @@ _brokerai_checkout_target 2>>"${LOG_FILE}"
 "${INSTALL_DIR}/venv/bin/pip" install -r requirements.txt -q 2>>"${LOG_FILE}"
 "${INSTALL_DIR}/venv/bin/pip" install -e . -q 2>>"${LOG_FILE}"
 
+if [[ -x "${INSTALL_DIR}/scripts/build-frontend.sh" ]] && command -v npm &>/dev/null; then
+  "${INSTALL_DIR}/scripts/build-frontend.sh" >>"${LOG_FILE}" 2>&1 || log "WARN: frontend build failed"
+fi
+
 chmod +x "${INSTALL_DIR}/scripts/auto-update.sh"
 chmod +x "${INSTALL_DIR}/scripts/update-now.sh"
 chmod +x "${INSTALL_DIR}/scripts/check-update.sh"
+chmod +x "${INSTALL_DIR}/scripts/provision-admin-user.sh" 2>/dev/null || true
 ln -sf "${INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
 ln -sf "${INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 
@@ -137,8 +142,10 @@ cp "${INSTALL_DIR}/systemd/brokerai-web.service" /etc/systemd/system/
 cp "${INSTALL_DIR}/systemd/brokerai-update.service" /etc/systemd/system/
 cp "${INSTALL_DIR}/systemd/brokerai-update.timer" /etc/systemd/system/
 cp "${INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
-chmod 440 /etc/sudoers.d/brokerai-update
+cp "${INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
+chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin
 visudo -cf /etc/sudoers.d/brokerai-update 2>>"${LOG_FILE}" || true
+visudo -cf /etc/sudoers.d/brokerai-admin 2>>"${LOG_FILE}" || true
 
 chown -R brokerai:brokerai "${INSTALL_DIR}" "${LOG_DIR}" /var/lib/brokerai/data 2>/dev/null || true
 
