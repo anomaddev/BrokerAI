@@ -33,6 +33,11 @@
       border-bottom: 1px solid var(--border);
     }
     h1 { font-size: 1.5rem; font-weight: 600; }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
     .health {
       display: flex;
       align-items: center;
@@ -89,17 +94,32 @@
     }
     button:hover { border-color: var(--accent); color: var(--accent); }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.primary {
+      border-color: var(--accent);
+      background: rgba(59, 130, 246, 0.12);
+      color: var(--accent);
+    }
+    .update-msg {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+      min-height: 1rem;
+    }
     .meta { font-size: 0.75rem; color: var(--muted); margin-top: 0.75rem; }
   </style>
 </head>
 <body>
   <header>
     <h1>BrokerAI</h1>
-    <div class="health">
-      <span class="dot" id="health-dot"></span>
-      <span id="health-text">Loading...</span>
+    <div class="header-actions">
+      <button class="primary" id="update-btn" onclick="triggerUpdate()">Update Now</button>
+      <div class="health">
+        <span class="dot" id="health-dot"></span>
+        <span id="health-text">Loading...</span>
+      </div>
     </div>
   </header>
+  <div class="update-msg" id="update-msg"></div>
   <div class="grid" id="bots-grid"></div>
 
   <script>
@@ -115,6 +135,24 @@
     async function controlBot(name, action) {
       await fetchJSON(`/api/bots/${name}/${action}`, { method: 'POST' });
       await refresh();
+    }
+
+    async function triggerUpdate() {
+      const btn = document.getElementById('update-btn');
+      const msg = document.getElementById('update-msg');
+      btn.disabled = true;
+      msg.textContent = 'Starting update...';
+      try {
+        const res = await fetch('/api/update', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Update failed');
+        msg.textContent = 'Update started — services will restart shortly.';
+        setTimeout(refresh, 3000);
+      } catch (err) {
+        msg.textContent = `Update failed: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     function renderBots(bots) {
@@ -142,10 +180,14 @@
         const text = document.getElementById('health-text');
         if (health.orchestrator_running) {
           dot.classList.remove('offline');
-          text.textContent = `v${health.version} — Orchestrator running`;
+          const pin = health.installed_pin || health.configured_pin || '';
+          const rev = health.installed_version ? ` @ ${health.installed_version}` : '';
+          text.textContent = `v${health.version}${rev}${pin ? ` (${pin})` : ''} — running`;
         } else {
           dot.classList.add('offline');
-          text.textContent = `v${health.version} — Orchestrator offline`;
+          const pin = health.configured_pin || '';
+          const rev = health.installed_version ? ` @ ${health.installed_version}` : '';
+          text.textContent = `v${health.version}${rev}${pin ? ` (${pin})` : ''} — offline`;
         }
         renderBots(botsData.bots);
       } catch (err) {

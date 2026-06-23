@@ -51,27 +51,13 @@ function update_script() {
   fi
 
   msg_info "Updating ${APP}"
-  cd /opt/brokerai
-  $STD git fetch origin "${BROKERAI_BRANCH}"
-  $STD git checkout "${BROKERAI_BRANCH}"
-  $STD git pull origin "${BROKERAI_BRANCH}"
-
-  RELEASE=$(git rev-parse --short HEAD)
-  if [[ -f /opt/${APP}_version.txt ]] && [[ "${RELEASE}" == "$(cat /opt/${APP}_version.txt)" ]]; then
-    msg_ok "No update required. ${APP} is already at ${RELEASE}."
+  if [[ -x /opt/brokerai/scripts/auto-update.sh ]]; then
+    /opt/brokerai/scripts/auto-update.sh --force
+  else
+    msg_error "auto-update.sh not found at /opt/brokerai/scripts/auto-update.sh"
     exit
   fi
-
-  $STD /opt/brokerai/venv/bin/pip install -r requirements.txt
-  $STD /opt/brokerai/venv/bin/pip install -e .
-
-  cp /opt/brokerai/systemd/brokerai-orchestrator.service /etc/systemd/system/
-  cp /opt/brokerai/systemd/brokerai-web.service /etc/systemd/system/
-  $STD systemctl daemon-reload
-  $STD systemctl restart brokerai-orchestrator brokerai-web
-
-  echo "${RELEASE}" >/opt/${APP}_version.txt
-  msg_ok "Updated ${APP} to ${RELEASE}"
+  msg_ok "Updated ${APP}"
   exit
 }
 
@@ -84,4 +70,4 @@ build_container
 description
 
 msg_ok "Completed Successfully!\n"
-echo -e "${CREATING}${GN} BrokerAI Web UI: ${CL}http://${LOCAL_IP}:${var_port}${CL}\n"
+echo -e "${CREATING}${GN} BrokerAI Web UI: ${CL}http://${IP}:${var_port}${CL}\n"

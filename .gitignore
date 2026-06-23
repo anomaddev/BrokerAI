@@ -14,6 +14,7 @@ config.env
 
 # Runtime data
 data/
+logs/
 *.log
 
 # IDE
@@ -21,3 +22,6 @@ data/
 .vscode/
 *.swp
 .DS_Store
+
+# Prompts
+.prompts/

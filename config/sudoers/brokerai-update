@@ -1,0 +1,3 @@
+# Allow the web UI (brokerai user) to trigger manual updates without a password.
+brokerai ALL=(root) NOPASSWD: /bin/systemctl start brokerai-update.service
+brokerai ALL=(root) NOPASSWD: /opt/brokerai/scripts/auto-update.sh --force

@@ -76,12 +76,23 @@ msg_ok "Permissions set"
 msg_info "Installing systemd services"
 cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-orchestrator.service" /etc/systemd/system/
 cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-web.service" /etc/systemd/system/
+cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-update.service" /etc/systemd/system/
+cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-update.timer" /etc/systemd/system/
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/auto-update.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/update-now.sh"
+cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
+chmod 440 /etc/sudoers.d/brokerai-update
+visudo -cf /etc/sudoers.d/brokerai-update
 $STD systemctl daemon-reload
-$STD systemctl enable -q --now brokerai-orchestrator brokerai-web
+$STD systemctl enable -q --now brokerai-orchestrator brokerai-web brokerai-update.timer
 msg_ok "Installed systemd services"
 
-RELEASE="$(cd "${BROKERAI_INSTALL_DIR}" && git rev-parse --short HEAD 2>/dev/null || echo "main")"
-echo "${RELEASE}" >"/opt/${APP}_version.txt"
+# shellcheck source=/dev/null
+set -a && source "${BROKERAI_CONFIG_DIR}/config.env" && set +a
+VERSION_FILE="/opt/${APP}_version.txt"
+# shellcheck source=scripts/lib/update-track.sh
+source "${BROKERAI_INSTALL_DIR}/scripts/lib/update-track.sh"
+_brokerai_write_install_lock_from_config "$(cd "${BROKERAI_INSTALL_DIR}" && git rev-parse HEAD)"
 
 if systemctl is-active --quiet brokerai-orchestrator && systemctl is-active --quiet brokerai-web; then
   msg_ok "BrokerAI services running"

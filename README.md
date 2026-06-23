@@ -16,6 +16,8 @@ Two systemd services run inside the container:
 - **brokerai-orchestrator** — manages sub-bot lifecycle and writes heartbeat state
 - **brokerai-web** — FastAPI web UI and REST API on port 1989
 
+A systemd timer (**brokerai-update.timer**) checks GitHub every 6 hours and applies updates automatically.
+
 ## Installation
 
 ### Option 1: Proxmox community-scripts format (full LXC creation)
@@ -69,6 +71,8 @@ systemctl restart brokerai-orchestrator brokerai-web
 | `/api/bots` | GET | Status of all sub-bots |
 | `/api/bots/{name}/start` | POST | Start a sub-bot (stub) |
 | `/api/bots/{name}/stop` | POST | Stop a sub-bot (stub) |
+| `/api/update` | POST | Trigger manual update |
+| `/api/update/status` | GET | Installed version + recent update log |
 
 ## Project Structure
 
@@ -103,18 +107,93 @@ Set `BROKERAI_DATA_DIR` and `BROKERAI_LOG_DIR` in a local `.env` or export overr
 
 ## Updating
 
+### Automatic (default)
+
+Auto-update is enabled by default. A timer runs **15 minutes after boot**, then every **6 hours**:
+
+```bash
+# Timer status
+systemctl status brokerai-update.timer
+
+# View update log
+tail -f /var/log/brokerai/update.log
+
+# Trigger an update check now
+systemctl start brokerai-update.service
+
+# Or use the convenience script
+sudo /opt/brokerai/scripts/update-now.sh
+```
+
+**From the web UI:** click **Update Now** in the dashboard header.
+
+**From the API:**
+```bash
+curl -X POST http://localhost:1989/api/update
+curl http://localhost:1989/api/update/status
+```
+
+**Local development** (no systemd):
+```bash
+./scripts/update-now.sh   # git pull + pip install -e .
+```
+
+Configure in `/etc/brokerai/config.env`:
+
+```env
+BROKERAI_AUTO_UPDATE=true
+BROKERAI_REPO=https://github.com/anomaddev/BrokerAI
+
+# Update track (Swift Package Manager-style)
+BROKERAI_UPDATE_TRACK=branch          # branch | release | latest-release
+BROKERAI_BRANCH=main                  # used when track=branch
+BROKERAI_RELEASE=0.1.0                # used when track=release
+```
+
+**Track modes:**
+
+| Mode | Config | Behavior |
+|------|--------|----------|
+| `branch` | `BROKERAI_BRANCH=main` | Latest commit on branch (like SPM `.branch("main")`) |
+| `release` | `BROKERAI_RELEASE=0.1.0` | Pinned to tag (like SPM `.exact("0.1.0")`) |
+| `latest-release` | _(no extra vars)_ | Newest GitHub release (like SPM floating releases) |
+
+After changing track settings:
+
+```bash
+systemctl restart brokerai-orchestrator brokerai-web
+/opt/brokerai/scripts/update-now.sh
+```
+
+Set `BROKERAI_AUTO_UPDATE=false` to disable automatic updates.
+
+### Manual
+
 Re-run the ct script on an existing container (update mode):
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/ct/brokerai.sh)"
 ```
 
-Or manually inside the container:
+Or inside the container:
 
 ```bash
+/opt/brokerai/scripts/auto-update.sh --force
+```
+
+### Enable auto-update on an existing install
+
+If your container was installed before auto-update was added:
+
+```bash
+pct enter 108   # your container ID
 cd /opt/brokerai && git pull
-venv/bin/pip install -r requirements.txt && venv/bin/pip install -e .
-systemctl restart brokerai-orchestrator brokerai-web
+cp systemd/brokerai-update.{service,timer} /etc/systemd/system/
+chmod +x scripts/auto-update.sh scripts/update-now.sh
+cp config/sudoers/brokerai-update /etc/sudoers.d/brokerai-update
+chmod 440 /etc/sudoers.d/brokerai-update
+systemctl daemon-reload
+systemctl enable --now brokerai-update.timer
 ```
 
 ## License
