@@ -1,0 +1,17 @@
+[Unit]
+Description=BrokerAI Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=brokerai
+Group=brokerai
+WorkingDirectory=/opt/brokerai
+EnvironmentFile=/etc/brokerai/config.env
+ExecStart=/opt/brokerai/venv/bin/python -m brokerai.orchestrator
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

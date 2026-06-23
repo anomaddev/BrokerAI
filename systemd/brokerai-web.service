@@ -1,0 +1,17 @@
+[Unit]
+Description=BrokerAI Web UI
+After=network-online.target brokerai-orchestrator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=brokerai
+Group=brokerai
+WorkingDirectory=/opt/brokerai
+EnvironmentFile=/etc/brokerai/config.env
+ExecStart=/bin/bash -c 'exec /opt/brokerai/venv/bin/uvicorn brokerai.web.app:app --host 0.0.0.0 --port ${BROKERAI_WEB_PORT:-8080}'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

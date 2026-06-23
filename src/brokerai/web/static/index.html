@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrokerAI</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3b82f6;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #eab308;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; }
+    .health {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+    .dot.offline { background: var(--red); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .card h2 {
+      font-size: 1rem;
+      text-transform: capitalize;
+      margin-bottom: 0.5rem;
+    }
+    .state {
+      display: inline-block;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+    .state.running { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .state.stopped { background: rgba(139, 156, 179, 0.15); color: var(--muted); }
+    .state.error { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+    .state.unknown { background: rgba(234, 179, 8, 0.15); color: var(--yellow); }
+    .actions { display: flex; gap: 0.5rem; }
+    button {
+      flex: 1;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .meta { font-size: 0.75rem; color: var(--muted); margin-top: 0.75rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BrokerAI</h1>
+    <div class="health">
+      <span class="dot" id="health-dot"></span>
+      <span id="health-text">Loading...</span>
+    </div>
+  </header>
+  <div class="grid" id="bots-grid"></div>
+
+  <script>
+    async function fetchJSON(url, options) {
+      const res = await fetch(url, options);
+      return res.json();
+    }
+
+    function stateClass(state) {
+      return ['running', 'stopped', 'error'].includes(state) ? state : 'unknown';
+    }
+
+    async function controlBot(name, action) {
+      await fetchJSON(`/api/bots/${name}/${action}`, { method: 'POST' });
+      await refresh();
+    }
+
+    function renderBots(bots) {
+      const grid = document.getElementById('bots-grid');
+      grid.innerHTML = bots.map(bot => `
+        <div class="card">
+          <h2>${bot.name}</h2>
+          <span class="state ${stateClass(bot.state)}">${bot.state || 'unknown'}</span>
+          <div class="actions">
+            <button onclick="controlBot('${bot.name}', 'start')">Start</button>
+            <button onclick="controlBot('${bot.name}', 'stop')">Stop</button>
+          </div>
+          ${bot.started_at ? `<div class="meta">Started: ${bot.started_at}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    async function refresh() {
+      try {
+        const [health, botsData] = await Promise.all([
+          fetchJSON('/api/health'),
+          fetchJSON('/api/bots'),
+        ]);
+        const dot = document.getElementById('health-dot');
+        const text = document.getElementById('health-text');
+        if (health.orchestrator_running) {
+          dot.classList.remove('offline');
+          text.textContent = `v${health.version} — Orchestrator running`;
+        } else {
+          dot.classList.add('offline');
+          text.textContent = `v${health.version} — Orchestrator offline`;
+        }
+        renderBots(botsData.bots);
+      } catch (err) {
+        document.getElementById('health-text').textContent = 'Connection error';
+        document.getElementById('health-dot').classList.add('offline');
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Config & secrets
+.env
+config.env
+/etc/brokerai/
+
+# Runtime data
+data/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
