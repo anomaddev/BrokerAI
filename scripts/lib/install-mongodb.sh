@@ -62,6 +62,10 @@ _enable_legacy_gpg_for_apt() {
 _ensure_gnupg
 _enable_legacy_gpg_for_apt
 
+# Remove stale MongoDB apt entries from prior failed installs (e.g. trixie/7.0).
+rm -f /etc/apt/sources.list.d/mongodb-org-*.list
+rm -f /usr/share/keyrings/mongodb-server-*.gpg
+
 MONGO_REPO_LABEL="unknown"
 
 if [[ "${ID:-}" == "ubuntu" ]]; then
