@@ -8,6 +8,7 @@ from pathlib import Path
 from brokerai.bots import BOT_REGISTRY, Bot
 from brokerai.bots.base import BotState
 from brokerai.config.settings import get_settings
+from brokerai.core.control import ControlServer
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,13 @@ class Orchestrator:
             (data_dir / "heartbeat.json").write_text(json.dumps(heartbeat, indent=2))
             await asyncio.sleep(10)
 
+    async def control_loop(self) -> None:
+        server = ControlServer(self, self.settings)
+        server.ensure()
+        while self._running:
+            await server.process_pending()
+            await asyncio.sleep(0.5)
+
 
 _orchestrator: Orchestrator | None = None
 
@@ -123,8 +131,10 @@ async def run_orchestrator() -> None:
 
     await orchestrator.start_all()
     heartbeat_task = asyncio.create_task(orchestrator.heartbeat_loop())
+    control_task = asyncio.create_task(orchestrator.control_loop())
 
     await stop_event.wait()
     heartbeat_task.cancel()
-    await asyncio.gather(heartbeat_task, return_exceptions=True)
+    control_task.cancel()
+    await asyncio.gather(heartbeat_task, control_task, return_exceptions=True)
     await orchestrator.stop_all()

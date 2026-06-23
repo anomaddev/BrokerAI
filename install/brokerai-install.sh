@@ -80,6 +80,9 @@ cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-update.service" /etc/systemd/system
 cp "${BROKERAI_INSTALL_DIR}/systemd/brokerai-update.timer" /etc/systemd/system/
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/auto-update.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/update-now.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh"
+ln -sf "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
+ln -sf "${BROKERAI_INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
 chmod 440 /etc/sudoers.d/brokerai-update
 visudo -cf /etc/sudoers.d/brokerai-update

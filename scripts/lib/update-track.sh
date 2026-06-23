@@ -55,10 +55,14 @@ _brokerai_write_install_lock_from_config() {
 }
 
 _brokerai_github_latest_release_tag() {
-  local repo_slug latest_json
+  local repo_slug latest_json py
   repo_slug="$(_brokerai_parse_repo_slug "${BROKERAI_REPO}")"
   latest_json="$(curl -fsSL "https://api.github.com/repos/${repo_slug}/releases/latest")"
-  echo "${latest_json}" | "${INSTALL_DIR}/venv/bin/python" -c "
+  py="${BROKERAI_PYTHON:-${INSTALL_DIR}/venv/bin/python}"
+  if [[ ! -x "${py}" ]]; then
+    py="$(command -v python3 || true)"
+  fi
+  echo "${latest_json}" | "${py}" -c "
 import json, sys
 data = json.load(sys.stdin)
 print(data.get('tag_name', ''))

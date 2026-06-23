@@ -128,6 +128,9 @@ _brokerai_checkout_target 2>>"${LOG_FILE}"
 
 chmod +x "${INSTALL_DIR}/scripts/auto-update.sh"
 chmod +x "${INSTALL_DIR}/scripts/update-now.sh"
+chmod +x "${INSTALL_DIR}/scripts/check-update.sh"
+ln -sf "${INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
+ln -sf "${INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 
 cp "${INSTALL_DIR}/systemd/brokerai-orchestrator.service" /etc/systemd/system/
 cp "${INSTALL_DIR}/systemd/brokerai-web.service" /etc/systemd/system/

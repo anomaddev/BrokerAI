@@ -53,6 +53,30 @@ bash scripts/install-lxc.sh --repo https://github.com/you/BrokerAI
 bash scripts/install-lxc.sh --skip-clone
 ```
 
+## CLI
+
+The `brokerai` command is available after install at `/usr/local/bin/brokerai` (or via `pip install -e .` in dev).
+
+```bash
+brokerai help                    # show all commands
+brokerai help bots               # help for a command group
+brokerai status                  # orchestrator + bot status
+brokerai bots list               # list sub-bot states
+brokerai bots stop research      # stop a sub-bot (direct IPC)
+brokerai bots start research     # start a sub-bot
+brokerai update check            # check for updates (exit 0=current, 1=available)
+brokerai update apply            # apply updates now (requires root)
+brokerai services status         # systemd service status
+brokerai services restart        # restart orchestrator + web UI (requires root)
+brokerai version                 # package + installed commit
+```
+
+Add `--json` to `status`, `bots list`, `bots start/stop`, and `version` for scripting.
+
+Bot control uses file-based IPC (`data/control/inbox/`) — the orchestrator must be running. The web UI is optional.
+
+Legacy shortcuts still work: `brokerai-check-update` is equivalent to `brokerai update check`.
+
 ## Post-Install
 
 1. Open the web UI at `http://<container-ip>:1989`
@@ -60,7 +84,8 @@ bash scripts/install-lxc.sh --skip-clone
 3. Restart services after config changes:
 
 ```bash
-systemctl restart brokerai-orchestrator brokerai-web
+brokerai services restart
+# or: systemctl restart brokerai-orchestrator brokerai-web
 ```
 
 ### API Endpoints
@@ -83,7 +108,8 @@ BrokerAI/
 ├── scripts/install-lxc.sh      Standalone installer
 ├── src/brokerai/
 │   ├── bots/                   Sub-bot modules (research, execution, analysis)
-│   ├── core/orchestrator.py    Bot lifecycle manager
+│   ├── cli/                    brokerai command-line interface
+│   ├── core/orchestrator.py    Bot lifecycle manager + control IPC
 │   └── web/                    FastAPI app + dashboard
 ├── config/config.env.example   Configuration template
 └── systemd/                    Service unit files
@@ -97,10 +123,15 @@ source venv/bin/activate
 pip install -e ".[dev]"  # or: pip install -r requirements.txt && pip install -e .
 
 # Run orchestrator locally
-python -m brokerai.orchestrator
+brokerai run orchestrator
+# or: python -m brokerai.orchestrator
 
 # Run web UI locally
 uvicorn brokerai.web.app:app --reload --port 1989
+
+# CLI (orchestrator must be running for bot control)
+brokerai status
+brokerai bots list
 ```
 
 Set `BROKERAI_DATA_DIR` and `BROKERAI_LOG_DIR` in a local `.env` or export overrides if not running on a container path.
@@ -121,7 +152,14 @@ tail -f /var/log/brokerai/update.log
 # Trigger an update check now
 systemctl start brokerai-update.service
 
-# Or use the convenience script
+# Check only (no install)
+brokerai update check
+
+# Apply update
+sudo brokerai update apply
+
+# Legacy shortcuts
+brokerai-check-update
 sudo /opt/brokerai/scripts/update-now.sh
 ```
 

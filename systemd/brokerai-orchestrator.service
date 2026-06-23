@@ -9,7 +9,7 @@ User=brokerai
 Group=brokerai
 WorkingDirectory=/opt/brokerai
 EnvironmentFile=/etc/brokerai/config.env
-ExecStart=/opt/brokerai/venv/bin/python -m brokerai.orchestrator
+ExecStart=/opt/brokerai/venv/bin/brokerai run orchestrator
 Restart=always
 RestartSec=5
 
