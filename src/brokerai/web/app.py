@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -14,6 +14,15 @@ from brokerai.core.control import ControlClient, ControlTimeout
 from brokerai.db import ping_db
 from brokerai.db.client import get_db
 from brokerai.web.routes.auth import require_auth, router as auth_router
+from brokerai.web.routes.settings import router as settings_router
+from brokerai.web.routes.system import router as system_router
+from brokerai.web.update_runner import (
+    check_for_updates,
+    installed_version_short,
+    read_version_lock,
+    resolve_update_status,
+    trigger_update,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +31,10 @@ settings = get_settings()
 
 STATIC_DIR = Path(__file__).parent / "static"
 VERSION_FILE = Path("/opt/BrokerAI_version.txt")
-UPDATE_LOG = Path("/var/log/brokerai/update.log")
 
 app.include_router(auth_router)
+app.include_router(settings_router)
+app.include_router(system_router)
 
 if STATIC_DIR.exists():
     assets_dir = STATIC_DIR / "assets"
@@ -47,70 +57,11 @@ def _read_heartbeat() -> dict:
 
 
 def _read_version_lock() -> dict:
-    if not VERSION_FILE.exists():
-        return {}
-    raw = VERSION_FILE.read_text().strip()
-    if not raw:
-        return {}
-    if "=" in raw:
-        lock: dict[str, str] = {}
-        for line in raw.splitlines():
-            if "=" in line:
-                key, value = line.split("=", 1)
-                lock[key.strip()] = value.strip()
-        return lock
-    return {"commit": raw}
+    return read_version_lock()
 
 
 def _read_installed_version() -> str | None:
-    lock = _read_version_lock()
-    commit = lock.get("commit")
-    if commit:
-        return commit[:7]
-    return None
-
-
-def _read_update_log_tail(lines: int = 10) -> list[str]:
-    if not UPDATE_LOG.exists():
-        return []
-    try:
-        all_lines = UPDATE_LOG.read_text().splitlines()
-        return all_lines[-lines:]
-    except OSError:
-        return []
-
-
-async def _run_update_trigger() -> tuple[bool, str]:
-    commands = [
-        ["sudo", "-n", "systemctl", "start", "brokerai-update.service"],
-        ["sudo", "-n", "/opt/brokerai/scripts/auto-update.sh", "--force"],
-    ]
-    for cmd in commands:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode == 0:
-                return True, "Update started"
-            logger.warning("Update trigger failed (%s): %s", cmd, stderr.decode().strip())
-        except FileNotFoundError:
-            continue
-    return False, "Update trigger unavailable"
-
-
-def _update_info() -> dict:
-    lock = _read_version_lock()
-    return {
-        "configured_pin": settings.update_pin_display,
-        "update_track": settings.update_track,
-        "auto_update": settings.auto_update,
-        "installed_track": lock.get("track"),
-        "installed_ref": lock.get("ref"),
-        "installed_commit": lock.get("commit"),
-    }
+    return installed_version_short()
 
 
 def _spa_index() -> FileResponse:
@@ -199,18 +150,19 @@ async def list_bots(_username: str = Depends(require_auth)) -> JSONResponse:
 
 @app.get("/api/update/status")
 async def update_status(_username: str = Depends(require_auth)) -> JSONResponse:
-    return JSONResponse(
-        {
-            "installed_version": _read_installed_version(),
-            "log_tail": _read_update_log_tail(),
-            **_update_info(),
-        }
-    )
+    payload = await resolve_update_status()
+    return JSONResponse(payload)
+
+
+@app.post("/api/update/check")
+async def update_check(_username: str = Depends(require_auth)) -> JSONResponse:
+    payload = await check_for_updates()
+    return JSONResponse(payload)
 
 
 @app.post("/api/update")
-async def trigger_update(_username: str = Depends(require_auth)) -> JSONResponse:
-    ok, message = await _run_update_trigger()
+async def trigger_update_route(_username: str = Depends(require_auth)) -> JSONResponse:
+    ok, message = await trigger_update()
     if not ok:
         raise HTTPException(status_code=503, detail=message)
     logger.info("Manual update triggered via API")

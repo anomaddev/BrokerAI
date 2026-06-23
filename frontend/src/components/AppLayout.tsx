@@ -1,29 +1,25 @@
 import { Outlet } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { api } from "../api/client";
 import Sidebar from "./Sidebar";
 
 export default function AppLayout() {
   const [username, setUsername] = useState("");
-  const [menuOpen, setMenuOpen] = useState(
-    () => localStorage.getItem("sidebarOpen") !== "false",
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("sidebarCollapsed") === "true",
   );
 
   useEffect(() => {
     api.me().then((u) => setUsername(u.username)).catch(() => setUsername(""));
   }, []);
 
-  function toggleMenu() {
-    setMenuOpen((prev) => {
+  function toggleSidebar() {
+    setCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem("sidebarOpen", String(next));
+      localStorage.setItem("sidebarCollapsed", String(next));
       return next;
     });
-  }
-
-  function closeMenu() {
-    setMenuOpen(false);
-    localStorage.setItem("sidebarOpen", "false");
   }
 
   async function logout() {
@@ -32,20 +28,22 @@ export default function AppLayout() {
   }
 
   return (
-    <div className={`app-shell${menuOpen ? " menu-open" : ""}`}>
-      <Sidebar open={menuOpen} onClose={closeMenu} />
+    <div className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
+      <Sidebar collapsed={collapsed} />
       <div className="app-main">
         <header className="topbar">
           <button
             type="button"
             className="menu-btn"
-            onClick={toggleMenu}
-            aria-label={menuOpen ? "Close menu" : "Open menu"}
-            aria-expanded={menuOpen}
+            onClick={toggleSidebar}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
           >
-            <span className="menu-btn-bar" />
-            <span className="menu-btn-bar" />
-            <span className="menu-btn-bar" />
+            {collapsed ? (
+              <PanelLeftOpen size={20} strokeWidth={1.75} />
+            ) : (
+              <PanelLeftClose size={20} strokeWidth={1.75} />
+            )}
           </button>
           <div className="topbar-actions">
             <span className="topbar-user">{username}</span>

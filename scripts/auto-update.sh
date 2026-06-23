@@ -144,9 +144,11 @@ cp "${INSTALL_DIR}/systemd/brokerai-update.service" /etc/systemd/system/
 cp "${INSTALL_DIR}/systemd/brokerai-update.timer" /etc/systemd/system/
 cp "${INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
 cp "${INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
-chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin
+cp "${INSTALL_DIR}/config/sudoers/brokerai-power" /etc/sudoers.d/brokerai-power
+chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin /etc/sudoers.d/brokerai-power
 visudo -cf /etc/sudoers.d/brokerai-update 2>>"${LOG_FILE}" || true
 visudo -cf /etc/sudoers.d/brokerai-admin 2>>"${LOG_FILE}" || true
+visudo -cf /etc/sudoers.d/brokerai-power 2>>"${LOG_FILE}" || true
 
 chown -R brokerai:brokerai "${INSTALL_DIR}" "${LOG_DIR}" /var/lib/brokerai/data 2>/dev/null || true
 

@@ -1,0 +1,5 @@
+# Allow the web UI (brokerai user) to reboot or shut down the host.
+brokerai ALL=(root) NOPASSWD: /bin/systemctl reboot
+brokerai ALL=(root) NOPASSWD: /bin/systemctl poweroff
+brokerai ALL=(root) NOPASSWD: /sbin/reboot
+brokerai ALL=(root) NOPASSWD: /sbin/shutdown

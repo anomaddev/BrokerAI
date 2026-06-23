@@ -1,51 +1,62 @@
 import { NavLink } from "react-router-dom";
+import type { LucideIcon } from "lucide-react";
+import { LayoutDashboard, Settings, TrendingUp } from "lucide-react";
 
-const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", icon: "▣" },
-];
-
-type SidebarProps = {
-  open: boolean;
-  onClose: () => void;
+type NavItem = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
 };
 
-export default function Sidebar({ open, onClose }: SidebarProps) {
+const NAV_ITEMS: NavItem[] = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+];
+
+const SETTINGS_ITEM: NavItem = {
+  to: "/settings/general",
+  label: "Settings",
+  icon: Settings,
+};
+
+type SidebarProps = {
+  collapsed: boolean;
+};
+
+function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+  const Icon = item.icon;
   return (
-    <>
-      <div
-        className={`sidebar-backdrop${open ? " visible" : ""}`}
-        onClick={onClose}
-        aria-hidden={!open}
-      />
-      <aside className={`sidebar${open ? " open" : ""}`} aria-hidden={!open}>
-        <div className="sidebar-header">
-          <span className="sidebar-title">BrokerAI</span>
-        </div>
-        <nav className="sidebar-nav">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end
-              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-              onClick={onClose}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <NavLink
-            to="/settings/general"
-            className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-            onClick={onClose}
-          >
-            <span className="nav-icon">⚙</span>
-            <span>Settings</span>
-          </NavLink>
-        </div>
-      </aside>
-    </>
+    <NavLink
+      to={item.to}
+      end={item.end}
+      className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+      title={collapsed ? item.label : undefined}
+    >
+      <span className="nav-icon" aria-hidden>
+        <Icon size={20} strokeWidth={1.75} />
+      </span>
+      <span className="nav-label">{item.label}</span>
+    </NavLink>
+  );
+}
+
+export default function Sidebar({ collapsed }: SidebarProps) {
+  return (
+    <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
+      <div className="sidebar-header">
+        <span className="sidebar-brand-icon" aria-hidden>
+          <TrendingUp size={22} strokeWidth={2} />
+        </span>
+        <span className="sidebar-title">BrokerAI</span>
+      </div>
+      <nav className="sidebar-nav" aria-label="Main">
+        {NAV_ITEMS.map((item) => (
+          <NavItemLink key={item.to} item={item} collapsed={collapsed} />
+        ))}
+      </nav>
+      <div className="sidebar-bottom">
+        <NavItemLink item={SETTINGS_ITEM} collapsed={collapsed} />
+      </div>
+    </aside>
   );
 }

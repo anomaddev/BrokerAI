@@ -181,9 +181,11 @@ ln -sf "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai
 ln -sf "${BROKERAI_INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
-chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin
+cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-power" /etc/sudoers.d/brokerai-power
+chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin /etc/sudoers.d/brokerai-power
 visudo -cf /etc/sudoers.d/brokerai-update
 visudo -cf /etc/sudoers.d/brokerai-admin
+visudo -cf /etc/sudoers.d/brokerai-power
 systemctl daemon-reload
 systemctl enable --now brokerai-orchestrator brokerai-web brokerai-update.timer
 msg_ok "Systemd services installed"

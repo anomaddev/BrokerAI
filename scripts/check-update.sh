@@ -33,7 +33,7 @@ _resolve_script_dir() {
 SCRIPT_DIR="$(_resolve_script_dir)"
 INSTALL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG_FILE="/etc/brokerai/config.env"
-VERSION_FILE="/opt/${APP}_version.txt"
+VERSION_FILE="${VERSION_FILE:-/opt/${APP}_version.txt}"
 LIB_DIR="${SCRIPT_DIR}/lib"
 
 JSON=false
@@ -65,12 +65,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+_CALLER_UPDATE_TRACK="${BROKERAI_UPDATE_TRACK:-}"
+_CALLER_BRANCH="${BROKERAI_BRANCH:-}"
+_CALLER_RELEASE="${BROKERAI_RELEASE:-}"
+_CALLER_REPO="${BROKERAI_REPO:-}"
+_CALLER_VERSION_FILE="${VERSION_FILE:-}"
+
 if [[ -f "${CONFIG_FILE}" ]]; then
   # shellcheck source=/dev/null
   set -a
   source "${CONFIG_FILE}"
   set +a
+elif [[ -f "${INSTALL_DIR}/.env" ]]; then
+  # shellcheck source=/dev/null
+  set -a
+  source "${INSTALL_DIR}/.env"
+  set +a
 fi
+
+if [[ -n "${_CALLER_UPDATE_TRACK}" ]]; then BROKERAI_UPDATE_TRACK="${_CALLER_UPDATE_TRACK}"; fi
+if [[ -n "${_CALLER_BRANCH}" ]]; then BROKERAI_BRANCH="${_CALLER_BRANCH}"; fi
+if [[ -n "${_CALLER_RELEASE}" ]]; then BROKERAI_RELEASE="${_CALLER_RELEASE}"; fi
+if [[ -n "${_CALLER_REPO}" ]]; then BROKERAI_REPO="${_CALLER_REPO}"; fi
+if [[ -n "${_CALLER_VERSION_FILE}" ]]; then VERSION_FILE="${_CALLER_VERSION_FILE}"; fi
 
 BROKERAI_REPO="${BROKERAI_REPO:-https://github.com/anomaddev/BrokerAI}"
 BROKERAI_UPDATE_TRACK="${BROKERAI_UPDATE_TRACK:-branch}"
@@ -90,7 +107,8 @@ fi
 
 fail() {
   if [[ "${JSON}" == "true" ]]; then
-    "${BROKERAI_PYTHON}" -c "import json; print(json.dumps({'status':'error','message':'''${1}'''}))"
+    export _FAIL_MSG="$1"
+    "${BROKERAI_PYTHON}" -c 'import json, os; print(json.dumps({"status": "error", "message": os.environ.get("_FAIL_MSG", "Unknown error")}))'
   elif [[ "${QUIET}" != "true" ]]; then
     echo "Error: $1" >&2
   else
@@ -108,9 +126,16 @@ cd "${INSTALL_DIR}"
 CURRENT="$(_brokerai_git_head 2>/dev/null || echo unknown)"
 _brokerai_read_version_lock
 
-if ! _brokerai_resolve_update_target 2>/dev/null; then
-  fail "Failed to resolve update target (track=${BROKERAI_UPDATE_TRACK})"
+_RESOLVE_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/brokerai-resolve.XXXXXX")"
+if ! _brokerai_resolve_update_target 2>"${_RESOLVE_ERR_FILE}"; then
+  RESOLVE_MSG="$(tr -d '\n' <"${_RESOLVE_ERR_FILE}" | sed 's/  */ /g')"
+  rm -f "${_RESOLVE_ERR_FILE}"
+  if [[ -z "${RESOLVE_MSG}" ]]; then
+    RESOLVE_MSG="Failed to resolve update target (track=${BROKERAI_UPDATE_TRACK})"
+  fi
+  fail "${RESOLVE_MSG}"
 fi
+rm -f "${_RESOLVE_ERR_FILE}"
 
 UPDATE_AVAILABLE=false
 if [[ "${CURRENT}" != "${BROKERAI_TARGET_COMMIT}" \
