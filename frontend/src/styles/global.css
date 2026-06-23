@@ -106,9 +106,16 @@ input {
 }
 
 .app-shell {
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
   min-height: 100vh;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  transition: margin-left 0.25s ease;
 }
 
 .topbar {
@@ -118,42 +125,119 @@ input {
   padding: 0.75rem 1.25rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  flex-shrink: 0;
 }
 
-.topbar-title {
-  font-weight: 600;
+.menu-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  color: var(--text);
 }
 
-.body-row {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  min-height: 0;
+.menu-btn:hover {
+  background: var(--surface-2);
+}
+
+.menu-btn-bar {
+  display: block;
+  height: 2px;
+  width: 100%;
+  background: currentColor;
+  border-radius: 1px;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.topbar-user {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.btn-sm {
+  padding: 0.4rem 0.75rem;
+}
+
+.sidebar-backdrop {
+  display: none;
 }
 
 .sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 200;
+  height: 100vh;
+  width: 260px;
   background: var(--surface);
   border-right: 1px solid var(--border);
-  width: 220px;
   display: flex;
   flex-direction: column;
-  transition: width 0.2s ease;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
 }
 
-.sidebar.collapsed {
-  width: 64px;
+.sidebar.open {
+  transform: translateX(0);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  min-height: 3.5rem;
+  flex-shrink: 0;
+}
+
+.sidebar-title {
+  font-weight: 600;
+  font-size: 1.125rem;
+}
+
+.app-shell.menu-open .app-main {
+  margin-left: 260px;
+}
+
+@media (max-width: 768px) {
+  .sidebar-backdrop.visible {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    background: rgba(0, 0, 0, 0.45);
+  }
+
+  .app-shell.menu-open .app-main {
+    margin-left: 0;
+  }
 }
 
 .sidebar-nav {
   flex: 1;
-  padding: 1rem 0.5rem;
+  padding: 1rem 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  overflow-y: auto;
 }
 
 .sidebar-bottom {
-  padding: 0.5rem;
+  padding: 0.75rem;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .nav-item {

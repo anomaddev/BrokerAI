@@ -116,6 +116,11 @@ bootstrap_brokerai_admin() {
     return 0
   fi
 
+  if pct exec "$CTID" -- test -f /var/lib/brokerai/data/auth/users.json 2>/dev/null; then
+    msg_ok "Admin account already configured — open Web UI to sign in"
+    return 0
+  fi
+
   msg_info "Bootstrapping BrokerAI admin account"
   local bootstrap_file
   bootstrap_file=$(mktemp)

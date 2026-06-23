@@ -21,8 +21,8 @@ if [[ -z "${PASSWORD}" ]]; then
 fi
 
 if id "${USERNAME}" &>/dev/null; then
-  echo "User ${USERNAME} already exists" >&2
-  exit 1
+  echo "User ${USERNAME} already exists — skipping SSH provisioning"
+  exit 0
 fi
 
 if ! [[ "${USERNAME}" =~ ^[a-z][a-z0-9_-]{2,31}$ ]]; then

@@ -1,56 +1,51 @@
 import { NavLink } from "react-router-dom";
-import { useState } from "react";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: "▣" },
 ];
 
-export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem("sidebarCollapsed") === "true",
-  );
+type SidebarProps = {
+  open: boolean;
+  onClose: () => void;
+};
 
-  function toggle() {
-    const next = !collapsed;
-    setCollapsed(next);
-    localStorage.setItem("sidebarCollapsed", String(next));
-  }
-
+export default function Sidebar({ open, onClose }: SidebarProps) {
   return (
-    <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
-      <nav className="sidebar-nav">
-        <button
-          type="button"
-          className="nav-item"
-          onClick={toggle}
-          title={collapsed ? "Expand" : "Collapse"}
-        >
-          <span className="nav-icon">{collapsed ? "»" : "«"}</span>
-          {!collapsed && <span>Collapse</span>}
-        </button>
-        {NAV_ITEMS.map((item) => (
+    <>
+      <div
+        className={`sidebar-backdrop${open ? " visible" : ""}`}
+        onClick={onClose}
+        aria-hidden={!open}
+      />
+      <aside className={`sidebar${open ? " open" : ""}`} aria-hidden={!open}>
+        <div className="sidebar-header">
+          <span className="sidebar-title">BrokerAI</span>
+        </div>
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end
+              className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+              onClick={onClose}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span>{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
           <NavLink
-            key={item.to}
-            to={item.to}
-            end
+            to="/settings/general"
             className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-            title={item.label}
+            onClick={onClose}
           >
-            <span className="nav-icon">{item.icon}</span>
-            {!collapsed && <span>{item.label}</span>}
+            <span className="nav-icon">⚙</span>
+            <span>Settings</span>
           </NavLink>
-        ))}
-      </nav>
-      <div className="sidebar-bottom">
-        <NavLink
-          to="/settings/general"
-          className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
-          title="Settings"
-        >
-          <span className="nav-icon">⚙</span>
-          {!collapsed && <span>Settings</span>}
-        </NavLink>
-      </div>
-    </aside>
+        </div>
+      </aside>
+    </>
   );
 }
