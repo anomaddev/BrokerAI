@@ -14,7 +14,7 @@ Multi-bot trading platform designed to run in an LXC container on Proxmox VE. Br
 Two systemd services run inside the container:
 
 - **brokerai-orchestrator** — manages sub-bot lifecycle and writes heartbeat state
-- **brokerai-web** — FastAPI web UI and REST API on port 8080
+- **brokerai-web** — FastAPI web UI and REST API on port 1989
 
 ## Installation
 
@@ -53,7 +53,7 @@ bash scripts/install-lxc.sh --skip-clone
 
 ## Post-Install
 
-1. Open the web UI at `http://<container-ip>:8080`
+1. Open the web UI at `http://<container-ip>:1989`
 2. Edit configuration at `/etc/brokerai/config.env`
 3. Restart services after config changes:
 
@@ -96,7 +96,7 @@ pip install -e ".[dev]"  # or: pip install -r requirements.txt && pip install -e
 python -m brokerai.orchestrator
 
 # Run web UI locally
-uvicorn brokerai.web.app:app --reload --port 8080
+uvicorn brokerai.web.app:app --reload --port 1989
 ```
 
 Set `BROKERAI_DATA_DIR` and `BROKERAI_LOG_DIR` in a local `.env` or export overrides if not running on a container path.

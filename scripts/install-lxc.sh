@@ -156,13 +156,13 @@ else
   msg_error "One or more BrokerAI services failed to start. Check: journalctl -u brokerai-orchestrator -u brokerai-web"
 fi
 
-WEB_PORT=$(grep -E '^BROKERAI_WEB_PORT=' "${BROKERAI_CONFIG_DIR}/config.env" | cut -d= -f2 || echo "8080")
+WEB_PORT=$(grep -E '^BROKERAI_WEB_PORT=' "${BROKERAI_CONFIG_DIR}/config.env" | cut -d= -f2 || echo "1989")
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 
 echo ""
 echo -e "${GREEN}${APP} installation complete.${NC}"
 echo ""
-echo "  Web UI:  http://${LOCAL_IP:-localhost}:${WEB_PORT:-8080}"
+echo "  Web UI:  http://${LOCAL_IP:-localhost}:${WEB_PORT:-1989}"
 echo "  Config:  ${BROKERAI_CONFIG_DIR}/config.env"
 echo "  Logs:    journalctl -u brokerai-orchestrator -u brokerai-web -f"
 echo ""

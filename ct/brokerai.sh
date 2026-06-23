@@ -14,7 +14,7 @@ var_disk="${var_disk:-8}"
 var_os="${var_os:-debian}"
 var_version="${var_version:-13}"
 var_unprivileged="${var_unprivileged:-1}"
-var_port="${var_port:-8080}"
+var_port="${var_port:-1989}"
 
 BROKERAI_REPO="${BROKERAI_REPO:-https://github.com/anomaddev/BrokerAI}"
 BROKERAI_BRANCH="${BROKERAI_BRANCH:-main}"

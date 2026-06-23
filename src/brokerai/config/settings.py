@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     )
 
     secret_key: str = "change-me"
-    web_port: int = 8080
+    web_port: int = 1989
     log_level: str = "INFO"
     enabled_bots: str = "research,execution,analysis"
     data_dir: Path = Path("/var/lib/brokerai/data")
