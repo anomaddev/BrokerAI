@@ -9,14 +9,37 @@ _brokerai_git() {
 }
 
 _brokerai_git_head() {
-  _brokerai_git rev-parse HEAD
+  _brokerai_git rev-parse HEAD 2>/dev/null || _brokerai_read_head_commit
 }
 
 _brokerai_ensure_git_safe_directory() {
   local dir="${1:-${BROKERAI_INSTALL_DIR}}"
-  if ! git config --system --get-all safe.directory 2>/dev/null | grep -Fxq "${dir}"; then
-    git config --system --add safe.directory "${dir}"
+  if git config --system --get-all safe.directory 2>/dev/null | grep -Fxq "${dir}"; then
+    return 0
   fi
+  if git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "${dir}"; then
+    return 0
+  fi
+  git config --system --add safe.directory "${dir}" 2>/dev/null \
+    || git config --global --add safe.directory "${dir}" 2>/dev/null \
+    || printf '[safe]\n\tdirectory = %s\n' "${dir}" >>/etc/gitconfig
+}
+
+_brokerai_read_head_commit() {
+  local ref head_file git_dir="${BROKERAI_INSTALL_DIR}/.git"
+  head_file="${git_dir}/HEAD"
+  [[ -f "${head_file}" ]] || return 1
+  ref="$(<"${head_file}")"
+  ref="${ref#ref: }"
+  if [[ -f "${git_dir}/${ref}" ]]; then
+    tr -d '[:space:]' <"${git_dir}/${ref}"
+    return 0
+  fi
+  if [[ -f "${git_dir}/packed-refs" ]]; then
+    awk -v r="${ref}" '$2 == r { print $1; exit }' "${git_dir}/packed-refs"
+    return 0
+  fi
+  return 1
 }
 
 _brokerai_parse_repo_slug() {

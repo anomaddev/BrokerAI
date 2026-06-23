@@ -155,6 +155,8 @@ if [[ ! -f "${BROKERAI_CONFIG_DIR}/config.env" ]]; then
 fi
 msg_ok "Configured BrokerAI"
 
+BROKERAI_INSTALLED_COMMIT="$(git -C "${BROKERAI_INSTALL_DIR}" rev-parse HEAD)"
+
 msg_info "Setting permissions"
 chown -R brokerai:brokerai "${BROKERAI_INSTALL_DIR}" "${BROKERAI_DATA_DIR}" "${BROKERAI_LOG_DIR}"
 chown -R root:brokerai "${BROKERAI_CONFIG_DIR}"
@@ -189,7 +191,7 @@ msg_ok "Systemd services installed"
 # shellcheck source=/dev/null
 set -a && source "${BROKERAI_CONFIG_DIR}/config.env" && set +a
 VERSION_FILE="/opt/${APP}_version.txt"
-_brokerai_write_install_lock_from_config "$(_brokerai_git_head)"
+_brokerai_write_install_lock_from_config "${BROKERAI_INSTALLED_COMMIT}"
 
 if systemctl is-active --quiet brokerai-orchestrator && systemctl is-active --quiet brokerai-web; then
   msg_ok "BrokerAI services running"
