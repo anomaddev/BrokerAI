@@ -88,6 +88,7 @@ BROKERAI_RELEASE="${BROKERAI_RELEASE:-}"
 
 # shellcheck source=lib/update-track.sh
 source "${LIB_DIR}/update-track.sh"
+_brokerai_ensure_git_safe_directory "${INSTALL_DIR}"
 
 if [[ "${BROKERAI_AUTO_UPDATE}" != "true" && "${FORCE}" != "true" ]]; then
   log "Auto-update disabled (BROKERAI_AUTO_UPDATE=${BROKERAI_AUTO_UPDATE}), skipping"
@@ -101,7 +102,7 @@ fi
 
 cd "${INSTALL_DIR}"
 
-CURRENT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+CURRENT="$(_brokerai_git_head 2>/dev/null || echo unknown)"
 _brokerai_read_version_lock
 
 log "Checking for updates (track=${BROKERAI_UPDATE_TRACK}, current=${CURRENT})"
@@ -158,6 +159,6 @@ fi
 
 systemctl restart brokerai-orchestrator brokerai-web
 
-NEW="$(git rev-parse HEAD)"
+NEW="$(_brokerai_git_head)"
 _brokerai_write_version_lock "${BROKERAI_TARGET_TRACK}" "${BROKERAI_TARGET_REF}" "${NEW}"
 log "Updated to ${BROKERAI_TARGET_DISPLAY} @ ${NEW:0:7} and restarted services"

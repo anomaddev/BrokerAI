@@ -91,6 +91,10 @@ chown -R brokerai:brokerai "${BROKERAI_INSTALL_DIR}" "${BROKERAI_DATA_DIR}" "${B
 chown -R root:brokerai "${BROKERAI_CONFIG_DIR}"
 chmod 750 "${BROKERAI_CONFIG_DIR}"
 chmod 640 "${BROKERAI_CONFIG_DIR}/config.env"
+# Root runs git for updates; repo is owned by brokerai after chown.
+# shellcheck source=scripts/lib/update-track.sh
+source "${BROKERAI_INSTALL_DIR}/scripts/lib/update-track.sh"
+_brokerai_ensure_git_safe_directory "${BROKERAI_INSTALL_DIR}"
 msg_ok "Permissions set"
 
 msg_info "Installing systemd services"
@@ -117,9 +121,7 @@ msg_ok "Installed systemd services"
 # shellcheck source=/dev/null
 set -a && source "${BROKERAI_CONFIG_DIR}/config.env" && set +a
 VERSION_FILE="/opt/${APP}_version.txt"
-# shellcheck source=scripts/lib/update-track.sh
-source "${BROKERAI_INSTALL_DIR}/scripts/lib/update-track.sh"
-_brokerai_write_install_lock_from_config "$(cd "${BROKERAI_INSTALL_DIR}" && git rev-parse HEAD)"
+_brokerai_write_install_lock_from_config "$(_brokerai_git_head)"
 
 if systemctl is-active --quiet brokerai-orchestrator && systemctl is-active --quiet brokerai-web; then
   msg_ok "BrokerAI services running"

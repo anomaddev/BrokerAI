@@ -84,6 +84,10 @@ fi
 # shellcheck source=lib/update-track.sh
 source "${LIB_DIR}/update-track.sh"
 
+if [[ $EUID -eq 0 ]]; then
+  _brokerai_ensure_git_safe_directory "${INSTALL_DIR}"
+fi
+
 fail() {
   if [[ "${JSON}" == "true" ]]; then
     "${BROKERAI_PYTHON}" -c "import json; print(json.dumps({'status':'error','message':'''${1}'''}))"
@@ -101,7 +105,7 @@ fi
 
 cd "${INSTALL_DIR}"
 
-CURRENT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+CURRENT="$(_brokerai_git_head 2>/dev/null || echo unknown)"
 _brokerai_read_version_lock
 
 if ! _brokerai_resolve_update_target 2>/dev/null; then

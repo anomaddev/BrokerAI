@@ -2,6 +2,23 @@
 # Shared helpers for BrokerAI update track resolution.
 # Sourced by auto-update.sh — do not run directly.
 
+BROKERAI_INSTALL_DIR="${BROKERAI_INSTALL_DIR:-${INSTALL_DIR:-/opt/brokerai}}"
+
+_brokerai_git() {
+  git -c "safe.directory=${BROKERAI_INSTALL_DIR}" -C "${BROKERAI_INSTALL_DIR}" "$@"
+}
+
+_brokerai_git_head() {
+  _brokerai_git rev-parse HEAD
+}
+
+_brokerai_ensure_git_safe_directory() {
+  local dir="${1:-${BROKERAI_INSTALL_DIR}}"
+  if ! git config --system --get-all safe.directory 2>/dev/null | grep -Fxq "${dir}"; then
+    git config --system --add safe.directory "${dir}"
+  fi
+}
+
 _brokerai_parse_repo_slug() {
   local url="${1:-}"
   url="${url%.git}"
@@ -74,18 +91,18 @@ _brokerai_resolve_release_tag() {
   requested="$1"
   normalized="$(_brokerai_normalize_tag "${requested}")"
 
-  git fetch origin "refs/tags/v${normalized}:refs/tags/v${normalized}" --depth=1 2>/dev/null \
-    || git fetch origin "refs/tags/${normalized}:refs/tags/${normalized}" --depth=1 2>/dev/null \
-    || git fetch origin --tags --depth=1 2>/dev/null \
+  _brokerai_git fetch origin "refs/tags/v${normalized}:refs/tags/v${normalized}" --depth=1 2>/dev/null \
+    || _brokerai_git fetch origin "refs/tags/${normalized}:refs/tags/${normalized}" --depth=1 2>/dev/null \
+    || _brokerai_git fetch origin --tags --depth=1 2>/dev/null \
     || true
 
-  if git rev-parse "v${normalized}" >/dev/null 2>&1; then
+  if _brokerai_git rev-parse "v${normalized}" >/dev/null 2>&1; then
     tag="v${normalized}"
-  elif git rev-parse "${normalized}" >/dev/null 2>&1; then
+  elif _brokerai_git rev-parse "${normalized}" >/dev/null 2>&1; then
     tag="${normalized}"
-  elif git rev-parse "refs/tags/v${normalized}" >/dev/null 2>&1; then
+  elif _brokerai_git rev-parse "refs/tags/v${normalized}" >/dev/null 2>&1; then
     tag="v${normalized}"
-  elif git rev-parse "refs/tags/${normalized}" >/dev/null 2>&1; then
+  elif _brokerai_git rev-parse "refs/tags/${normalized}" >/dev/null 2>&1; then
     tag="${normalized}"
   else
     echo ""
@@ -103,10 +120,10 @@ _brokerai_resolve_update_target() {
   case "${BROKERAI_UPDATE_TRACK}" in
     branch)
       BROKERAI_TARGET_REF="${BROKERAI_BRANCH}"
-      if ! git fetch origin "${BROKERAI_BRANCH}" --depth=1 2>/dev/null; then
+      if ! _brokerai_git fetch origin "${BROKERAI_BRANCH}" --depth=1 2>/dev/null; then
         return 1
       fi
-      BROKERAI_TARGET_COMMIT="$(git rev-parse "origin/${BROKERAI_BRANCH}")"
+      BROKERAI_TARGET_COMMIT="$(_brokerai_git rev-parse "origin/${BROKERAI_BRANCH}")"
       BROKERAI_TARGET_DISPLAY="branch:${BROKERAI_BRANCH}"
       ;;
     release)
@@ -117,7 +134,7 @@ _brokerai_resolve_update_target() {
       BROKERAI_TARGET_REF="$(_brokerai_normalize_tag "${BROKERAI_RELEASE}")"
       local tag
       tag="$(_brokerai_resolve_release_tag "${BROKERAI_TARGET_REF}")" || return 1
-      BROKERAI_TARGET_COMMIT="$(git rev-parse "${tag}^{commit}")"
+      BROKERAI_TARGET_COMMIT="$(_brokerai_git rev-parse "${tag}^{commit}")"
       BROKERAI_TARGET_DISPLAY="release:${BROKERAI_TARGET_REF}"
       ;;
     latest-release)
@@ -130,7 +147,7 @@ _brokerai_resolve_update_target() {
       BROKERAI_TARGET_REF="$(_brokerai_normalize_tag "${latest_tag}")"
       local resolved_tag
       resolved_tag="$(_brokerai_resolve_release_tag "${BROKERAI_TARGET_REF}")" || return 1
-      BROKERAI_TARGET_COMMIT="$(git rev-parse "${resolved_tag}^{commit}")"
+      BROKERAI_TARGET_COMMIT="$(_brokerai_git rev-parse "${resolved_tag}^{commit}")"
       BROKERAI_TARGET_DISPLAY="latest-release:${BROKERAI_TARGET_REF}"
       ;;
     *)
@@ -143,13 +160,14 @@ _brokerai_resolve_update_target() {
 _brokerai_checkout_target() {
   case "${BROKERAI_UPDATE_TRACK}" in
     branch)
-      git checkout "${BROKERAI_BRANCH}" 2>/dev/null || git checkout -B "${BROKERAI_BRANCH}" "origin/${BROKERAI_BRANCH}"
-      git reset --hard "origin/${BROKERAI_BRANCH}"
+      _brokerai_git checkout "${BROKERAI_BRANCH}" 2>/dev/null \
+        || _brokerai_git checkout -B "${BROKERAI_BRANCH}" "origin/${BROKERAI_BRANCH}"
+      _brokerai_git reset --hard "origin/${BROKERAI_BRANCH}"
       ;;
     release | latest-release)
       local tag
       tag="$(_brokerai_resolve_release_tag "${BROKERAI_TARGET_REF}")"
-      git checkout --detach "${tag}"
+      _brokerai_git checkout --detach "${tag}"
       ;;
   esac
 }
