@@ -63,6 +63,7 @@ async def put_update_settings(
         )
 
     settings = get_settings()
+    auto_update = body.auto_update if body.update_track != "release" else False
 
     try:
         saved_path = save_update_env_values(
@@ -70,7 +71,7 @@ async def put_update_settings(
             branch=body.branch,
             release=body.release,
             repo=settings.repo,
-            auto_update=body.auto_update,
+            auto_update=auto_update,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

@@ -4,6 +4,7 @@ import { api } from "./api/client";
 import Setup from "./pages/Setup";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import Research from "./pages/Research";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
 
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/research" element={<Research />} />
           <Route path="/settings/*" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

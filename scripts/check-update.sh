@@ -137,21 +137,30 @@ if ! _brokerai_resolve_update_target 2>"${_RESOLVE_ERR_FILE}"; then
 fi
 rm -f "${_RESOLVE_ERR_FILE}"
 
+COMMIT_RELATION="$(_brokerai_commit_relation "${CURRENT}" "${BROKERAI_TARGET_COMMIT}")"
 UPDATE_AVAILABLE=false
-if [[ "${CURRENT}" != "${BROKERAI_TARGET_COMMIT}" \
-  || "${BROKERAI_LOCK_TRACK}" != "${BROKERAI_TARGET_TRACK}" \
-  || "${BROKERAI_LOCK_REF}" != "${BROKERAI_TARGET_REF}" ]]; then
-  UPDATE_AVAILABLE=true
-fi
+CHK_STATUS="up-to-date"
+CHK_MESSAGE=""
+
+case "${COMMIT_RELATION}" in
+  upgrade | diverged)
+    if [[ "${CURRENT}" != "${BROKERAI_TARGET_COMMIT}" ]]; then
+      UPDATE_AVAILABLE=true
+      CHK_STATUS="update-available"
+    fi
+    ;;
+  downgrade)
+    CHK_STATUS="downgrade-blocked"
+    CHK_MESSAGE="Configured target ${BROKERAI_TARGET_DISPLAY} @ ${BROKERAI_TARGET_COMMIT:0:7} is older than installed ${BROKERAI_LOCK_TRACK:-?}:${BROKERAI_LOCK_REF:-?} @ ${CURRENT:0:7}. Downgrades are not allowed."
+    ;;
+  unknown)
+    fail "Could not compare installed commit ${CURRENT:0:7} with target ${BROKERAI_TARGET_COMMIT:0:7}"
+    ;;
+esac
 
 if [[ "${JSON}" == "true" ]]; then
-  export _CHK_STATUS _CHK_DISPLAY _CHK_TRACK _CHK_LOCK_TRACK _CHK_LOCK_REF
-  export _CHK_CURRENT _CHK_TARGET_TRACK _CHK_TARGET_REF _CHK_TARGET_COMMIT _CHK_AVAILABLE
-  if [[ "${UPDATE_AVAILABLE}" == "true" ]]; then
-    _CHK_STATUS="update-available"
-  else
-    _CHK_STATUS="up-to-date"
-  fi
+  export _CHK_STATUS _CHK_DISPLAY _CHK_TRACK _CHK_LOCK_TRACK _CHK_LOCK_REF _CHK_MESSAGE
+  export _CHK_CURRENT _CHK_TARGET_TRACK _CHK_TARGET_REF _CHK_TARGET_COMMIT _CHK_AVAILABLE _CHK_RELATION
   _CHK_DISPLAY="${BROKERAI_TARGET_DISPLAY}"
   _CHK_TRACK="${BROKERAI_UPDATE_TRACK}"
   _CHK_LOCK_TRACK="${BROKERAI_LOCK_TRACK}"
@@ -161,12 +170,15 @@ if [[ "${JSON}" == "true" ]]; then
   _CHK_TARGET_REF="${BROKERAI_TARGET_REF}"
   _CHK_TARGET_COMMIT="${BROKERAI_TARGET_COMMIT}"
   _CHK_AVAILABLE="${UPDATE_AVAILABLE}"
+  _CHK_RELATION="${COMMIT_RELATION}"
+  _CHK_STATUS="${CHK_STATUS}"
   "${BROKERAI_PYTHON}" <<'PY'
 import json, os
 current = os.environ["_CHK_CURRENT"]
 target = os.environ["_CHK_TARGET_COMMIT"]
-print(json.dumps({
+payload = {
     "status": os.environ["_CHK_STATUS"],
+    "commit_relation": os.environ["_CHK_RELATION"],
     "configured_pin": os.environ["_CHK_DISPLAY"],
     "update_track": os.environ["_CHK_TRACK"],
     "installed": {
@@ -181,8 +193,19 @@ print(json.dumps({
         "commit": target,
         "commit_short": target[:7],
     },
-}))
+}
+message = os.environ.get("_CHK_MESSAGE", "").strip()
+if message:
+    payload["message"] = message
+print(json.dumps(payload))
 PY
+elif [[ "${CHK_STATUS}" == "downgrade-blocked" ]]; then
+  echo "Downgrade blocked"
+  echo "  Configured : ${BROKERAI_TARGET_DISPLAY}"
+  echo "  Installed  : ${BROKERAI_LOCK_TRACK:-?}:${BROKERAI_LOCK_REF:-?} @ ${CURRENT:0:7}"
+  echo "  Available  : ${BROKERAI_TARGET_DISPLAY} @ ${BROKERAI_TARGET_COMMIT:0:7}"
+  echo ""
+  echo "${CHK_MESSAGE}"
 elif [[ "${UPDATE_AVAILABLE}" == "true" ]]; then
   echo "Update available"
   echo "  Configured : ${BROKERAI_TARGET_DISPLAY}"

@@ -31,7 +31,7 @@ export type UpdateVersionRef = {
 };
 
 export type UpdateSettingsConfig = {
-  update_track: "branch" | "release" | "latest-release";
+  update_track: "branch" | "release" | "latest-release" | "next-major";
   branch: string;
   release: string;
   repo: string;
@@ -49,7 +49,7 @@ export type UpdateStatusResponse = {
   step?: string;
   progress?: number;
   configured_pin?: string;
-  update_track?: "branch" | "release" | "latest-release";
+  update_track?: "branch" | "release" | "latest-release" | "next-major";
   branch?: string;
   release?: string | null;
   repo?: string;
@@ -59,9 +59,12 @@ export type UpdateStatusResponse = {
   installed_commit?: string;
   installed_version?: string;
   update_available?: boolean | null;
+  downgrade_blocked?: boolean | null;
   log_tail?: string[];
   check?: {
-    status?: string;
+    status?: "up-to-date" | "update-available" | "downgrade-blocked" | "error";
+    commit_relation?: "same" | "upgrade" | "downgrade" | "diverged" | "unknown";
+    message?: string;
     configured_pin?: string;
     update_track?: string;
     available?: UpdateVersionRef;
@@ -115,4 +118,114 @@ export const api = {
     }),
   startBot: (name: string) => request(`/api/bots/${name}/start`, { method: "POST" }),
   stopBot: (name: string) => request(`/api/bots/${name}/stop`, { method: "POST" }),
+
+  listModels: () => request<{ models: AiModel[] }>("/api/settings/models"),
+  createModel: (data: CreateModelInput) =>
+    request<AiModel>("/api/settings/models", { method: "POST", body: JSON.stringify(data) }),
+  updateModel: (id: string, data: UpdateModelInput) =>
+    request<AiModel>(`/api/settings/models/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  toggleModel: (id: string, enabled: boolean) =>
+    request<AiModel>(`/api/settings/models/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+  testModel: (id: string) =>
+    request<{ ok: boolean; message: string }>(`/api/settings/models/${id}/test`, { method: "POST" }),
+  testModelConnection: (data: CreateModelInput) =>
+    request<{ ok: boolean; message: string }>("/api/settings/models/test-connection", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  getDataConnections: () =>
+    request<{ newsapi: NewsApiConnection }>("/api/settings/data-connections"),
+  saveNewsApi: (data: { api_key: string; enabled: boolean }) =>
+    request<NewsApiConnection>("/api/settings/data-connections/newsapi", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  testNewsApi: () =>
+    request<{ ok: boolean; message: string }>("/api/settings/data-connections/newsapi/test", {
+      method: "POST",
+    }),
+
+  getResearchSettings: () => request<ResearchSettings>("/api/settings/research"),
+  saveResearchSettings: (data: Partial<ResearchSettings>) =>
+    request<ResearchSettings>("/api/settings/research", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  getForexPairs: () =>
+    request<{ catalog: string[]; enabled_pairs: string[]; enabled: boolean }>(
+      "/api/settings/assets/forex/pairs",
+    ),
+  getAssetSettings: (assetClass: AssetClass) =>
+    request<AssetSettings>(`/api/settings/assets/${assetClass}`),
+  saveAssetSettings: (assetClass: AssetClass, data: { enabled: boolean; enabled_pairs?: string[] }) =>
+    request<AssetSettings>(`/api/settings/assets/${assetClass}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  listResearchReports: (limit = 50) =>
+    request<{ reports: ResearchReportMeta[] }>(`/api/research/reports?limit=${limit}`),
+};
+
+export type AiModel = {
+  id: string;
+  title: string;
+  type: string;
+  base_url: string;
+  model_name: string;
+  api_key: string | null;
+  api_key_set: boolean;
+  enabled: boolean;
+  created_at: string;
+};
+
+export type CreateModelInput = {
+  title: string;
+  type: "open_webui";
+  base_url: string;
+  model_name: string;
+  api_key?: string;
+  enabled?: boolean;
+};
+
+export type UpdateModelInput = {
+  title?: string;
+  base_url?: string;
+  model_name?: string;
+  api_key?: string;
+  enabled?: boolean;
+};
+
+export type NewsApiConnection = {
+  type: string;
+  enabled: boolean;
+  api_key: string | null;
+  api_key_set: boolean;
+};
+
+export type ResearchSettings = {
+  id: string;
+  selected_model_id: string | null;
+  daily_report_enabled: boolean;
+  last_daily_run_date: string | null;
+};
+
+export type AssetClass = "forex" | "stocks" | "crypto" | "futures" | "options";
+
+export type AssetSettings = {
+  asset_class: AssetClass;
+  enabled: boolean;
+  enabled_pairs?: string[];
+};
+
+export type ResearchReportMeta = {
+  filename: string;
+  date: string;
+  type: string;
+  path: string;
 };

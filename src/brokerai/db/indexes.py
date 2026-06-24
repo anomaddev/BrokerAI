@@ -30,4 +30,12 @@ async def ensure_indexes() -> None:
         [("symbol", 1), ("created_at", -1)],
         name="analysis_results_symbol_created_at",
     )
+    await db.ai_models.create_index("id", unique=True, name="ai_models_id")
+    await db.data_connections.create_index("type", unique=True, name="data_connections_type")
+    await db.research_settings.create_index("id", unique=True, name="research_settings_id")
+    await db.asset_settings.create_index(
+        "asset_class",
+        unique=True,
+        name="asset_settings_asset_class",
+    )
     logger.info("MongoDB indexes ensured")

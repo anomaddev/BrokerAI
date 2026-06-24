@@ -10,6 +10,7 @@
 #   branch         — latest commit on BROKERAI_BRANCH (default)
 #   release        — pinned to BROKERAI_RELEASE tag (e.g. 0.1.0)
 #   latest-release — newest GitHub release tag
+#   next-major     — newest release within the installed major version
 
 set -euo pipefail
 
@@ -34,6 +35,7 @@ Update tracks (set in /etc/brokerai/config.env):
   branch          Latest commit on BROKERAI_BRANCH
   release         Pinned to BROKERAI_RELEASE (e.g. 0.1.0 or v0.1.0)
   latest-release  Newest GitHub release tag
+  next-major      Newest release within installed major version
 
 Options:
   --force   Run even if BROKERAI_AUTO_UPDATE=false
@@ -114,12 +116,21 @@ fi
 
 log "Target: ${BROKERAI_TARGET_DISPLAY} @ ${BROKERAI_TARGET_COMMIT:0:7}"
 
-if [[ "${CURRENT}" == "${BROKERAI_TARGET_COMMIT}" \
-  && "${BROKERAI_LOCK_TRACK}" == "${BROKERAI_TARGET_TRACK}" \
-  && "${BROKERAI_LOCK_REF}" == "${BROKERAI_TARGET_REF}" ]]; then
-  log "Already up to date (${BROKERAI_TARGET_DISPLAY} @ ${BROKERAI_TARGET_COMMIT:0:7})"
-  exit 0
-fi
+COMMIT_RELATION="$(_brokerai_commit_relation "${CURRENT}" "${BROKERAI_TARGET_COMMIT}")"
+case "${COMMIT_RELATION}" in
+  same)
+    log "Already up to date (${BROKERAI_TARGET_DISPLAY} @ ${BROKERAI_TARGET_COMMIT:0:7})"
+    exit 0
+    ;;
+  downgrade)
+    log "Refusing downgrade: installed ${CURRENT:0:7} is ahead of target ${BROKERAI_TARGET_COMMIT:0:7} (${BROKERAI_TARGET_DISPLAY})"
+    exit 0
+    ;;
+  unknown)
+    log "ERROR: could not compare installed ${CURRENT:0:7} with target ${BROKERAI_TARGET_COMMIT:0:7}"
+    exit 1
+    ;;
+esac
 
 log "Updating ${CURRENT:0:7} -> ${BROKERAI_TARGET_COMMIT:0:7} (${BROKERAI_TARGET_DISPLAY})"
 _brokerai_checkout_target 2>>"${LOG_FILE}"

@@ -218,6 +218,7 @@ start_api() {
   log "Starting API on port ${port}"
   "${VENV}/bin/uvicorn" brokerai.web.app:app \
     --reload \
+    --reload-exclude '.env' \
     --host 127.0.0.1 \
     --port "${port}" &
   PIDS+=("$!")

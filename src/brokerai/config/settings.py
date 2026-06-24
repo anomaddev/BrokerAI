@@ -1,16 +1,32 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+import re
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-UpdateTrack = Literal["branch", "release", "latest-release"]
+from brokerai.config.env_file import sync_update_env_from_file
+
+UpdateTrack = Literal["branch", "release", "latest-release", "next-major"]
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DEV_ENV = _REPO_ROOT / ".env"
+_PROD_ENV = Path("/etc/brokerai/config.env")
+
+
+def _settings_env_files() -> tuple[str, ...]:
+    files: list[str] = []
+    if _DEV_ENV.exists():
+        files.append(str(_DEV_ENV))
+    if _PROD_ENV.exists():
+        files.append(str(_PROD_ENV))
+    return tuple(files)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="BROKERAI_",
-        env_file=(".env", "/etc/brokerai/config.env"),
+        env_file=_settings_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -46,7 +62,27 @@ class Settings(BaseSettings):
         if self.update_track == "release":
             tag = self.release or "unset"
             return f"release:{tag.lstrip('v')}"
+        if self.update_track == "next-major":
+            ref = self._installed_lock_ref()
+            if ref:
+                match = re.match(r"^v?(\d+)", ref)
+                if match:
+                    return f"next-major:{match.group(1)}.x"
+            return "next-major"
         return "latest-release"
+
+    def _installed_lock_ref(self) -> str:
+        prod = Path("/opt/BrokerAI_version.txt")
+        path = prod if prod.exists() else self.data_dir / "version.lock"
+        if not path.exists():
+            return ""
+        raw = path.read_text().strip()
+        if not raw or "=" not in raw:
+            return ""
+        for line in raw.splitlines():
+            if line.startswith("ref="):
+                return line.split("=", 1)[1].strip()
+        return ""
 
 
 @lru_cache
@@ -55,5 +91,6 @@ def get_settings() -> Settings:
 
 
 def reload_settings() -> Settings:
+    sync_update_env_from_file()
     get_settings.cache_clear()
     return get_settings()

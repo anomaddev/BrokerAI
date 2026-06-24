@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from brokerai.config.settings import Settings, get_settings
+from brokerai.config.settings import Settings, get_settings, reload_settings
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,24 @@ async def fetch_check_update(settings: Settings | None = None) -> dict:
     return {}
 
 
+def _parse_check_result(
+    resolved_check: dict | None,
+) -> tuple[bool | None, bool, str | None, str | None]:
+    if not resolved_check:
+        return None, False, None, None
+    status = resolved_check.get("status")
+    if status == "error":
+        return None, False, str(resolved_check.get("message") or "Update check failed"), None
+    if status == "update-available":
+        return True, False, None, None
+    if status == "downgrade-blocked":
+        message = str(resolved_check.get("message") or "Downgrades are not allowed.")
+        return False, True, None, message
+    if status == "up-to-date":
+        return False, False, None, None
+    return None, False, None, None
+
+
 def _installed_info_from_lock(settings: Settings | None = None) -> dict[str, str]:
     lock = read_version_lock(settings)
     commit = lock.get("commit") or ""
@@ -276,13 +294,7 @@ def _resolve_installed_info(settings: Settings, resolved_check: dict | None) -> 
 
 def _build_dev_status_payload(settings: Settings, *, check: dict | None) -> dict:
     resolved_check = check if check is not None else _CACHED_CHECK
-    update_available: bool | None = None
-    check_error: str | None = None
-    if resolved_check:
-        if resolved_check.get("status") == "error":
-            check_error = str(resolved_check.get("message") or "Update check failed")
-        else:
-            update_available = resolved_check.get("status") == "update-available"
+    update_available, downgrade_blocked, check_error, downgrade_message = _parse_check_result(resolved_check)
 
     installed = _resolve_installed_info(settings, resolved_check)
 
@@ -295,6 +307,8 @@ def _build_dev_status_payload(settings: Settings, *, check: dict | None) -> dict
     default_message = "Local dev — checking uses git; applying updates is simulated only"
     if check_error:
         default_message = check_error
+    elif downgrade_message:
+        default_message = downgrade_message
     elif resolved_check and not update_available and status == "up_to_date":
         default_message = "Up to date"
     elif resolved_check and update_available:
@@ -314,12 +328,14 @@ def _build_dev_status_payload(settings: Settings, *, check: dict | None) -> dict
         "log_tail": list(_DEV_SIM.get("log_tail") or []),
         "check": resolved_check if resolved_check and resolved_check.get("status") != "error" else None,
         "update_available": update_available if resolved_check and not check_error else None,
+        "downgrade_blocked": downgrade_blocked if resolved_check and not check_error else None,
         "checked": resolved_check is not None,
         "check_error": check_error,
     }
 
 
 async def check_for_updates(settings: Settings | None = None) -> dict:
+    reload_settings()
     settings = settings or get_settings()
     check = await fetch_check_update(settings)
 
@@ -331,6 +347,10 @@ async def check_for_updates(settings: Settings | None = None) -> dict:
 
 async def resolve_update_status(settings: Settings | None = None) -> dict:
     settings = settings or get_settings()
+
+    # Refresh stale failed checks (e.g. before the first GitHub release existed).
+    if _CACHED_CHECK is None or _CACHED_CHECK.get("status") == "error":
+        await fetch_check_update(settings)
 
     if is_dev_install(settings):
         return _build_dev_status_payload(settings, check=_CACHED_CHECK)
@@ -358,19 +378,15 @@ async def _build_status_payload(settings: Settings, *, check: dict | None) -> di
 
     resolved_check = None if status == "running" else check
 
-    update_available: bool | None = None
-    check_error: str | None = None
-    if resolved_check:
-        if resolved_check.get("status") == "error":
-            check_error = str(resolved_check.get("message") or "Update check failed")
-        else:
-            update_available = resolved_check.get("status") == "update-available"
-            if status not in ("running", "failed") and not update_available:
-                status = "up_to_date"
+    update_available, downgrade_blocked, check_error, downgrade_message = _parse_check_result(resolved_check)
+    if resolved_check and status not in ("running", "failed") and not update_available:
+        status = "up_to_date"
 
     message = state.get("message") or ""
     if check_error and not message:
         message = check_error
+    elif downgrade_message and not message and status != "running":
+        message = downgrade_message
 
     return {
         "dev_mode": False,
@@ -389,6 +405,7 @@ async def _build_status_payload(settings: Settings, *, check: dict | None) -> di
         "log_tail": read_update_log_tail(settings=settings),
         "check": resolved_check if resolved_check and resolved_check.get("status") != "error" else None,
         "update_available": update_available,
+        "downgrade_blocked": downgrade_blocked if resolved_check and not check_error else None,
         "checked": resolved_check is not None,
         "check_error": check_error,
     }

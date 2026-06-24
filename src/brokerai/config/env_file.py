@@ -19,6 +19,9 @@ _UPDATE_ENV_KEYS = (
 
 
 def config_file_path() -> Path:
+    # Prefer repo .env for local dev; use prod config on installed hosts.
+    if _DEV_CONFIG.exists() and not _PROD_CONFIG.exists():
+        return _DEV_CONFIG
     if _PROD_CONFIG.exists():
         return _PROD_CONFIG
     return _DEV_CONFIG
@@ -29,6 +32,35 @@ def config_file_writable() -> bool:
     if not path.exists():
         return path.parent.exists() and os.access(path.parent, os.W_OK)
     return os.access(path, os.W_OK)
+
+
+def read_env_values(path: Path, keys: tuple[str, ...]) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if key in keys:
+            values[key] = value.strip()
+    return values
+
+
+def read_update_env_values() -> dict[str, str]:
+    return read_env_values(config_file_path(), _UPDATE_ENV_KEYS)
+
+
+def apply_update_env_to_process(values: dict[str, str]) -> None:
+    for key in _UPDATE_ENV_KEYS:
+        if key in values:
+            os.environ[key] = values[key]
+
+
+def sync_update_env_from_file() -> None:
+    apply_update_env_to_process(read_update_env_values())
 
 
 def write_env_values(path: Path, values: dict[str, str]) -> None:
@@ -68,14 +100,13 @@ def save_update_env_values(
     if not config_file_writable():
         raise PermissionError(f"Config file is not writable: {path}")
 
-    write_env_values(
-        path,
-        {
-            "BROKERAI_UPDATE_TRACK": update_track,
-            "BROKERAI_BRANCH": branch.strip(),
-            "BROKERAI_RELEASE": release.strip(),
-            "BROKERAI_REPO": repo.strip(),
-            "BROKERAI_AUTO_UPDATE": "true" if auto_update else "false",
-        },
-    )
+    values = {
+        "BROKERAI_UPDATE_TRACK": update_track,
+        "BROKERAI_BRANCH": branch.strip(),
+        "BROKERAI_RELEASE": release.strip(),
+        "BROKERAI_REPO": repo.strip(),
+        "BROKERAI_AUTO_UPDATE": "true" if auto_update else "false",
+    }
+    write_env_values(path, values)
+    apply_update_env_to_process(values)
     return path

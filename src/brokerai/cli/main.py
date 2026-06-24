@@ -17,6 +17,7 @@ from brokerai.cli.helpers import (
     run_systemctl,
 )
 from brokerai.cli.output import print_bot_result, print_bots, print_help, print_json, print_status
+from brokerai.cli.research import register_research_commands
 from brokerai.config.settings import get_settings
 from brokerai.core.control import ControlClient, ControlError, ControlTimeout
 from brokerai.core.orchestrator import run_orchestrator
@@ -137,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     help_cmd = sub.add_parser("help", help="Show help")
-    help_cmd.add_argument("topic", nargs="?", help="Command group (status, bots, update, services, run, version)")
+    help_cmd.add_argument("topic", nargs="?", help="Command group (status, bots, update, services, run, version, research)")
     help_cmd.set_defaults(func=_cmd_help)
 
     status = sub.add_parser("status", help="Show orchestrator and bot status")
@@ -182,6 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_sub = run.add_subparsers(dest="run_target", required=True)
     run_orch = run_sub.add_parser("orchestrator", help="Run the orchestrator (systemd)")
     run_orch.set_defaults(func=_cmd_run_orchestrator)
+
+    register_research_commands(sub)
 
     version = sub.add_parser("version", help="Show version information")
     version.add_argument("--json", action="store_true")

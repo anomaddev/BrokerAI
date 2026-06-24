@@ -13,7 +13,12 @@ from brokerai.config.settings import get_settings
 from brokerai.core.control import ControlClient, ControlTimeout
 from brokerai.db import ping_db
 from brokerai.db.client import get_db
+from brokerai.web.routes.assets_settings import router as assets_settings_router
 from brokerai.web.routes.auth import require_auth, router as auth_router
+from brokerai.web.routes.data_connections_settings import router as data_connections_router
+from brokerai.web.routes.models_settings import router as models_settings_router
+from brokerai.web.routes.research import router as research_router
+from brokerai.web.routes.research_settings_route import router as research_settings_router
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.system import router as system_router
 from brokerai.web.update_runner import (
@@ -34,6 +39,11 @@ VERSION_FILE = Path("/opt/BrokerAI_version.txt")
 
 app.include_router(auth_router)
 app.include_router(settings_router)
+app.include_router(models_settings_router)
+app.include_router(data_connections_router)
+app.include_router(research_settings_router)
+app.include_router(assets_settings_router)
+app.include_router(research_router)
 app.include_router(system_router)
 
 if STATIC_DIR.exists():
@@ -92,6 +102,17 @@ async def settings_page(path: str) -> FileResponse:
     return _spa_index()
 
 
+@app.get("/research")
+async def research_page() -> FileResponse:
+    return _spa_index()
+
+
+@app.get("/research/{path:path}")
+async def research_subpage(path: str) -> FileResponse:
+    _ = path
+    return _spa_index()
+
+
 @app.get("/api/health")
 async def health() -> JSONResponse:
     heartbeat = _read_heartbeat()
@@ -120,7 +141,15 @@ async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
     try:
         handle = await get_db()
         counts = {}
-        for name in ("market_data", "research_cache", "analysis_results"):
+        for name in (
+            "market_data",
+            "research_cache",
+            "analysis_results",
+            "ai_models",
+            "data_connections",
+            "research_settings",
+            "asset_settings",
+        ):
             counts[name] = await handle.db[name].count_documents({})
         return JSONResponse(
             {

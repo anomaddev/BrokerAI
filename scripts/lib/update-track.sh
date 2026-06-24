@@ -90,6 +90,8 @@ _brokerai_write_install_lock_from_config() {
     ref="$(_brokerai_normalize_tag "${BROKERAI_RELEASE}")"
   elif [[ "${track}" == "latest-release" ]]; then
     ref="latest"
+  elif [[ "${track}" == "next-major" ]]; then
+    ref="${BROKERAI_TARGET_REF:-next-major}"
   fi
   _brokerai_write_version_lock "${track}" "${ref}" "${commit}"
 }
@@ -139,6 +141,104 @@ print(names[0])
 ")"
   [[ -n "${tag}" ]] || return 1
   echo "${tag}"
+}
+
+_brokerai_pick_newest_tag_in_major() {
+  local py="${1:?}" major="${2:?}" json="${3:-}"
+  [[ -n "${json}" ]] || return 1
+  local tag
+  tag="$(printf '%s' "${json}" | _brokerai_python_read_json "${py}" "
+import re
+major = int('${major}')
+names = []
+if isinstance(data, list):
+    for item in data:
+        if isinstance(item, dict):
+            name = item.get('tag_name') or item.get('name') or ''
+            if name:
+                names.append(name)
+if not names:
+    sys.exit(1)
+def parse_parts(name):
+    normalized = re.sub(r'^v', '', name)
+    parts = [int(x) for x in re.findall(r'\\d+', normalized)]
+    return parts
+candidates = []
+for name in names:
+    parts = parse_parts(name)
+    if parts and parts[0] == major:
+        candidates.append((parts, name))
+if not candidates:
+    sys.exit(1)
+candidates.sort(key=lambda item: item[0], reverse=True)
+print(candidates[0][1])
+")"
+  [[ -n "${tag}" ]] || return 1
+  echo "${tag}"
+}
+
+_brokerai_semver_major() {
+  local ref="${1:-}" py major
+  [[ -n "${ref}" ]] || return 1
+  py="${BROKERAI_PYTHON:-${INSTALL_DIR}/venv/bin/python}"
+  if [[ ! -x "${py}" ]]; then
+    py="$(command -v python3 || true)"
+  fi
+  [[ -n "${py}" ]] || return 1
+  major="$(
+    REF="${ref}" "${py}" -c '
+import os, re
+ref = os.environ.get("REF", "")
+normalized = re.sub(r"^v", "", ref.strip())
+parts = [int(x) for x in re.findall(r"\d+", normalized)]
+if not parts:
+    raise SystemExit(1)
+print(parts[0])
+' 2>/dev/null || true
+  )"
+  [[ -n "${major}" ]] || return 1
+  echo "${major}"
+}
+
+_brokerai_installed_semver_ref() {
+  local ref="${BROKERAI_LOCK_REF:-}" tag
+  if [[ -n "${ref}" && "${ref}" != "latest" && "${ref}" != "main" && "${ref}" =~ [0-9] ]]; then
+    _brokerai_normalize_tag "${ref}"
+    return 0
+  fi
+  tag="$(_brokerai_git describe --tags --exact-match 2>/dev/null || true)"
+  if [[ -n "${tag}" ]]; then
+    _brokerai_normalize_tag "${tag}"
+    return 0
+  fi
+  tag="$(_brokerai_git tag --points-at HEAD 2>/dev/null | head -1 || true)"
+  if [[ -n "${tag}" ]]; then
+    _brokerai_normalize_tag "${tag}"
+    return 0
+  fi
+  echo "Could not determine installed semver version for next-major track. Install from a release tag first." >&2
+  return 1
+}
+
+_brokerai_github_release_tags_json() {
+  local repo_slug="${1:?}" py="${2:?}"
+  local releases_json tags_json
+  releases_json="$(_brokerai_github_api_get "https://api.github.com/repos/${repo_slug}/releases?per_page=100")"
+  tags_json="$(_brokerai_github_api_get "https://api.github.com/repos/${repo_slug}/tags?per_page=100")"
+  COMBINED_RELEASES="${releases_json}" COMBINED_TAGS="${tags_json}" "${py}" -c '
+import json, os
+items = []
+for raw in (os.environ.get("COMBINED_RELEASES", ""), os.environ.get("COMBINED_TAGS", "")):
+    if not raw:
+        continue
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        continue
+    if isinstance(data, list):
+        items.extend(data)
+print(json.dumps(items))
+' 2>/dev/null || true
 }
 
 _brokerai_git_latest_remote_tag() {
@@ -196,6 +296,44 @@ print(tag)
 
   echo "No GitHub releases or tags found for ${repo_slug}. Publish a release or tag to use latest-release." >&2
   return 1
+}
+
+_brokerai_github_next_major_release_tag() {
+  local repo_slug installed_ref major py tags_json tag
+  repo_slug="$(_brokerai_parse_repo_slug "${BROKERAI_REPO}")"
+  py="${BROKERAI_PYTHON:-${INSTALL_DIR}/venv/bin/python}"
+  if [[ ! -x "${py}" ]]; then
+    py="$(command -v python3 || true)"
+  fi
+  [[ -n "${py}" ]] || {
+    echo "python3 is required to resolve next-major release tags" >&2
+    return 1
+  }
+
+  installed_ref="$(_brokerai_installed_semver_ref)" || return 1
+  major="$(_brokerai_semver_major "${installed_ref}")" || {
+    echo "Could not parse semver major from installed version ${installed_ref}" >&2
+    return 1
+  }
+
+  tags_json="$(_brokerai_github_release_tags_json "${repo_slug}" "${py}")"
+  tag="$(_brokerai_pick_newest_tag_in_major "${py}" "${major}" "${tags_json}")" || {
+    tag="$(_brokerai_git_latest_remote_tag)" || true
+    if [[ -n "${tag}" ]]; then
+      local remote_major
+      remote_major="$(_brokerai_semver_major "$(_brokerai_normalize_tag "${tag}")")" || true
+      if [[ "${remote_major}" != "${major}" ]]; then
+        tag=""
+      fi
+    fi
+  }
+
+  if [[ -z "${tag}" ]]; then
+    echo "No GitHub releases or tags found for major version ${major} on ${repo_slug}." >&2
+    return 1
+  fi
+
+  echo "${tag}"
 }
 
 _brokerai_resolve_release_tag() {
@@ -299,11 +437,87 @@ _brokerai_resolve_update_target() {
       BROKERAI_TARGET_COMMIT="$(_brokerai_git rev-parse "${resolved_tag}^{commit}")"
       BROKERAI_TARGET_DISPLAY="latest-release:${BROKERAI_TARGET_REF}"
       ;;
+    next-major)
+      local next_major_tag installed_major
+      next_major_tag="$(_brokerai_github_next_major_release_tag)" || return 1
+      if [[ -z "${next_major_tag}" ]]; then
+        echo "Could not resolve next-major GitHub release" >&2
+        return 1
+      fi
+      installed_major="$(_brokerai_semver_major "$(_brokerai_installed_semver_ref)")" || return 1
+      BROKERAI_TARGET_REF="$(_brokerai_normalize_tag "${next_major_tag}")"
+      local resolved_next_tag
+      resolved_next_tag="$(_brokerai_resolve_release_tag "${BROKERAI_TARGET_REF}")" || return 1
+      BROKERAI_TARGET_COMMIT="$(_brokerai_git rev-parse "${resolved_next_tag}^{commit}")"
+      BROKERAI_TARGET_DISPLAY="next-major:${installed_major}.x→${BROKERAI_TARGET_REF}"
+      ;;
     *)
       echo "Unknown BROKERAI_UPDATE_TRACK: ${BROKERAI_UPDATE_TRACK}" >&2
       return 1
       ;;
   esac
+}
+
+_brokerai_commit_exists() {
+  local sha="$1"
+  [[ -n "${sha}" && "${sha}" != "unknown" ]] || return 1
+  _brokerai_git cat-file -e "${sha}^{commit}" 2>/dev/null
+}
+
+_brokerai_commit_relation_once() {
+  local installed="$1" target="$2"
+  if [[ "${installed}" == "${target}" ]]; then
+    echo "same"
+    return 0
+  fi
+  if _brokerai_git merge-base --is-ancestor "${installed}" "${target}" 2>/dev/null; then
+    echo "upgrade"
+    return 0
+  fi
+  if _brokerai_git merge-base --is-ancestor "${target}" "${installed}" 2>/dev/null; then
+    echo "downgrade"
+    return 0
+  fi
+  echo "diverged"
+}
+
+_brokerai_deepen_commit_history() {
+  local installed="$1" target="$2"
+  _brokerai_git fetch origin "${installed}" "${target}" --depth=50 2>/dev/null \
+    || _brokerai_git fetch origin --depth=100 2>/dev/null \
+    || _brokerai_git fetch --unshallow 2>/dev/null \
+    || true
+}
+
+_brokerai_commit_relation() {
+  local installed="$1" target="$2" relation
+  BROKERAI_COMMIT_RELATION=""
+
+  if [[ -z "${installed}" || -z "${target}" || "${installed}" == "unknown" || "${target}" == "unknown" ]]; then
+    BROKERAI_COMMIT_RELATION="unknown"
+    echo "unknown"
+    return 0
+  fi
+
+  if ! _brokerai_commit_exists "${installed}" || ! _brokerai_commit_exists "${target}"; then
+    _brokerai_deepen_commit_history "${installed}" "${target}"
+  fi
+
+  relation="$(_brokerai_commit_relation_once "${installed}" "${target}")"
+
+  if ! _brokerai_commit_exists "${installed}" || ! _brokerai_commit_exists "${target}"; then
+    BROKERAI_COMMIT_RELATION="unknown"
+    echo "unknown"
+    return 0
+  fi
+
+  if [[ "${relation}" == "diverged" ]]; then
+    _brokerai_deepen_commit_history "${installed}" "${target}"
+    relation="$(_brokerai_commit_relation_once "${installed}" "${target}")"
+  fi
+
+  BROKERAI_COMMIT_RELATION="${relation}"
+  echo "${relation}"
 }
 
 _brokerai_checkout_target() {
@@ -313,7 +527,7 @@ _brokerai_checkout_target() {
         || _brokerai_git checkout -B "${BROKERAI_BRANCH}" "origin/${BROKERAI_BRANCH}"
       _brokerai_git reset --hard "origin/${BROKERAI_BRANCH}"
       ;;
-    release | latest-release)
+    release | latest-release | next-major)
       local tag
       tag="$(_brokerai_resolve_release_tag "${BROKERAI_TARGET_REF}")"
       _brokerai_git checkout --detach "${tag}"

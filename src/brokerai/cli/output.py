@@ -68,6 +68,16 @@ def print_help(version: str, topic: str | None = None) -> None:
             ),
             "run": "brokerai run orchestrator",
             "version": "brokerai version [--json]",
+            "research": "\n".join(
+                [
+                    "brokerai research status [--json]",
+                    "brokerai research run-daily [--json] [--force]",
+                    "brokerai research list [--json] [--limit N]",
+                    "brokerai research show <date|file> [--json]",
+                    "brokerai research test-news [--json]",
+                    "brokerai research test-model [--json]",
+                ]
+            ),
         }
         detail = topics.get(topic)
         if detail is None:
@@ -88,6 +98,12 @@ Commands:
   bots list           List sub-bot states
   bots start <name>   Start a sub-bot (research, execution, analysis)
   bots stop <name>    Stop a sub-bot
+  research status     Show research configuration readiness
+  research run-daily  Run daily research report now
+  research list       List markdown research reports
+  research show       Print a research report
+  research test-news  Test NewsAPI connection
+  research test-model Test selected research model
   update check        Check for available updates (exit 1 if available)
   update apply        Apply updates now (requires root)
   services status     Show systemd service status
@@ -100,6 +116,7 @@ Examples:
   brokerai status
   brokerai bots list
   brokerai bots stop research
+  brokerai research run-daily --force
   brokerai update check
   sudo brokerai update apply
   brokerai help bots

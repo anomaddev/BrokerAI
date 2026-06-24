@@ -1,20 +1,75 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import {
   api,
   type UpdateSettingsConfig,
   type UpdateStatusResponse,
 } from "../api/client";
+import AssetClassTab from "./settings/AssetClassTab";
+import BrokerGeneralTab from "./settings/BrokerGeneralTab";
+import DataConnectionsTabComponent from "./settings/DataConnectionsTab";
+import ModelsTab from "./settings/ModelsTab";
+import ResearchTab from "./settings/ResearchTab";
 
-const TABS = [
-  { path: "general", label: "General" },
-  { path: "ai-models", label: "AI Models" },
-  { path: "data-connections", label: "Data Connections" },
-  { path: "brokers", label: "Brokers" },
-  { path: "system", label: "System" },
+type SettingsNavItem = {
+  path: string;
+  label: string;
+};
+
+type SettingsNavSection = {
+  label: string;
+  items: SettingsNavItem[];
+};
+
+const SETTINGS_SECTIONS: SettingsNavSection[] = [
+  {
+    label: "General",
+    items: [{ path: "general", label: "General" }],
+  },
+  {
+    label: "Research",
+    items: [
+      { path: "ai-models", label: "Models" },
+      { path: "research", label: "Research" },
+      { path: "data-connections", label: "Data Connections" },
+    ],
+  },
+  {
+    label: "Broker",
+    items: [
+      { path: "broker/general", label: "General" },
+      { path: "broker/forex", label: "Forex" },
+      { path: "broker/stocks", label: "Stocks" },
+      { path: "broker/crypto", label: "Crypto" },
+      { path: "broker/futures", label: "Futures" },
+      { path: "broker/options", label: "Options" },
+    ],
+  },
+  {
+    label: "System",
+    items: [{ path: "system", label: "System" }],
+  },
 ];
 
-const SUB_BROKERS = ["Crypto", "Forex", "Stocks", "Futures", "Options"];
+const SUB_BOT_ORDER = ["brokers", "researcher", "data_manager", "data_analyzer", "executor"];
+
+type BotStatus = { name: string; state: string };
+
+function formatBotName(name: string): string {
+  return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function stateBadgeClass(state: string): string {
+  if (state === "running" || state === "stopped" || state === "error") return state;
+  return "stopped";
+}
+
+function sortBots(bots: BotStatus[]): BotStatus[] {
+  const order = new Map(SUB_BOT_ORDER.map((name, index) => [name, index]));
+  return [...bots].sort(
+    (a, b) => (order.get(a.name) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.name) ?? Number.MAX_SAFE_INTEGER),
+  );
+}
 
 function formatVersionLine(info?: { track?: string; ref?: string; commit_short?: string }): string {
   if (!info?.commit_short && !info?.ref) return "—";
@@ -44,27 +99,44 @@ const UPDATE_TRACK_OPTIONS: Array<{ value: UpdateTrack; label: string }> = [
   { value: "branch", label: "Branch — latest commit" },
   { value: "release", label: "Release — pinned version" },
   { value: "latest-release", label: "Latest release" },
+  { value: "next-major", label: "Up to next major release" },
 ];
+
+function parseSemverMajor(ref?: string | null): number | null {
+  if (!ref) return null;
+  const match = ref.replace(/^v/i, "").match(/^(\d+)/);
+  return match ? Number(match[1]) : null;
+}
 
 function computeConfiguredPin(
   config: Pick<UpdateSettingsConfig, "update_track" | "branch" | "release">,
+  installedRef?: string | null,
 ): string {
   if (config.update_track === "branch") return `branch:${config.branch || "main"}`;
   if (config.update_track === "release") {
     const tag = config.release || "unset";
     return `release:${tag.replace(/^v/, "")}`;
   }
+  if (config.update_track === "next-major") {
+    const major = parseSemverMajor(installedRef);
+    return major != null ? `next-major:${major}.x` : "next-major";
+  }
   return "latest-release";
 }
 
 function configuredTargetInfo(
   config: Pick<UpdateSettingsConfig, "update_track" | "branch" | "release">,
+  installedRef?: string | null,
 ) {
   if (config.update_track === "branch") {
     return { track: "branch", ref: config.branch || "main" };
   }
   if (config.update_track === "release") {
     return { track: "release", ref: (config.release || "unset").replace(/^v/, "") };
+  }
+  if (config.update_track === "next-major") {
+    const major = parseSemverMajor(installedRef);
+    return { track: "next-major", ref: major != null ? `${major}.x` : "same major" };
   }
   return { track: "latest-release", ref: "latest" };
 }
@@ -74,15 +146,55 @@ function checkMatchesConfig(
   config: UpdateSettingsConfig | null,
 ): boolean {
   if (!data || !config) return false;
-  return data.configured_pin === computeConfiguredPin(config);
+  if (data.update_track !== config.update_track) return false;
+  if (config.update_track === "branch") {
+    return (data.branch ?? "main") === (config.branch || "main");
+  }
+  if (config.update_track === "release") {
+    return (data.release ?? "") === config.release;
+  }
+  return true;
+}
+
+function checkResultsMatchConfig(
+  data: UpdateStatusResponse | null,
+  config: UpdateSettingsConfig | null,
+): boolean {
+  if (!data || !config) return false;
+  if (checkMatchesConfig(data, config)) return true;
+  return data.check?.update_track === config.update_track;
+}
+
+function installedInfoRef(data: UpdateStatusResponse | null): string | null {
+  if (!data) return null;
+  return data.check?.installed?.ref ?? data.installed_ref ?? null;
 }
 
 function isTrackConfigPatch(patch: Partial<UpdateSettingsConfig>): boolean {
-  return (
-    patch.update_track !== undefined ||
-    patch.branch !== undefined ||
-    patch.release !== undefined
-  );
+  return patch.update_track !== undefined || patch.branch !== undefined;
+}
+
+type UpdatesDebugSnapshot = {
+  label: string;
+  config: UpdateSettingsConfig | null;
+  update: UpdateStatusResponse | null;
+  checkError: string | null;
+  flags?: Record<string, unknown>;
+};
+
+function logUpdatesDebug({ label, config, update, checkError, flags }: UpdatesDebugSnapshot) {
+  if (!import.meta.env.DEV) return;
+  console.groupCollapsed(`[BrokerAI Updates] ${label}`);
+  console.log("config", config);
+  console.log("update response", update);
+  console.log("checkError state", checkError);
+  if (update) {
+    console.log("resolveCheckError", resolveCheckError(update));
+    console.log("checkMatchesConfig", checkMatchesConfig(update, config));
+    console.log("checkResultsMatchConfig", checkResultsMatchConfig(update, config));
+  }
+  if (flags) console.log("derived", flags);
+  console.groupEnd();
 }
 
 function GeneralTab() {
@@ -94,37 +206,21 @@ function GeneralTab() {
 }
 
 function AiModelsTab() {
-  return (
-    <div className="placeholder">
-      Researcher AI models will be configured here in a future release.
-    </div>
-  );
+  return <ModelsTab />;
 }
 
 function DataConnectionsTab() {
-  return (
-    <div className="placeholder">
-      Data Manager API connections will be configured here in a future release.
-    </div>
-  );
+  return <DataConnectionsTabComponent />;
 }
 
-function BrokersTab() {
-  return (
-    <div className="card-grid">
-      {SUB_BROKERS.map((name) => (
-        <div key={name} className="card">
-          <h3>{name}</h3>
-          <span className="badge stopped">stub</span>
-        </div>
-      ))}
-    </div>
-  );
+function ResearchSettingsTab() {
+  return <ResearchTab />;
 }
 
 function resolveCheckError(data: UpdateStatusResponse | null): string | null {
   if (!data) return null;
   if (data.check_error) return data.check_error;
+  if (isDowngradeBlocked(data)) return null;
 
   if (data.checked && data.update_available == null) {
     const msg = data.message?.trim();
@@ -134,10 +230,25 @@ function resolveCheckError(data: UpdateStatusResponse | null): string | null {
       "Up to date",
       "Update available",
     ]);
-    if (!benign.has(msg)) return msg;
+    if (!benign.has(msg) && !msg.includes("Downgrades are not allowed")) return msg;
   }
 
   return null;
+}
+
+function isDowngradeBlocked(data: UpdateStatusResponse | null): boolean {
+  if (!data) return false;
+  if (data.downgrade_blocked === true) return true;
+  return data.check?.status === "downgrade-blocked";
+}
+
+function downgradeBlockedMessage(data: UpdateStatusResponse | null): string | null {
+  if (!isDowngradeBlocked(data)) return null;
+  return (
+    data?.check?.message?.trim() ||
+    data?.message?.trim() ||
+    "Configured target is older than installed. Downgrades are not allowed."
+  );
 }
 
 function isNoReleasesError(message: string): boolean {
@@ -145,7 +256,9 @@ function isNoReleasesError(message: string): boolean {
   return (
     lower.includes("no github releases") ||
     lower.includes("no releases or tags") ||
-    lower.includes("could not resolve latest github release")
+    lower.includes("could not resolve latest github release") ||
+    lower.includes("could not resolve next-major") ||
+    lower.includes("could not determine installed semver")
   );
 }
 
@@ -196,33 +309,25 @@ function UpdatesCard() {
   const [errorOverlay, setErrorOverlay] = useState<ErrorOverlayState | null>(null);
   const skipSaveRef = useRef(true);
   const saveTimerRef = useRef<number | null>(null);
-  const saveInFlightRef = useRef(false);
-  const pendingSaveRef = useRef<UpdateSettingsConfig | null>(null);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const configRef = useRef<UpdateSettingsConfig | null>(null);
   const userEditedRef = useRef(false);
-  const checkInFlightRef = useRef(false);
 
-  function mergeSavedMetadata(
-    current: UpdateSettingsConfig,
-    saved: UpdateSettingsConfig,
-  ): UpdateSettingsConfig {
-    return {
-      ...current,
-      configured_pin: saved.configured_pin,
-      config_path: saved.config_path,
-      config_writable: saved.config_writable,
-      repo: saved.repo,
-    };
+  function applySavedConfig(saved: UpdateSettingsConfig) {
+    configRef.current = saved;
+    setConfig(saved);
   }
 
-  function showErrorOverlay(title: string, message: string) {
-    setErrorOverlay({ title, message });
-  }
-
-  function applyUpdateData(data: UpdateStatusResponse) {
+  function applyUpdateData(data: UpdateStatusResponse, source = "applyUpdateData") {
     setUpdate(data);
     const checkErr = resolveCheckError(data);
     setCheckError(checkErr);
+    logUpdatesDebug({
+      label: source,
+      config: configRef.current,
+      update: data,
+      checkError: checkErr,
+    });
     if (checkErr) {
       showErrorOverlay(checkErrorTitle(checkErr), checkErr);
       return;
@@ -238,7 +343,9 @@ function UpdatesCard() {
       if (!prev) return prev;
       return {
         ...prev,
-        configured_pin: configRef.current ? computeConfiguredPin(configRef.current) : prev.configured_pin,
+        configured_pin: configRef.current
+          ? computeConfiguredPin(configRef.current, prev.installed_ref)
+          : prev.configured_pin,
         update_track: configRef.current?.update_track ?? prev.update_track,
         branch: configRef.current?.branch ?? prev.branch,
         release: configRef.current?.release ?? prev.release,
@@ -249,28 +356,31 @@ function UpdatesCard() {
     });
   }
 
-  const loadStatus = () => {
-    if (checkInFlightRef.current) return Promise.resolve();
-    return api
+  const loadStatus = () =>
+    api
       .updateStatus()
       .then((data) => {
-        applyUpdateData(data);
+        applyUpdateData(data, "loadStatus");
       })
       .catch((err: Error) => showErrorOverlay("Update status unavailable", err.message));
-  };
 
   const runCheck = async () => {
-    if (checkInFlightRef.current) return;
-    checkInFlightRef.current = true;
+    setChecking(true);
     try {
       const data = await api.checkForUpdate();
-      applyUpdateData(data);
+      applyUpdateData(data, "runCheck");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Update check failed";
       setCheckError(message);
+      logUpdatesDebug({
+        label: "runCheck error",
+        config: configRef.current,
+        update,
+        checkError: message,
+      });
       showErrorOverlay(checkErrorTitle(message), message);
     } finally {
-      checkInFlightRef.current = false;
+      setChecking(false);
     }
   };
 
@@ -280,18 +390,17 @@ function UpdatesCard() {
     async function init() {
       setLoading(true);
       try {
-        const [settingsData, checkData] = await Promise.all([
-          api.getUpdateSettings(),
-          api.checkForUpdate(),
-        ]);
+        const settingsData = await api.getUpdateSettings();
+        if (cancelled) return;
+
+        userEditedRef.current = false;
+        configRef.current = settingsData;
+        setConfig(settingsData);
+        skipSaveRef.current = false;
+
+        const checkData = await api.checkForUpdate();
         if (!cancelled) {
-          setConfig((current) => {
-            if (current || userEditedRef.current) return current;
-            configRef.current = settingsData;
-            return settingsData;
-          });
-          applyUpdateData(checkData);
-          skipSaveRef.current = false;
+          applyUpdateData(checkData, "init");
         }
       } catch (err) {
         if (!cancelled) {
@@ -332,71 +441,40 @@ function UpdatesCard() {
     }
   }, [update?.status]);
 
-  async function drainSaveQueue() {
-    if (saveInFlightRef.current) return;
+  function enqueueSave() {
+    if (skipSaveRef.current) return;
 
-    saveInFlightRef.current = true;
-    setSaving(true);
-    try {
-      while (pendingSaveRef.current) {
-        const next = pendingSaveRef.current;
-        pendingSaveRef.current = null;
+    saveChainRef.current = saveChainRef.current
+      .then(async () => {
+        const snapshot = configRef.current;
+        if (!snapshot?.config_writable || !canPersistConfig(snapshot)) return;
 
-        if (!next.config_writable || !canPersistConfig(next)) {
-          continue;
-        }
-
-        const saved = await api.saveUpdateSettings({
-          update_track: next.update_track,
-          branch: next.branch,
-          release: next.release,
-          auto_update: next.auto_update,
-        });
-
-        if (!pendingSaveRef.current) {
-          setConfig((current) => {
-            if (!current) {
-              configRef.current = saved;
-              return saved;
-            }
-            const merged = mergeSavedMetadata(current, saved);
-            configRef.current = merged;
-            return merged;
-          });
-        }
-
-        setChecking(true);
+        setSaving(true);
         try {
-          await runCheck();
+          const saved = await api.saveUpdateSettings({
+            update_track: snapshot.update_track,
+            branch: snapshot.branch,
+            release: snapshot.release,
+            auto_update: snapshot.auto_update,
+          });
+          applySavedConfig(saved);
+          void runCheck();
+        } catch (err) {
+          showErrorOverlay(
+            "Failed to save settings",
+            err instanceof Error ? err.message : "Failed to save settings",
+          );
         } finally {
-          setChecking(false);
+          setSaving(false);
         }
-      }
-    } catch (err) {
-      pendingSaveRef.current = null;
-      showErrorOverlay(
-        "Failed to save settings",
-        err instanceof Error ? err.message : "Failed to save settings",
-      );
-    } finally {
-      setSaving(false);
-      saveInFlightRef.current = false;
-      if (pendingSaveRef.current) {
-        void drainSaveQueue();
-      }
-    }
-  }
-
-  function persistConfig(next: UpdateSettingsConfig) {
-    if (!next.config_writable || !canPersistConfig(next)) return;
-    configRef.current = next;
-    pendingSaveRef.current = next;
-    void drainSaveQueue();
+      })
+      .catch(() => {
+        // Keep the chain alive after a rejected save.
+      });
   }
 
   function scheduleSave(debounceMs = 0) {
-    const latest = configRef.current;
-    if (skipSaveRef.current || !latest?.config_writable || !canPersistConfig(latest)) return;
+    if (skipSaveRef.current || !configRef.current?.config_writable) return;
 
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
@@ -405,8 +483,7 @@ function UpdatesCard() {
     const delay = debounceMs > 0 ? debounceMs : 150;
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = null;
-      const toSave = configRef.current;
-      if (toSave) void persistConfig(toSave);
+      enqueueSave();
     }, delay);
   }
 
@@ -416,13 +493,23 @@ function UpdatesCard() {
     setConfig((current) => {
       if (!current) return current;
       const next = { ...current, ...patch };
+      if (patch.update_track === "release") {
+        next.auto_update = false;
+      }
       configRef.current = next;
-      scheduleSave(debounceMs);
       return next;
     });
+    const next = configRef.current;
+    if (!next) return;
     if (trackChanged) {
       invalidateVersionMeta();
+      enqueueSave();
+      return;
     }
+    if (patch.release !== undefined) {
+      invalidateVersionMeta();
+    }
+    scheduleSave(debounceMs);
   }
 
   function canPersistConfig(next: UpdateSettingsConfig): boolean {
@@ -457,21 +544,24 @@ function UpdatesCard() {
   const status = update?.status ?? "idle";
   const progress = update?.progress ?? 0;
   const checkFresh = checkMatchesConfig(update, config);
-  const resolvedCheckError = checkFresh ? (checkError ?? resolveCheckError(update)) : null;
-  const installedInfo = checkFresh && update?.check?.installed
+  const checkResultsFresh = checkResultsMatchConfig(update, config);
+  const resolvedCheckError = checkResultsFresh ? (checkError ?? resolveCheckError(update)) : null;
+  const installedInfo = checkResultsFresh && update?.check?.installed
     ? update.check.installed
     : {
         track: update?.installed_track,
         ref: update?.installed_ref,
         commit_short: update?.installed_version,
       };
-  const availableInfo = checkFresh ? update?.check?.available : undefined;
-  const targetInfo = availableInfo ?? (config ? configuredTargetInfo(config) : undefined);
-  const updateAvailable = checkFresh && update?.update_available === true;
-  const hasChecked = checkFresh && update?.checked === true;
+  const availableInfo = checkResultsFresh ? update?.check?.available : undefined;
+  const installedRef = installedInfo?.ref ?? update?.installed_ref;
+  const targetInfo = availableInfo ?? (config ? configuredTargetInfo(config, installedRef) : undefined);
+  const updateAvailable = checkResultsFresh && update?.update_available === true;
+  const downgradeBlocked = checkResultsFresh && isDowngradeBlocked(update);
+  const downgradeMessage = downgradeBlocked ? downgradeBlockedMessage(update) : null;
+  const hasChecked = checkResultsFresh && update?.checked === true;
   const showInstalled = hasVersionInfo(installedInfo);
   const showTarget = Boolean(config && targetInfo);
-  const configuredPin = config ? computeConfiguredPin(config) : "—";
   const formDisabled = loading || saving || !config?.config_writable;
   const repoDisplay = config?.repo?.replace(/^https?:\/\//, "") ?? "—";
 
@@ -481,9 +571,13 @@ function UpdatesCard() {
       ? "check_error"
       : status === "running"
         ? "running"
-        : hasChecked && updateAvailable === false
-          ? "up_to_date"
-          : status;
+        : updateAvailable
+          ? "update_available"
+          : downgradeBlocked
+            ? "downgrade_blocked"
+          : hasChecked && update?.update_available === false
+            ? "up_to_date"
+            : status;
 
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
@@ -493,9 +587,64 @@ function UpdatesCard() {
     success: "Update complete",
     failed: "Update failed",
     up_to_date: "Up to date",
+    update_available: "Update available",
+    downgrade_blocked: "Downgrade blocked",
   };
 
   const actionsDisabled = loading || checking || saving || updating || status === "running";
+
+  useEffect(() => {
+    logUpdatesDebug({
+      label: "render state",
+      config,
+      update,
+      checkError,
+      flags: {
+        loading,
+        checking,
+        saving,
+        checkFresh,
+        checkResultsFresh,
+        resolvedCheckError,
+        updateAvailable,
+        downgradeBlocked,
+        downgradeMessage,
+        hasChecked,
+        displayStatus,
+        installedInfo,
+        availableInfo,
+        targetInfo,
+        showInstalled,
+        showTarget,
+      },
+    });
+  }, [
+    config?.update_track,
+    config?.branch,
+    config?.release,
+    config?.configured_pin,
+    update?.configured_pin,
+    update?.update_track,
+    update?.update_available,
+    update?.checked,
+    update?.check_error,
+    update?.check?.available?.ref,
+    update?.check?.available?.commit_short,
+    update?.check?.installed?.ref,
+    checkError,
+    loading,
+    checking,
+    saving,
+    checkFresh,
+    checkResultsFresh,
+    resolvedCheckError,
+    updateAvailable,
+    downgradeBlocked,
+    hasChecked,
+    displayStatus,
+    showInstalled,
+    showTarget,
+  ]);
 
   return (
     <div className="card">
@@ -539,7 +688,7 @@ function UpdatesCard() {
             <select
               id="update-track"
               className="update-select"
-              value={config?.update_track ?? "branch"}
+              value={(config ?? configRef.current)?.update_track ?? "branch"}
               disabled={formDisabled}
               onChange={(e) =>
                 applyConfig({ update_track: e.target.value as UpdateTrack })
@@ -575,33 +724,38 @@ function UpdatesCard() {
               value={config.release}
               disabled={formDisabled}
               placeholder="0.0.1"
-              onChange={(e) => applyConfig({ release: e.target.value }, 500)}
+              onChange={(e) => applyConfig({ release: e.target.value }, 2000)}
             />
           </div>
         ) : null}
 
-        <div className="update-toggle-row">
-          <span className="update-toggle-label">Automatic updates</span>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              className="toggle-switch-input"
-              checked={config?.auto_update ?? false}
-              disabled={formDisabled}
-              onChange={(e) => applyConfig({ auto_update: e.target.checked })}
-            />
-            <span className="toggle-switch-track" aria-hidden="true" />
-          </label>
-        </div>
-
-        <p className="update-pin-preview">
-          Pin: <strong>{configuredPin}</strong>
-        </p>
+        {config?.update_track !== "release" ? (
+          <div className="update-toggle-row">
+            <span className="update-toggle-label">Automatic updates</span>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                className="toggle-switch-input"
+                checked={config?.auto_update ?? false}
+                disabled={formDisabled}
+                onChange={(e) => applyConfig({ auto_update: e.target.checked })}
+              />
+              <span className="toggle-switch-track" aria-hidden="true" />
+            </label>
+          </div>
+        ) : null}
 
         {resolvedCheckError ? (
           <div className="update-alert update-alert--error" role="alert">
             <strong>{checkErrorTitle(resolvedCheckError)}</strong>
             <p>{resolvedCheckError}</p>
+          </div>
+        ) : null}
+
+        {downgradeMessage ? (
+          <div className="update-alert update-alert--warning" role="status">
+            <strong>Downgrade blocked</strong>
+            <p>{downgradeMessage}</p>
           </div>
         ) : null}
       </div>
@@ -631,7 +785,7 @@ function UpdatesCard() {
         <span className={`update-badge update-badge--${displayStatus}`}>
           {statusLabel[displayStatus] ?? displayStatus}
         </span>
-        {update?.message && !loading && !checking && !resolvedCheckError ? (
+        {update?.message && !loading && !checking && !resolvedCheckError && !downgradeBlocked ? (
           <span className="update-message">{update.message}</span>
         ) : null}
       </div>
@@ -810,24 +964,39 @@ function PowerCard() {
 
 function SystemTab() {
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+  const [bots, setBots] = useState<BotStatus[]>([]);
   const [db, setDb] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null));
+    api.bots().then((data) => setBots(data.bots)).catch(() => setBots([]));
     api.dbStats().then(setDb).catch(() => setDb(null));
   }, []);
 
   const mongo = health?.mongodb as { status?: string } | undefined;
+  const sortedBots = sortBots(bots);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       <div className="card">
-        <h3>Health</h3>
+        <h3>System Status</h3>
         <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
           Version: {String(health?.version ?? "—")} · Orchestrator:{" "}
           {health?.orchestrator_running ? "running" : "offline"} · MongoDB:{" "}
           {mongo?.status ?? "unknown"}
         </p>
+        <div className="system-status-bots">
+          {sortedBots.length === 0 ? (
+            <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>No sub-bots configured.</p>
+          ) : (
+            sortedBots.map((bot) => (
+              <div key={bot.name} className="system-status-bot">
+                <span>{formatBotName(bot.name)}</span>
+                <span className={`badge ${stateBadgeClass(bot.state)}`}>{bot.state}</span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
       <div className="card">
         <h3>MongoDB</h3>
@@ -858,23 +1027,45 @@ export default function Settings() {
     <div>
       <h1 className="page-title">Settings</h1>
       <div className="settings-layout">
-        <nav className="settings-tabs">
-          {TABS.map((tab) => (
-            <NavLink
-              key={tab.path}
-              to={`/settings/${tab.path}`}
-              className={({ isActive }) => `settings-tab${isActive ? " active" : ""}`}
-            >
-              {tab.label}
-            </NavLink>
+        <nav className="settings-tabs" aria-label="Settings sections">
+          {SETTINGS_SECTIONS.map((section) => (
+            <div key={section.label} className="settings-nav-section">
+              {section.items.length > 1 && (
+                <span className="settings-section-label">{section.label}</span>
+              )}
+              {section.items.map((item) => (
+                <NavLink
+                  key={item.path}
+                  to={`/settings/${item.path}`}
+                  className={({ isActive }) => `settings-tab${isActive ? " active" : ""}`}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div>
           <Routes>
+            <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralTab />} />
             <Route path="ai-models" element={<AiModelsTab />} />
+            <Route path="models" element={<Navigate to="/settings/ai-models" replace />} />
+            <Route path="research" element={<ResearchSettingsTab />} />
             <Route path="data-connections" element={<DataConnectionsTab />} />
-            <Route path="brokers" element={<BrokersTab />} />
+            <Route path="broker/general" element={<BrokerGeneralTab />} />
+            <Route path="broker/forex" element={<AssetClassTab assetClass="forex" label="Forex" />} />
+            <Route path="broker/stocks" element={<AssetClassTab assetClass="stocks" label="Stocks" />} />
+            <Route path="broker/crypto" element={<AssetClassTab assetClass="crypto" label="Crypto" />} />
+            <Route path="broker/futures" element={<AssetClassTab assetClass="futures" label="Futures" />} />
+            <Route path="broker/options" element={<AssetClassTab assetClass="options" label="Options" />} />
+            <Route path="broker" element={<Navigate to="/settings/broker/general" replace />} />
+            <Route path="forex" element={<Navigate to="/settings/broker/forex" replace />} />
+            <Route path="stocks" element={<Navigate to="/settings/broker/stocks" replace />} />
+            <Route path="crypto" element={<Navigate to="/settings/broker/crypto" replace />} />
+            <Route path="futures" element={<Navigate to="/settings/broker/futures" replace />} />
+            <Route path="options" element={<Navigate to="/settings/broker/options" replace />} />
+            <Route path="brokers" element={<Navigate to="/settings/broker/general" replace />} />
             <Route path="system" element={<SystemTab />} />
             <Route path="*" element={<GeneralTab />} />
           </Routes>

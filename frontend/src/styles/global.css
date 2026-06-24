@@ -296,6 +296,8 @@ input {
 
 .sidebar.collapsed .sidebar-title {
   opacity: 0;
+  width: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -307,6 +309,34 @@ input {
   gap: 0.25rem;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.sidebar-advanced {
+  padding: 0.625rem;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sidebar-section-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0.125rem 0.75rem 0.25rem;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 0.12s ease;
+}
+
+.sidebar.collapsed .sidebar-section-label {
+  opacity: 0;
+  height: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
 .sidebar-bottom {
@@ -327,8 +357,6 @@ input {
 }
 
 .sidebar.collapsed .nav-item {
-  justify-content: center;
-  padding: 0.625rem;
   gap: 0;
 }
 
@@ -366,7 +394,10 @@ input {
 .sidebar.collapsed .nav-label {
   opacity: 0;
   width: 0;
+  min-width: 0;
   overflow: hidden;
+  margin: 0;
+  padding: 0;
 }
 
 @media (max-width: 768px) {
@@ -395,7 +426,7 @@ input {
 
 .settings-layout {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 220px 1fr;
   gap: 1.5rem;
 }
 
@@ -403,6 +434,27 @@ input {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.settings-nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.settings-nav-section + .settings-nav-section {
+  margin-top: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.settings-section-label {
+  padding: 0.15rem 0.75rem 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .settings-tab {
@@ -446,6 +498,23 @@ input {
 .badge.stopped { background: rgba(139, 156, 179, 0.15); color: var(--muted); }
 .badge.error { background: rgba(239, 68, 68, 0.15); color: var(--red); }
 
+.system-status-bots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.system-status-bot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
 .update-dev-note {
   margin-bottom: 0.75rem;
   font-size: 0.8rem;
@@ -473,6 +542,23 @@ input {
 }
 
 .update-alert--error p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.update-alert--warning {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: var(--text);
+}
+
+.update-alert--warning strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #d97706;
+}
+
+.update-alert--warning p {
   margin: 0;
   color: var(--muted);
 }
@@ -654,17 +740,6 @@ input {
   cursor: not-allowed;
 }
 
-.update-pin-preview {
-  margin-bottom: 0;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.update-pin-preview strong {
-  color: var(--text);
-  font-weight: 600;
-}
-
 .update-meta {
   display: grid;
   gap: 0.55rem;
@@ -725,6 +800,8 @@ input {
 .update-badge--running { background: rgba(59, 130, 246, 0.15); color: var(--accent); }
 .update-badge--success,
 .update-badge--up_to_date { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+.update-badge--update_available { background: rgba(59, 130, 246, 0.15); color: var(--accent); }
+.update-badge--downgrade_blocked { background: rgba(245, 158, 11, 0.15); color: #d97706; }
 .update-badge--failed { background: rgba(239, 68, 68, 0.15); color: var(--red); }
 
 .update-message {
@@ -767,4 +844,270 @@ input {
   flex-wrap: wrap;
   gap: 0.625rem;
   margin-top: 0.875rem;
+}
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.settings-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-panel-title {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.settings-panel-desc {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.settings-subtitle {
+  font-size: 0.95rem;
+  margin: 0.5rem 0;
+}
+
+.settings-muted {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.settings-message {
+  color: var(--accent);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.settings-error {
+  color: #f87171;
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.settings-form {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 32rem;
+}
+
+.settings-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+}
+
+.settings-form input,
+.settings-form select {
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  margin-top: 0.5rem;
+}
+
+.model-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.model-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.model-list-main {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.model-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.model-type-card {
+  display: grid;
+  gap: 0.25rem;
+  text-align: left;
+  padding: 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  max-width: 24rem;
+}
+
+.model-type-card span {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.model-type-card:hover {
+  border-color: var(--accent);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.forex-pairs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.forex-pairs-header .settings-subtitle {
+  margin: 0;
+}
+
+.forex-pairs-count {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+}
+
+.forex-pairs-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+}
+
+.forex-pairs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.forex-pairs-grid {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 0.5rem;
+}
+
+.forex-pair-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+}
+
+.forex-pair-checkbox:hover {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: var(--surface-2);
+}
+
+.forex-pair-checkbox--checked,
+.forex-pair-checkbox:has(input:checked) {
+  border-color: rgba(59, 130, 246, 0.65);
+  background: rgba(59, 130, 246, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.15);
+}
+
+.forex-pair-checkbox:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.forex-pair-checkbox input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.forex-pair-checkbox input:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.forex-pair-checkbox input:checked::after {
+  content: "";
+  position: absolute;
+  left: 0.31rem;
+  top: 0.1rem;
+  width: 0.28rem;
+  height: 0.52rem;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.forex-pair-label {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.forex-pair-checkbox--checked .forex-pair-label,
+.forex-pair-checkbox:has(input:checked) .forex-pair-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+@media (max-width: 900px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .forex-pairs-header {
+    flex-direction: column;
+  }
 }
