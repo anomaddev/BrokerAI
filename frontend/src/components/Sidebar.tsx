@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { Database, FileText, LayoutDashboard, Settings, TrendingUp } from "lucide-react";
+import {
+  Database,
+  FileText,
+  LayoutDashboard,
+  LineChart,
+  Settings,
+  TrendingUp,
+} from "lucide-react";
 import { api } from "../api/client";
 
 type NavItem = {
@@ -30,6 +37,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: "Research & Analysis",
     items: [{ to: "/daily-reports", label: "Daily Reports", icon: FileText }],
+  },
+  {
+    label: "Trading",
+    items: [{ to: "/trading/strategies", label: "Strategies", icon: LineChart }],
   },
 ];
 
