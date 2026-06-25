@@ -5,6 +5,7 @@ import Setup from "./pages/Setup";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Research from "./pages/Research";
+import ResearchReportView from "./pages/ResearchReportView";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
 
@@ -56,7 +57,10 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/research" element={<Research />} />
+          <Route path="/daily-reports" element={<Research />} />
+          <Route path="/daily-reports/r/*" element={<ResearchReportView />} />
+          <Route path="/research" element={<Navigate to="/daily-reports" replace />} />
+          <Route path="/research/r/*" element={<Navigate to="/daily-reports" replace />} />
           <Route path="/settings/*" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

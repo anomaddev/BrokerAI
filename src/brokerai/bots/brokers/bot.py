@@ -4,6 +4,7 @@ from brokerai.bots.base import Bot
 from brokerai.bots.brokers.sub.crypto import CryptoSubBroker
 from brokerai.bots.brokers.sub.forex import ForexSubBroker
 from brokerai.bots.brokers.sub.futures import FuturesSubBroker
+from brokerai.bots.brokers.sub.metals import MetalsSubBroker
 from brokerai.bots.brokers.sub.options import OptionsSubBroker
 from brokerai.bots.brokers.sub.stocks import StocksSubBroker
 
@@ -18,6 +19,7 @@ class BrokersBot(Bot):
         self._sub_brokers = {
             "crypto": CryptoSubBroker(),
             "forex": ForexSubBroker(),
+            "metals": MetalsSubBroker(),
             "stocks": StocksSubBroker(),
             "futures": FuturesSubBroker(),
             "options": OptionsSubBroker(),

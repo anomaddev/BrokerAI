@@ -129,6 +129,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     }),
+  deleteModel: (id: string) =>
+    request<{ ok: boolean }>(`/api/settings/models/${id}`, { method: "DELETE" }),
   testModel: (id: string) =>
     request<{ ok: boolean; message: string }>(`/api/settings/models/${id}/test`, { method: "POST" }),
   testModelConnection: (data: CreateModelInput) =>
@@ -138,16 +140,52 @@ export const api = {
     }),
 
   getDataConnections: () =>
-    request<{ newsapi: NewsApiConnection }>("/api/settings/data-connections"),
+    request<{ newsapi: NewsApiConnection; models: ModelConnection[] }>(
+      "/api/settings/data-connections",
+    ),
   saveNewsApi: (data: { api_key: string; enabled: boolean }) =>
     request<NewsApiConnection>("/api/settings/data-connections/newsapi", {
       method: "PUT",
       body: JSON.stringify(data),
     }),
-  testNewsApi: () =>
+  saveModelConnection: (modelId: string, data: { capabilities: Record<string, boolean> }) =>
+    request<ModelConnection>(`/api/settings/data-connections/models/${modelId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  testNewsApi: (data?: { api_key?: string }) =>
     request<{ ok: boolean; message: string }>("/api/settings/data-connections/newsapi/test", {
       method: "POST",
+      body: JSON.stringify(data ?? {}),
     }),
+
+  getExchangeConnections: () =>
+    request<ExchangeConnectionsResponse>("/api/settings/exchanges"),
+  getOandaConnection: () => request<OandaConnection>("/api/settings/exchanges/oanda"),
+  saveOandaConnection: (data: {
+    access_token: string;
+    environment: OandaEnvironment;
+    account_id: string;
+  }) =>
+    request<OandaConnection>("/api/settings/exchanges/oanda", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteOandaConnection: () =>
+    request<{ ok: boolean }>("/api/settings/exchanges/oanda", { method: "DELETE" }),
+  testOandaConnection: (data: {
+    access_token: string;
+    environment: OandaEnvironment;
+    account_id?: string;
+  }) =>
+    request<OandaTestResult>("/api/settings/exchanges/oanda/test-connection", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  testOandaConnectionSaved: () =>
+    request<OandaTestResult>("/api/settings/exchanges/oanda/test", { method: "POST" }),
+  getOandaAccountSummary: () =>
+    request<OandaAccountSummary>("/api/settings/exchanges/oanda/account-summary"),
 
   getResearchSettings: () => request<ResearchSettings>("/api/settings/research"),
   saveResearchSettings: (data: Partial<ResearchSettings>) =>
@@ -157,19 +195,35 @@ export const api = {
     }),
 
   getForexPairs: () =>
-    request<{ catalog: string[]; enabled_pairs: string[]; enabled: boolean }>(
-      "/api/settings/assets/forex/pairs",
-    ),
+    request<{
+      catalog: string[];
+      enabled_pairs: string[];
+      enabled: boolean;
+      primary_exchange: string | null;
+    }>("/api/settings/assets/forex/pairs"),
   getAssetSettings: (assetClass: AssetClass) =>
     request<AssetSettings>(`/api/settings/assets/${assetClass}`),
-  saveAssetSettings: (assetClass: AssetClass, data: { enabled: boolean; enabled_pairs?: string[] }) =>
+  saveAssetSettings: (
+    assetClass: AssetClass,
+    data: {
+      enabled: boolean;
+      enabled_pairs?: string[];
+      primary_exchange?: string | null;
+    },
+  ) =>
     request<AssetSettings>(`/api/settings/assets/${assetClass}`, {
       method: "PUT",
       body: JSON.stringify(data),
     }),
 
-  listResearchReports: (limit = 50) =>
+  getResearchSignals: () =>
+    request<ResearchSignalsSnapshot>("/api/research/signals"),
+  listResearchReports: (limit = 200) =>
     request<{ reports: ResearchReportMeta[] }>(`/api/research/reports?limit=${limit}`),
+  getResearchReport: (filename: string) =>
+    request<ResearchReportContent>(
+      `/api/research/reports/content?filename=${encodeURIComponent(filename)}`,
+    ),
 };
 
 export type AiModel = {
@@ -184,9 +238,11 @@ export type AiModel = {
   created_at: string;
 };
 
+export type ModelProviderType = "open_webui" | "openai" | "claude" | "grok";
+
 export type CreateModelInput = {
   title: string;
-  type: "open_webui";
+  type: ModelProviderType;
   base_url: string;
   model_name: string;
   api_key?: string;
@@ -208,24 +264,153 @@ export type NewsApiConnection = {
   api_key_set: boolean;
 };
 
-export type ResearchSettings = {
-  id: string;
-  selected_model_id: string | null;
-  daily_report_enabled: boolean;
-  last_daily_run_date: string | null;
+export type ModelConnection = {
+  model_id: string;
+  title: string;
+  provider_type: string;
+  model_name: string;
+  enabled: boolean;
+  api_key_set: boolean;
+  available_capabilities: string[];
+  capability_labels: Record<string, string>;
+  capabilities: Record<string, boolean>;
 };
 
-export type AssetClass = "forex" | "stocks" | "crypto" | "futures" | "options";
+export type OandaEnvironment = "practice" | "live";
+
+export type OandaConnection = {
+  exchange_id: "oanda";
+  connected: boolean;
+  environment: OandaEnvironment;
+  account_id: string | null;
+  access_token: string | null;
+  access_token_set: boolean;
+};
+
+export type ExchangeConnectionsResponse = {
+  oanda: OandaConnection;
+};
+
+export type OandaAccount = {
+  id: string;
+  tags?: string[];
+};
+
+export type OandaTestResult = {
+  ok: boolean;
+  message: string;
+  accounts: OandaAccount[];
+};
+
+export type OandaAccountSummary = {
+  id: string | null;
+  alias: string | null;
+  currency: string | null;
+  balance: string | null;
+  nav: string | null;
+  unrealized_pl: string | null;
+  realized_pl: string | null;
+  margin_available: string | null;
+  margin_used: string | null;
+  open_trade_count: number | null;
+  open_position_count: number | null;
+  pending_order_count: number | null;
+};
+
+export type ReasoningEffort = "none" | "low" | "medium" | "high";
+
+export type ContributorModel = {
+  model_id: string;
+  reasoning_effort: ReasoningEffort;
+  enabled: boolean;
+};
+
+export type ResearchDataSources = {
+  newsapi: boolean;
+  web_search_enabled: boolean;
+  web_search_model_id: string | null;
+  x_search_enabled: boolean;
+  x_search_model_id: string | null;
+};
+
+export type ResearchScheduleMarket = {
+  id: string;
+  name: string;
+  label: string;
+  timezone: string;
+  open_time_local: string;
+};
+
+export type ResearchSettings = {
+  id: string;
+  contributor_models: ContributorModel[];
+  synthesis_model_id: string | null;
+  synthesis_reasoning_effort: ReasoningEffort;
+  data_sources: ResearchDataSources;
+  daily_report_enabled: boolean;
+  daily_report_market_id: string;
+  daily_report_market_offset_hours: number;
+  last_daily_run_date: string | null;
+  schedule_markets?: ResearchScheduleMarket[];
+  schedule_description?: string;
+};
+
+export type AssetClass = "forex" | "metals" | "stocks" | "crypto" | "futures" | "options";
 
 export type AssetSettings = {
   asset_class: AssetClass;
   enabled: boolean;
   enabled_pairs?: string[];
+  enabled_symbols?: string[];
+  primary_exchange: string | null;
 };
+
+export type ResearchSignal = "buy" | "sell" | "hold" | "mixed";
+export type ResearchTone = "bullish" | "bearish" | "neutral";
+export type ResearchConviction = "low" | "medium" | "high";
+
+export type ResearchSignalItem = {
+  symbol: string;
+  signal: ResearchSignal | null;
+  tone: ResearchTone | null;
+  approach: string | null;
+  conviction: ResearchConviction | null;
+  status: "ok" | "missing" | "not_implemented";
+};
+
+export type ResearchAssetSignals = {
+  asset_class: AssetClass;
+  label: string;
+  implemented: boolean;
+  items: ResearchSignalItem[];
+};
+
+export type ResearchSignalsSnapshot = {
+  report_date: string | null;
+  report_filename: string | null;
+  generated_at: string | null;
+  asset_classes: ResearchAssetSignals[];
+};
+
+export type ResearchReportType = "daily" | "daily_model" | "weekly" | string;
 
 export type ResearchReportMeta = {
   filename: string;
   date: string;
-  type: string;
+  type: ResearchReportType;
   path: string;
+  model_label: string | null;
+  generated_at: string | null;
+  reasoning_effort: string | null;
+  size_bytes: number;
+};
+
+export type ResearchReportContent = {
+  filename: string;
+  content: string;
+  date: string | null;
+  type: ResearchReportType | null;
+  model_label: string | null;
+  generated_at: string | null;
+  reasoning_effort: string | null;
 };

@@ -5,11 +5,13 @@ import {
   type UpdateSettingsConfig,
   type UpdateStatusResponse,
 } from "../api/client";
+import useAutoSave from "../hooks/useAutoSave";
 import AssetClassTab from "./settings/AssetClassTab";
 import BrokerGeneralTab from "./settings/BrokerGeneralTab";
 import DataConnectionsTabComponent from "./settings/DataConnectionsTab";
 import ModelsTab from "./settings/ModelsTab";
 import ResearchTab from "./settings/ResearchTab";
+import SettingsPanelHeader from "../components/SettingsPanelHeader";
 
 type SettingsNavItem = {
   path: string;
@@ -27,18 +29,22 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
     items: [{ path: "general", label: "General" }],
   },
   {
-    label: "Research",
+    label: "Data",
     items: [
-      { path: "ai-models", label: "Models" },
-      { path: "research", label: "Research" },
-      { path: "data-connections", label: "Data Connections" },
+      { path: "models", label: "Models" },
+      { path: "connections", label: "Connections" },
     ],
+  },
+  {
+    label: "Research",
+    items: [{ path: "daily-reports", label: "Daily Reports" }],
   },
   {
     label: "Broker",
     items: [
       { path: "broker/general", label: "General" },
       { path: "broker/forex", label: "Forex" },
+      { path: "broker/metals", label: "Precious Metals" },
       { path: "broker/stocks", label: "Stocks" },
       { path: "broker/crypto", label: "Crypto" },
       { path: "broker/futures", label: "Futures" },
@@ -199,8 +205,16 @@ function logUpdatesDebug({ label, config, update, checkError, flags }: UpdatesDe
 
 function GeneralTab() {
   return (
-    <div className="placeholder">
-      General settings will be configured here (bot name, timezone, etc.).
+    <div className="settings-panel">
+      <SettingsPanelHeader
+        title="General"
+        description="Configure broker-wide preferences such as bot name and timezone."
+      />
+      <div className="settings-panel-body">
+        <div className="placeholder">
+          General settings will be configured here (bot name, timezone, etc.).
+        </div>
+      </div>
     </div>
   );
 }
@@ -304,14 +318,20 @@ function UpdatesCard() {
   const [checkError, setCheckError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [errorOverlay, setErrorOverlay] = useState<ErrorOverlayState | null>(null);
-  const skipSaveRef = useRef(true);
-  const saveTimerRef = useRef<number | null>(null);
-  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const configRef = useRef<UpdateSettingsConfig | null>(null);
   const userEditedRef = useRef(false);
+
+  function showErrorOverlay(title: string, message: string) {
+    setErrorOverlay({ title, message });
+  }
+
+  function canPersistConfig(next: UpdateSettingsConfig): boolean {
+    if (next.update_track === "branch" && !next.branch.trim()) return false;
+    if (next.update_track === "release" && !next.release.trim()) return false;
+    return true;
+  }
 
   function applySavedConfig(saved: UpdateSettingsConfig) {
     configRef.current = saved;
@@ -384,6 +404,35 @@ function UpdatesCard() {
     }
   };
 
+  const { saving, saveNow, scheduleSave, markReady, markNotReady } = useAutoSave({
+    defaultDebounceMs: 150,
+    canSave: () => {
+      const snapshot = configRef.current;
+      return Boolean(snapshot?.config_writable && canPersistConfig(snapshot));
+    },
+    onSave: async () => {
+      const snapshot = configRef.current;
+      if (!snapshot?.config_writable || !canPersistConfig(snapshot)) return;
+
+      try {
+        const saved = await api.saveUpdateSettings({
+          update_track: snapshot.update_track,
+          branch: snapshot.branch,
+          release: snapshot.release,
+          auto_update: snapshot.auto_update,
+        });
+        applySavedConfig(saved);
+        await runCheck();
+      } catch (err) {
+        showErrorOverlay(
+          "Failed to save settings",
+          err instanceof Error ? err.message : "Failed to save settings",
+        );
+        throw err;
+      }
+    },
+  });
+
   useEffect(() => {
     let cancelled = false;
 
@@ -396,7 +445,7 @@ function UpdatesCard() {
         userEditedRef.current = false;
         configRef.current = settingsData;
         setConfig(settingsData);
-        skipSaveRef.current = false;
+        markReady();
 
         const checkData = await api.checkForUpdate();
         if (!cancelled) {
@@ -419,11 +468,9 @@ function UpdatesCard() {
     init();
     return () => {
       cancelled = true;
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current);
-      }
+      markNotReady();
     };
-  }, []);
+  }, [markNotReady, markReady]);
 
   useEffect(() => {
     if (update?.status !== "running") return undefined;
@@ -441,52 +488,6 @@ function UpdatesCard() {
     }
   }, [update?.status]);
 
-  function enqueueSave() {
-    if (skipSaveRef.current) return;
-
-    saveChainRef.current = saveChainRef.current
-      .then(async () => {
-        const snapshot = configRef.current;
-        if (!snapshot?.config_writable || !canPersistConfig(snapshot)) return;
-
-        setSaving(true);
-        try {
-          const saved = await api.saveUpdateSettings({
-            update_track: snapshot.update_track,
-            branch: snapshot.branch,
-            release: snapshot.release,
-            auto_update: snapshot.auto_update,
-          });
-          applySavedConfig(saved);
-          void runCheck();
-        } catch (err) {
-          showErrorOverlay(
-            "Failed to save settings",
-            err instanceof Error ? err.message : "Failed to save settings",
-          );
-        } finally {
-          setSaving(false);
-        }
-      })
-      .catch(() => {
-        // Keep the chain alive after a rejected save.
-      });
-  }
-
-  function scheduleSave(debounceMs = 0) {
-    if (skipSaveRef.current || !configRef.current?.config_writable) return;
-
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current);
-    }
-
-    const delay = debounceMs > 0 ? debounceMs : 150;
-    saveTimerRef.current = window.setTimeout(() => {
-      saveTimerRef.current = null;
-      enqueueSave();
-    }, delay);
-  }
-
   function applyConfig(patch: Partial<UpdateSettingsConfig>, debounceMs = 0) {
     userEditedRef.current = true;
     const trackChanged = isTrackConfigPatch(patch);
@@ -503,19 +504,13 @@ function UpdatesCard() {
     if (!next) return;
     if (trackChanged) {
       invalidateVersionMeta();
-      enqueueSave();
+      saveNow();
       return;
     }
     if (patch.release !== undefined) {
       invalidateVersionMeta();
     }
-    scheduleSave(debounceMs);
-  }
-
-  function canPersistConfig(next: UpdateSettingsConfig): boolean {
-    if (next.update_track === "branch" && !next.branch.trim()) return false;
-    if (next.update_track === "release" && !next.release.trim()) return false;
-    return true;
+    scheduleSave(debounceMs > 0 ? debounceMs : undefined);
   }
 
   async function handleCheckNow() {
@@ -977,7 +972,12 @@ function SystemTab() {
   const sortedBots = sortBots(bots);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+    <div className="settings-panel">
+      <SettingsPanelHeader
+        title="System"
+        description="Health, database status, software updates, and power controls."
+      />
+      <div className="settings-panel-body settings-panel-body--stack">
       <div className="card">
         <h3>System Status</h3>
         <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
@@ -1018,19 +1018,26 @@ function SystemTab() {
       </div>
       <UpdatesCard />
       <PowerCard />
+      </div>
     </div>
   );
 }
 
 export default function Settings() {
   return (
-    <div>
-      <h1 className="page-title">Settings</h1>
+    <div className="settings-page">
       <div className="settings-layout">
-        <nav className="settings-tabs" aria-label="Settings sections">
-          {SETTINGS_SECTIONS.map((section) => (
+        <div className="settings-nav-column">
+          <h1 className="page-title settings-page-title">Settings</h1>
+          <nav className="settings-tabs" aria-label="Settings sections">
+          {SETTINGS_SECTIONS.map((section) => {
+            const showSectionLabel =
+              section.items.length > 1 ||
+              (section.items.length === 1 && section.items[0].label !== section.label);
+
+            return (
             <div key={section.label} className="settings-nav-section">
-              {section.items.length > 1 && (
+              {showSectionLabel && (
                 <span className="settings-section-label">{section.label}</span>
               )}
               {section.items.map((item) => (
@@ -1043,24 +1050,33 @@ export default function Settings() {
                 </NavLink>
               ))}
             </div>
-          ))}
+            );
+          })}
         </nav>
-        <div>
+        </div>
+        <div className="settings-content">
           <Routes>
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralTab />} />
-            <Route path="ai-models" element={<AiModelsTab />} />
-            <Route path="models" element={<Navigate to="/settings/ai-models" replace />} />
-            <Route path="research" element={<ResearchSettingsTab />} />
-            <Route path="data-connections" element={<DataConnectionsTab />} />
+            <Route path="models" element={<AiModelsTab />} />
+            <Route path="ai-models" element={<Navigate to="/settings/models" replace />} />
+            <Route path="daily-reports" element={<ResearchSettingsTab />} />
+            <Route path="research" element={<Navigate to="/settings/daily-reports" replace />} />
+            <Route path="connections" element={<DataConnectionsTab />} />
+            <Route path="data-connections" element={<Navigate to="/settings/connections" replace />} />
             <Route path="broker/general" element={<BrokerGeneralTab />} />
             <Route path="broker/forex" element={<AssetClassTab assetClass="forex" label="Forex" />} />
+            <Route
+              path="broker/metals"
+              element={<AssetClassTab assetClass="metals" label="Precious Metals" />}
+            />
             <Route path="broker/stocks" element={<AssetClassTab assetClass="stocks" label="Stocks" />} />
             <Route path="broker/crypto" element={<AssetClassTab assetClass="crypto" label="Crypto" />} />
             <Route path="broker/futures" element={<AssetClassTab assetClass="futures" label="Futures" />} />
             <Route path="broker/options" element={<AssetClassTab assetClass="options" label="Options" />} />
             <Route path="broker" element={<Navigate to="/settings/broker/general" replace />} />
             <Route path="forex" element={<Navigate to="/settings/broker/forex" replace />} />
+            <Route path="metals" element={<Navigate to="/settings/broker/metals" replace />} />
             <Route path="stocks" element={<Navigate to="/settings/broker/stocks" replace />} />
             <Route path="crypto" element={<Navigate to="/settings/broker/crypto" replace />} />
             <Route path="futures" element={<Navigate to="/settings/broker/futures" replace />} />

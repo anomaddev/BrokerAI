@@ -16,6 +16,7 @@ from brokerai.db.client import get_db
 from brokerai.web.routes.assets_settings import router as assets_settings_router
 from brokerai.web.routes.auth import require_auth, router as auth_router
 from brokerai.web.routes.data_connections_settings import router as data_connections_router
+from brokerai.web.routes.exchange_connections_settings import router as exchange_connections_router
 from brokerai.web.routes.models_settings import router as models_settings_router
 from brokerai.web.routes.research import router as research_router
 from brokerai.web.routes.research_settings_route import router as research_settings_router
@@ -41,6 +42,7 @@ app.include_router(auth_router)
 app.include_router(settings_router)
 app.include_router(models_settings_router)
 app.include_router(data_connections_router)
+app.include_router(exchange_connections_router)
 app.include_router(research_settings_router)
 app.include_router(assets_settings_router)
 app.include_router(research_router)
@@ -147,6 +149,7 @@ async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
             "analysis_results",
             "ai_models",
             "data_connections",
+            "exchange_connections",
             "research_settings",
             "asset_settings",
         ):

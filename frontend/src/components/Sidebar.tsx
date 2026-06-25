@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
-import { Database, LayoutDashboard, Search, Settings, TrendingUp } from "lucide-react";
+import { Database, FileText, LayoutDashboard, Settings, TrendingUp } from "lucide-react";
 import { api } from "../api/client";
 
 type NavItem = {
@@ -19,7 +19,18 @@ type ExternalNavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/research", label: "Research", icon: Search },
+];
+
+type NavSection = {
+  label: string;
+  items: NavItem[];
+};
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    label: "Research & Analysis",
+    items: [{ to: "/daily-reports", label: "Daily Reports", icon: FileText }],
+  },
 ];
 
 const SETTINGS_ITEM: NavItem = {
@@ -110,14 +121,23 @@ export default function Sidebar({ collapsed }: SidebarProps) {
         {NAV_ITEMS.map((item) => (
           <NavItemLink key={item.to} item={item} collapsed={collapsed} />
         ))}
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label} className="sidebar-nav-section">
+            <span className="sidebar-section-label">{section.label}</span>
+            {section.items.map((item) => (
+              <NavItemLink key={item.to} item={item} collapsed={collapsed} />
+            ))}
+          </div>
+        ))}
       </nav>
       <div className="sidebar-advanced">
-        <span className="sidebar-section-label">Advanced</span>
+        <span className="sidebar-section-label">External</span>
         {advancedItems.map((item) => (
           <ExternalNavItemLink key={item.label} item={item} collapsed={collapsed} />
         ))}
       </div>
       <div className="sidebar-bottom">
+        <span className="sidebar-section-label">System</span>
         <NavItemLink item={SETTINGS_ITEM} collapsed={collapsed} />
       </div>
     </aside>

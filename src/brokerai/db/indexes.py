@@ -32,6 +32,11 @@ async def ensure_indexes() -> None:
     )
     await db.ai_models.create_index("id", unique=True, name="ai_models_id")
     await db.data_connections.create_index("type", unique=True, name="data_connections_type")
+    await db.exchange_connections.create_index(
+        "exchange_id",
+        unique=True,
+        name="exchange_connections_exchange_id",
+    )
     await db.research_settings.create_index("id", unique=True, name="research_settings_id")
     await db.asset_settings.create_index(
         "asset_class",
