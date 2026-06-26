@@ -1,18 +1,13 @@
 import { Outlet } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { api } from "../api/client";
 import Sidebar from "./Sidebar";
+import { UserMenuContainer } from "./UserMenu";
 
 export default function AppLayout() {
-  const [username, setUsername] = useState("");
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("sidebarCollapsed") === "true",
   );
-
-  useEffect(() => {
-    api.me().then((u) => setUsername(u.username)).catch(() => setUsername(""));
-  }, []);
 
   function toggleSidebar() {
     setCollapsed((prev) => {
@@ -20,11 +15,6 @@ export default function AppLayout() {
       localStorage.setItem("sidebarCollapsed", String(next));
       return next;
     });
-  }
-
-  async function logout() {
-    await api.logout();
-    window.location.href = "/login";
   }
 
   return (
@@ -46,10 +36,7 @@ export default function AppLayout() {
             )}
           </button>
           <div className="topbar-actions">
-            <span className="topbar-user">{username}</span>
-            <button className="btn btn-sm" type="button" onClick={logout}>
-              Logout
-            </button>
+            <UserMenuContainer />
           </div>
         </header>
         <main className="main-content">

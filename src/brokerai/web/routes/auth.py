@@ -5,28 +5,29 @@ import logging
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from brokerai.auth import (
     AuthStore,
     PasswordValidationError,
     SessionManager,
     hash_password,
+    is_valid_username,
     validate_password,
     verify_password,
+)
+from brokerai.auth.profile_photo import (
+    clear_profile_photos,
+    resolve_profile_photo_path,
+    save_profile_photo,
 )
 from brokerai.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-
-class SetupRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=32)
-    password: str = Field(min_length=12)
-    confirm_password: str = Field(min_length=12)
 
 
 class LoginRequest(BaseModel):
@@ -71,21 +72,43 @@ async def setup_status() -> dict[str, bool]:
 
 
 @router.post("/setup")
-async def setup(body: SetupRequest, response: Response) -> dict[str, str]:
+async def setup(
+    response: Response,
+    username: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    profile_photo: UploadFile | None = File(None),
+) -> dict[str, str | bool]:
     store = AuthStore()
     if store.is_setup_complete():
         raise HTTPException(status_code=409, detail="Setup already complete")
+    if not is_valid_username(username):
+        raise HTTPException(status_code=400, detail="Invalid username")
     try:
-        validate_password(body.password, body.confirm_password)
+        validate_password(password, confirm_password)
     except PasswordValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    record = store.create_user(body.username, hash_password(body.password))
-    await _provision_ssh_user(body.username, body.password)
+    profile_photo_name: str | None = None
+    if profile_photo and profile_photo.filename:
+        try:
+            photo_data = await profile_photo.read()
+            if photo_data:
+                store.ensure_dir()
+                profile_photo_name = save_profile_photo(store.auth_dir, photo_data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record = store.create_user(username, hash_password(password), profile_photo_name)
+    await _provision_ssh_user(username, password)
 
     token = SessionManager().create_token(record.username)
     _set_session_cookie(response, token)
-    return {"username": record.username, "status": "created"}
+    return {
+        "username": record.username,
+        "status": "created",
+        "has_profile_photo": bool(profile_photo_name),
+    }
 
 
 @router.post("/login")
@@ -112,8 +135,54 @@ async def logout(response: Response) -> dict[str, str]:
 
 
 @router.get("/me")
-async def me(username: str = Depends(require_auth)) -> dict[str, str]:
-    return {"username": username}
+async def me(username: str = Depends(require_auth)) -> dict[str, str | bool]:
+    store = AuthStore()
+    user = store.get_user()
+    has_photo = bool(
+        user
+        and user.profile_photo
+        and resolve_profile_photo_path(store.auth_dir, user.profile_photo)
+    )
+    return {"username": username, "has_profile_photo": has_photo}
+
+
+@router.get("/profile-photo")
+async def get_profile_photo(_username: str = Depends(require_auth)) -> FileResponse:
+    store = AuthStore()
+    user = store.get_user()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Profile photo not found")
+    path = resolve_profile_photo_path(store.auth_dir, user.profile_photo)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Profile photo not found")
+    return FileResponse(path)
+
+
+@router.put("/profile-photo")
+async def upload_profile_photo(
+    file: UploadFile = File(...),
+    _username: str = Depends(require_auth),
+) -> dict[str, str | bool]:
+    store = AuthStore()
+    if store.get_user() is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        photo_data = await file.read()
+        filename = save_profile_photo(store.auth_dir, photo_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    store.set_profile_photo(filename)
+    return {"status": "ok", "has_profile_photo": True}
+
+
+@router.delete("/profile-photo")
+async def delete_profile_photo(_username: str = Depends(require_auth)) -> dict[str, str | bool]:
+    store = AuthStore()
+    if store.get_user() is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    clear_profile_photos(store.auth_dir)
+    store.set_profile_photo(None)
+    return {"status": "ok", "has_profile_photo": False}
 
 
 async def _provision_ssh_user(username: str, password: str) -> None:

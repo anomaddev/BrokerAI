@@ -43,4 +43,10 @@ async def ensure_indexes() -> None:
         unique=True,
         name="asset_settings_asset_class",
     )
+    await db.strategies.create_index("id", unique=True, name="strategies_id")
+    await db.strategies.create_index(
+        [("asset_class", 1), ("name", 1)],
+        name="strategies_asset_class_name",
+    )
+    await db.strategies.create_index("preset_id", name="strategies_preset_id")
     logger.info("MongoDB indexes ensured")

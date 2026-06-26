@@ -21,6 +21,7 @@ from brokerai.web.routes.models_settings import router as models_settings_router
 from brokerai.web.routes.research import router as research_router
 from brokerai.web.routes.research_settings_route import router as research_settings_router
 from brokerai.web.routes.settings import router as settings_router
+from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.system import router as system_router
 from brokerai.web.update_runner import (
     check_for_updates,
@@ -46,6 +47,7 @@ app.include_router(exchange_connections_router)
 app.include_router(research_settings_router)
 app.include_router(assets_settings_router)
 app.include_router(research_router)
+app.include_router(strategies_router)
 app.include_router(system_router)
 
 if STATIC_DIR.exists():
@@ -115,6 +117,12 @@ async def research_subpage(path: str) -> FileResponse:
     return _spa_index()
 
 
+@app.get("/trading/{path:path}")
+async def trading_page(path: str) -> FileResponse:
+    _ = path
+    return _spa_index()
+
+
 @app.get("/api/health")
 async def health() -> JSONResponse:
     heartbeat = _read_heartbeat()
@@ -152,6 +160,7 @@ async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
             "exchange_connections",
             "research_settings",
             "asset_settings",
+            "strategies",
         ):
             counts[name] = await handle.db[name].count_documents({})
         return JSONResponse(

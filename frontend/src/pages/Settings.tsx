@@ -7,6 +7,7 @@ import {
 } from "../api/client";
 import useAutoSave from "../hooks/useAutoSave";
 import AssetClassTab from "./settings/AssetClassTab";
+import AccountTab from "./settings/AccountTab";
 import BrokerGeneralTab from "./settings/BrokerGeneralTab";
 import DataConnectionsTabComponent from "./settings/DataConnectionsTab";
 import ModelsTab from "./settings/ModelsTab";
@@ -1058,6 +1059,7 @@ export default function Settings() {
           <Routes>
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralTab />} />
+            <Route path="account" element={<AccountTab />} />
             <Route path="models" element={<AiModelsTab />} />
             <Route path="ai-models" element={<Navigate to="/settings/models" replace />} />
             <Route path="daily-reports" element={<ResearchSettingsTab />} />

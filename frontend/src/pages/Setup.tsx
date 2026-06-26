@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import ProfilePhotoField from "../components/ProfilePhotoField";
 
 function passwordStrength(pw: string): string {
   let score = 0;
@@ -19,6 +20,7 @@ export default function Setup() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -27,7 +29,12 @@ export default function Setup() {
     setError("");
     setLoading(true);
     try {
-      await api.setup({ username, password, confirm_password: confirm });
+      await api.setup({
+        username,
+        password,
+        confirm_password: confirm,
+        profile_photo: profilePhoto,
+      });
       navigate("/");
       window.location.reload();
     } catch (err) {
@@ -43,6 +50,14 @@ export default function Setup() {
         <h1>Welcome to BrokerAI</h1>
         <p>Create your admin account. These credentials will also be used for SSH access.</p>
         {error && <div className="error">{error}</div>}
+        <div className="field">
+          <label>Profile photo</label>
+          <ProfilePhotoField
+            previewFile={profilePhoto}
+            onFileSelect={setProfilePhoto}
+            disabled={loading}
+          />
+        </div>
         <div className="field">
           <label htmlFor="username">Username</label>
           <input

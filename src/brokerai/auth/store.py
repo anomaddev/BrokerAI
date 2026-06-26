@@ -16,20 +16,26 @@ class UserRecord:
     username: str
     password_hash: str
     created_at: str
+    profile_photo: str | None = None
 
-    def to_dict(self) -> dict[str, str]:
-        return {
+    def to_dict(self) -> dict[str, str | None]:
+        payload: dict[str, str | None] = {
             "username": self.username,
             "password_hash": self.password_hash,
             "created_at": self.created_at,
         }
+        if self.profile_photo:
+            payload["profile_photo"] = self.profile_photo
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, str]) -> UserRecord:
+        profile_photo = data.get("profile_photo") or None
         return cls(
             username=data["username"],
             password_hash=data["password_hash"],
             created_at=data["created_at"],
+            profile_photo=profile_photo,
         )
 
 
@@ -63,7 +69,12 @@ class AuthStore:
         except (json.JSONDecodeError, KeyError, OSError):
             return None
 
-    def create_user(self, username: str, password_hash: str) -> UserRecord:
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        profile_photo: str | None = None,
+    ) -> UserRecord:
         if self.is_setup_complete():
             raise ValueError("Setup already complete")
         if not _valid_username(username):
@@ -73,9 +84,23 @@ class AuthStore:
             username=username,
             password_hash=password_hash,
             created_at=datetime.now(timezone.utc).isoformat(),
+            profile_photo=profile_photo,
         )
         self.users_path.write_text(json.dumps(record.to_dict(), indent=2))
         (self.auth_dir / "setup_complete").touch()
+        return record
+
+    def set_profile_photo(self, filename: str | None) -> UserRecord:
+        user = self.get_user()
+        if user is None:
+            raise ValueError("No user")
+        record = UserRecord(
+            username=user.username,
+            password_hash=user.password_hash,
+            created_at=user.created_at,
+            profile_photo=filename,
+        )
+        self.users_path.write_text(json.dumps(record.to_dict(), indent=2))
         return record
 
 
