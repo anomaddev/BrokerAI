@@ -1,8 +1,36 @@
 import { Outlet } from "react-router-dom";
 import { useState } from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Sidebar from "./Sidebar";
+import MarketSessionsBar from "./MarketSessionsBar";
+import OverallBotStatus from "./OverallBotStatus";
+import TaskProgressFooter from "./TaskProgressFooter";
 import { UserMenuContainer } from "./UserMenu";
+import { BackgroundTasksProvider, useBackgroundTasks } from "../context/BackgroundTasksContext";
+import { useGeneralSettings } from "../hooks/useGeneralSettings";
+
+function AppMain() {
+  const { activeTask, recentTask } = useBackgroundTasks();
+  useGeneralSettings();
+  const showFooter = Boolean(activeTask || recentTask);
+
+  return (
+    <div className={`app-main${showFooter ? " app-main--task-footer" : ""}`}>
+      <header className="topbar">
+        <div className="topbar-start">
+          <OverallBotStatus />
+        </div>
+        <div className="topbar-actions">
+          <MarketSessionsBar />
+          <UserMenuContainer />
+        </div>
+      </header>
+      <main className="main-content">
+        <Outlet />
+      </main>
+      <TaskProgressFooter />
+    </div>
+  );
+}
 
 export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(
@@ -18,31 +46,11 @@ export default function AppLayout() {
   }
 
   return (
-    <div className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
-      <Sidebar collapsed={collapsed} />
-      <div className="app-main">
-        <header className="topbar">
-          <button
-            type="button"
-            className="menu-btn"
-            onClick={toggleSidebar}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-expanded={!collapsed}
-          >
-            {collapsed ? (
-              <PanelLeftOpen size={20} strokeWidth={1.75} />
-            ) : (
-              <PanelLeftClose size={20} strokeWidth={1.75} />
-            )}
-          </button>
-          <div className="topbar-actions">
-            <UserMenuContainer />
-          </div>
-        </header>
-        <main className="main-content">
-          <Outlet />
-        </main>
+    <BackgroundTasksProvider>
+      <div className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
+        <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
+        <AppMain />
       </div>
-    </div>
+    </BackgroundTasksProvider>
   );
 }

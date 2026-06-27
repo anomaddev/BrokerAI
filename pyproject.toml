@@ -27,3 +27,13 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 brokerai = ["web/static/**/*"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

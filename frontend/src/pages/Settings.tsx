@@ -6,12 +6,16 @@ import {
   type UpdateStatusResponse,
 } from "../api/client";
 import useAutoSave from "../hooks/useAutoSave";
+import { formatBotName, sortBots } from "../lib/bots";
 import AssetClassTab from "./settings/AssetClassTab";
 import AccountTab from "./settings/AccountTab";
+import DisplayTab from "./settings/DisplayTab";
 import BrokerGeneralTab from "./settings/BrokerGeneralTab";
+import GeneralTab from "./settings/GeneralTab";
 import DataConnectionsTabComponent from "./settings/DataConnectionsTab";
 import ModelsTab from "./settings/ModelsTab";
-import ResearchTab from "./settings/ResearchTab";
+import ReportsTab from "./settings/ReportsTab";
+import ResearchDataTab from "./settings/ResearchDataTab";
 import SettingsPanelHeader from "../components/SettingsPanelHeader";
 
 type SettingsNavItem = {
@@ -27,7 +31,11 @@ type SettingsNavSection = {
 const SETTINGS_SECTIONS: SettingsNavSection[] = [
   {
     label: "General",
-    items: [{ path: "general", label: "General" }],
+    items: [
+      { path: "general", label: "General" },
+      { path: "account", label: "Account" },
+      { path: "display", label: "Display" },
+    ],
   },
   {
     label: "Data",
@@ -38,7 +46,10 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
   },
   {
     label: "Research",
-    items: [{ path: "daily-reports", label: "Daily Reports" }],
+    items: [
+      { path: "reports", label: "Reports" },
+      { path: "data", label: "Data" },
+    ],
   },
   {
     label: "Broker",
@@ -58,24 +69,11 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
   },
 ];
 
-const SUB_BOT_ORDER = ["brokers", "researcher", "data_manager", "data_analyzer", "executor"];
-
 type BotStatus = { name: string; state: string };
-
-function formatBotName(name: string): string {
-  return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 function stateBadgeClass(state: string): string {
   if (state === "running" || state === "stopped" || state === "error") return state;
   return "stopped";
-}
-
-function sortBots(bots: BotStatus[]): BotStatus[] {
-  const order = new Map(SUB_BOT_ORDER.map((name, index) => [name, index]));
-  return [...bots].sort(
-    (a, b) => (order.get(a.name) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.name) ?? Number.MAX_SAFE_INTEGER),
-  );
 }
 
 function formatVersionLine(info?: { track?: string; ref?: string; commit_short?: string }): string {
@@ -204,22 +202,6 @@ function logUpdatesDebug({ label, config, update, checkError, flags }: UpdatesDe
   console.groupEnd();
 }
 
-function GeneralTab() {
-  return (
-    <div className="settings-panel">
-      <SettingsPanelHeader
-        title="General"
-        description="Configure broker-wide preferences such as bot name and timezone."
-      />
-      <div className="settings-panel-body">
-        <div className="placeholder">
-          General settings will be configured here (bot name, timezone, etc.).
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function AiModelsTab() {
   return <ModelsTab />;
 }
@@ -229,7 +211,11 @@ function DataConnectionsTab() {
 }
 
 function ResearchSettingsTab() {
-  return <ResearchTab />;
+  return <ReportsTab />;
+}
+
+function ResearchDataSettingsTab() {
+  return <ResearchDataTab />;
 }
 
 function resolveCheckError(data: UpdateStatusResponse | null): string | null {
@@ -1060,10 +1046,14 @@ export default function Settings() {
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralTab />} />
             <Route path="account" element={<AccountTab />} />
+            <Route path="display" element={<DisplayTab />} />
             <Route path="models" element={<AiModelsTab />} />
             <Route path="ai-models" element={<Navigate to="/settings/models" replace />} />
-            <Route path="daily-reports" element={<ResearchSettingsTab />} />
-            <Route path="research" element={<Navigate to="/settings/daily-reports" replace />} />
+            <Route path="reports" element={<ResearchSettingsTab />} />
+            <Route path="data" element={<ResearchDataSettingsTab />} />
+            <Route path="daily-reports" element={<Navigate to="/settings/reports" replace />} />
+            <Route path="weekly-reports" element={<Navigate to="/settings/reports" replace />} />
+            <Route path="research" element={<Navigate to="/settings/reports" replace />} />
             <Route path="connections" element={<DataConnectionsTab />} />
             <Route path="data-connections" element={<Navigate to="/settings/connections" replace />} />
             <Route path="broker/general" element={<BrokerGeneralTab />} />

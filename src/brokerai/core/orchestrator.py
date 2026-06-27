@@ -5,9 +5,19 @@ import signal
 from datetime import datetime, timezone
 from pathlib import Path
 
+from brokerai.activity.constants import (
+    ACTION_BOT_ERROR,
+    ACTION_DAILY_REPORT_COMPLETED,
+    ACTION_DAILY_REPORT_FAILED,
+    ACTION_ORCHESTRATOR_STARTED,
+    ACTION_ORCHESTRATOR_STOPPED,
+    ACTION_WEEKLY_BRIEF_COMPLETED,
+    ACTION_WEEKLY_DEBRIEF_COMPLETED,
+)
+from brokerai.activity.log import record_bot_activity
+from brokerai.activity.monitor import ActivityMonitor
 from brokerai.bots import BOT_REGISTRY, Bot
-from brokerai.bots.base import BotState
-from brokerai.config.settings import get_settings
+from brokerai.config.settings import get_settings, validate_startup_settings
 from brokerai.core.control import ControlServer
 
 logger = logging.getLogger(__name__)
@@ -18,6 +28,7 @@ class Orchestrator:
         self.settings = get_settings()
         self.bots: dict[str, Bot] = {}
         self._running = False
+        self._started_at: datetime | None = None
         self._tasks: dict[str, asyncio.Task] = {}
 
     def _load_bots(self) -> None:
@@ -33,10 +44,25 @@ class Orchestrator:
             await bot.start()
             self._tasks[name] = asyncio.create_task(self._run_bot(name, bot))
         self._running = True
+        self._started_at = datetime.now(timezone.utc)
         logger.info("Orchestrator started %d bot(s)", len(self.bots))
+        await record_bot_activity(
+            ACTION_ORCHESTRATOR_STARTED,
+            "Orchestrator started",
+            detail=f"Running {len(self.bots)} module(s)",
+            source="orchestrator",
+            occurred_at=self._started_at,
+        )
 
     async def stop_all(self) -> None:
+        if self._running:
+            await record_bot_activity(
+                ACTION_ORCHESTRATOR_STOPPED,
+                "Orchestrator stopped",
+                source="orchestrator",
+            )
         self._running = False
+        self._started_at = None
         for task in self._tasks.values():
             task.cancel()
         if self._tasks:
@@ -79,9 +105,23 @@ class Orchestrator:
                 break
             except Exception as exc:
                 logger.exception("Bot '%s' error: %s", name, exc)
-                bot._state = BotState.ERROR  # noqa: SLF001
-                bot._last_error = str(exc)  # noqa: SLF001
+                bot.mark_error(exc)
+                await record_bot_activity(
+                    ACTION_BOT_ERROR,
+                    f"{name.replace('_', ' ').title()} error",
+                    detail=str(exc),
+                    source=name,
+                    metadata={"bot": name},
+                )
                 await asyncio.sleep(5)
+
+    async def activity_monitor_loop(self, monitor: ActivityMonitor) -> None:
+        while self._running:
+            try:
+                await monitor.tick()
+            except Exception:
+                logger.warning("Activity monitor tick failed", exc_info=True)
+            await asyncio.sleep(60)
 
     async def heartbeat_loop(self) -> None:
         while self._running:
@@ -90,6 +130,7 @@ class Orchestrator:
             heartbeat = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "running": self._running,
+                "started_at": self._started_at.isoformat() if self._started_at else None,
                 "bots": await self.get_statuses(),
             }
             (data_dir / "heartbeat.json").write_text(json.dumps(heartbeat, indent=2))
@@ -119,6 +160,13 @@ async def run_orchestrator() -> None:
         level=get_settings().log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    validate_startup_settings()
+    try:
+        from brokerai.tasks.runner import reconcile_stale_active_task
+
+        reconcile_stale_active_task()
+    except Exception:
+        logger.warning("Background task reconciliation failed", exc_info=True)
     orchestrator = get_orchestrator()
     stop_event = asyncio.Event()
 
@@ -140,9 +188,12 @@ async def run_orchestrator() -> None:
 
     heartbeat_task = asyncio.create_task(orchestrator.heartbeat_loop())
     control_task = asyncio.create_task(orchestrator.control_loop())
+    activity_monitor = ActivityMonitor()
+    activity_task = asyncio.create_task(orchestrator.activity_monitor_loop(activity_monitor))
 
     await stop_event.wait()
     heartbeat_task.cancel()
     control_task.cancel()
-    await asyncio.gather(heartbeat_task, control_task, return_exceptions=True)
+    activity_task.cancel()
+    await asyncio.gather(heartbeat_task, control_task, activity_task, return_exceptions=True)
     await orchestrator.stop_all()

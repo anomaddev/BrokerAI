@@ -2,14 +2,18 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
+  Activity,
   Database,
   FileText,
   LayoutDashboard,
   LineChart,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   TrendingUp,
 } from "lucide-react";
 import { api } from "../api/client";
+import SidebarStatusPanel from "./SidebarStatusPanel";
 
 type NavItem = {
   to: string;
@@ -36,7 +40,7 @@ type NavSection = {
 const NAV_SECTIONS: NavSection[] = [
   {
     label: "Research & Analysis",
-    items: [{ to: "/daily-reports", label: "Daily Reports", icon: FileText }],
+    items: [{ to: "/daily-reports", label: "Reports", icon: FileText }],
   },
   {
     label: "Trading",
@@ -44,11 +48,10 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-const SETTINGS_ITEM: NavItem = {
-  to: "/settings",
-  label: "Settings",
-  icon: Settings,
-};
+const SYSTEM_ITEMS: NavItem[] = [
+  { to: "/activity", label: "Activity", icon: Activity },
+  { to: "/settings", label: "Settings", icon: Settings },
+];
 
 const DEFAULT_MONGODB_URI = "mongodb://127.0.0.1:27017";
 const DEFAULT_DATABASE = "brokerai";
@@ -62,6 +65,7 @@ function buildMongoConnectionString(uri: string, database: string): string {
 
 type SidebarProps = {
   collapsed: boolean;
+  onToggle: () => void;
 };
 
 function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
@@ -97,7 +101,7 @@ function ExternalNavItemLink({ item, collapsed }: { item: ExternalNavItem; colla
   );
 }
 
-export default function Sidebar({ collapsed }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const [mongoConnection, setMongoConnection] = useState(
     buildMongoConnectionString(DEFAULT_MONGODB_URI, DEFAULT_DATABASE),
   );
@@ -123,10 +127,33 @@ export default function Sidebar({ collapsed }: SidebarProps) {
   return (
     <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
       <div className="sidebar-header">
-        <span className="sidebar-brand-icon" aria-hidden>
-          <TrendingUp size={22} strokeWidth={2} />
-        </span>
-        <span className="sidebar-title">BrokerAI</span>
+        {collapsed ? (
+          <button
+            type="button"
+            className="sidebar-toggle-btn"
+            onClick={onToggle}
+            aria-label="Expand sidebar"
+            aria-expanded={false}
+          >
+            <PanelLeftOpen size={20} strokeWidth={1.75} />
+          </button>
+        ) : (
+          <>
+            <span className="sidebar-brand-icon" aria-hidden>
+              <TrendingUp size={22} strokeWidth={2} />
+            </span>
+            <span className="sidebar-title">BrokerAI</span>
+            <button
+              type="button"
+              className="sidebar-toggle-btn sidebar-toggle-btn--collapse"
+              onClick={onToggle}
+              aria-label="Collapse sidebar"
+              aria-expanded
+            >
+              <PanelLeftClose size={18} strokeWidth={1.75} />
+            </button>
+          </>
+        )}
       </div>
       <nav className="sidebar-nav" aria-label="Main">
         {NAV_ITEMS.map((item) => (
@@ -149,7 +176,12 @@ export default function Sidebar({ collapsed }: SidebarProps) {
       </div>
       <div className="sidebar-bottom">
         <span className="sidebar-section-label">System</span>
-        <NavItemLink item={SETTINGS_ITEM} collapsed={collapsed} />
+        {SYSTEM_ITEMS.map((item) => (
+          <NavItemLink key={item.to} item={item} collapsed={collapsed} />
+        ))}
+      </div>
+      <div className="sidebar-status">
+        <SidebarStatusPanel collapsed={collapsed} />
       </div>
     </aside>
   );

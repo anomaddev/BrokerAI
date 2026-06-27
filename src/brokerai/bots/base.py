@@ -36,6 +36,10 @@ class Bot(ABC):
             "last_error": self._last_error,
         }
 
+    def mark_error(self, error: str | Exception) -> None:
+        self._state = BotState.ERROR
+        self._last_error = str(error)
+
     @abstractmethod
     async def on_start(self) -> None:
         """Sub-bot startup hook."""

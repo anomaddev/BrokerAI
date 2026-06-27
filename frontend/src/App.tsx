@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "./api/client";
 import Setup from "./pages/Setup";
@@ -8,6 +8,7 @@ import Research from "./pages/Research";
 import ResearchReportView from "./pages/ResearchReportView";
 import Strategies from "./pages/Strategies";
 import StrategyBuilderPage from "./pages/strategies/StrategyBuilderPage";
+import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
 
@@ -34,7 +35,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [location.pathname]);
+  }, []);
 
   if (status === "loading") {
     return <div className="center-page">Loading…</div>;
@@ -65,6 +66,7 @@ export default function App() {
           <Route path="/trading/strategies/new/:presetId" element={<StrategyBuilderPage />} />
           <Route path="/research" element={<Navigate to="/daily-reports" replace />} />
           <Route path="/research/r/*" element={<Navigate to="/daily-reports" replace />} />
+          <Route path="/activity" element={<Activity />} />
           <Route path="/settings/*" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

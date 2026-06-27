@@ -31,7 +31,23 @@ async def ensure_indexes() -> None:
         name="analysis_results_symbol_created_at",
     )
     await db.ai_models.create_index("id", unique=True, name="ai_models_id")
-    await db.data_connections.create_index("type", unique=True, name="data_connections_type")
+    # Drop legacy index that blocked multiple model capability documents.
+    try:
+        await db.data_connections.drop_index("data_connections_type")
+    except Exception:
+        pass
+    await db.data_connections.create_index(
+        "type",
+        unique=True,
+        name="data_connections_singleton_type",
+        partialFilterExpression={"type": {"$in": ["newsapi", "massive"]}},
+    )
+    await db.data_connections.create_index(
+        [("type", 1), ("model_id", 1)],
+        unique=True,
+        name="data_connections_model_type_id",
+        partialFilterExpression={"type": "model"},
+    )
     await db.exchange_connections.create_index(
         "exchange_id",
         unique=True,
@@ -49,4 +65,5 @@ async def ensure_indexes() -> None:
         name="strategies_asset_class_name",
     )
     await db.strategies.create_index("preset_id", name="strategies_preset_id")
+    await db.bot_activity.create_index([("occurred_at", -1)], name="bot_activity_occurred_at")
     logger.info("MongoDB indexes ensured")

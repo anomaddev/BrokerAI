@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
     web_port: int = 1989
     log_level: str = "INFO"
-    enabled_bots: str = "brokers,researcher,data_manager,data_analyzer,executor"
+    enabled_bots: str = "researcher"
     auto_update: bool = True
     update_track: UpdateTrack = "branch"
     branch: str = "main"
@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     mongodb_db: str = "brokerai"
     session_cookie_name: str = "brokerai_session"
     session_max_age: int = 60 * 60 * 24 * 7
+    research_search_concurrency: int = 6
+    research_analysis_concurrency: int = 4
 
     @property
     def auth_dir(self) -> Path:
@@ -94,3 +96,13 @@ def reload_settings() -> Settings:
     sync_update_env_from_file()
     get_settings.cache_clear()
     return get_settings()
+
+
+def validate_startup_settings(settings: Settings | None = None) -> None:
+    """Refuse startup in production when critical settings are unsafe."""
+    settings = settings or get_settings()
+    if settings.secret_key == "change-me" and _PROD_ENV.exists():
+        raise RuntimeError(
+            "BROKERAI_SECRET_KEY must be set to a secure value in production "
+            "(/etc/brokerai/config.env)"
+        )

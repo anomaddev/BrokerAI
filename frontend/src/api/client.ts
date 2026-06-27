@@ -44,6 +44,8 @@ async function requestForm<T>(path: string, form: FormData, method = "POST"): Pr
 export type MeResponse = {
   username: string;
   has_profile_photo: boolean;
+  first_name?: string | null;
+  last_name?: string | null;
 };
 
 export const PROFILE_PHOTO_PATH = "/api/auth/profile-photo";
@@ -140,6 +142,41 @@ export const api = {
     request<{ status: string; has_profile_photo: boolean }>("/api/auth/profile-photo", {
       method: "DELETE",
     }),
+  changeUsername: (data: { username: string; current_password: string }) =>
+    request<{ username: string; status: string }>("/api/auth/account/username", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  changePassword: (data: {
+    current_password: string;
+    password: string;
+    confirm_password: string;
+  }) =>
+    request<{ status: string }>("/api/auth/account/password", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  updateProfile: (data: { first_name?: string | null; last_name?: string | null }) =>
+    request<{ status: string; first_name: string | null; last_name: string | null }>(
+      "/api/auth/account/profile",
+      {
+        method: "PUT",
+        body: JSON.stringify(data),
+      },
+    ),
+  getDisplaySettings: () =>
+    request<{ market_indicators: MarketIndicators }>("/api/auth/account/display"),
+  updateDisplaySettings: (data: { market_indicators: MarketIndicators }) =>
+    request<{ status: string; market_indicators: MarketIndicators }>("/api/auth/account/display", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  getGeneralSettings: () => request<GeneralSettings>("/api/auth/account/general"),
+  updateGeneralSettings: (data: GeneralSettings) =>
+    request<{ status: string } & GeneralSettings>("/api/auth/account/general", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   health: () => request<Record<string, unknown>>("/api/health"),
   bots: () => request<{ bots: Array<{ name: string; state: string }> }>("/api/bots"),
   dbStats: () =>
@@ -198,13 +235,26 @@ export const api = {
     }),
 
   getDataConnections: () =>
-    request<{ newsapi: NewsApiConnection; models: ModelConnection[] }>(
+    request<{ newsapi: NewsApiConnection; massive: MassiveConnection; models: ModelConnection[] }>(
       "/api/settings/data-connections",
     ),
   saveNewsApi: (data: { api_key: string; enabled: boolean }) =>
     request<NewsApiConnection>("/api/settings/data-connections/newsapi", {
       method: "PUT",
       body: JSON.stringify(data),
+    }),
+  deleteNewsApi: () =>
+    request<NewsApiConnection>("/api/settings/data-connections/newsapi", {
+      method: "DELETE",
+    }),
+  saveMassive: (data: { api_key: string; enabled: boolean }) =>
+    request<MassiveConnection>("/api/settings/data-connections/massive", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteMassive: () =>
+    request<MassiveConnection>("/api/settings/data-connections/massive", {
+      method: "DELETE",
     }),
   saveModelConnection: (modelId: string, data: { capabilities: Record<string, boolean> }) =>
     request<ModelConnection>(`/api/settings/data-connections/models/${modelId}`, {
@@ -213,6 +263,11 @@ export const api = {
     }),
   testNewsApi: (data?: { api_key?: string }) =>
     request<{ ok: boolean; message: string }>("/api/settings/data-connections/newsapi/test", {
+      method: "POST",
+      body: JSON.stringify(data ?? {}),
+    }),
+  testMassive: (data?: { api_key?: string }) =>
+    request<{ ok: boolean; message: string }>("/api/settings/data-connections/massive/test", {
       method: "POST",
       body: JSON.stringify(data ?? {}),
     }),
@@ -251,11 +306,17 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  saveWeeklyResearchSettings: (data: Partial<WeeklyResearchSettings>) =>
+    request<ResearchSettings>("/api/settings/research/weekly", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   getForexPairs: () =>
     request<{
       catalog: string[];
       enabled_pairs: string[];
+      pair_order: string[];
       enabled: boolean;
       primary_exchange: string | null;
     }>("/api/settings/assets/forex/pairs"),
@@ -266,6 +327,7 @@ export const api = {
     data: {
       enabled: boolean;
       enabled_pairs?: string[];
+      pair_order?: string[];
       primary_exchange?: string | null;
     },
   ) =>
@@ -282,6 +344,40 @@ export const api = {
     request<ResearchReportContent>(
       `/api/research/reports/content?filename=${encodeURIComponent(filename)}`,
     ),
+  runResearchDailyReport: (force = true) =>
+    request<BackgroundTaskAccepted>("/api/research/reports/run-daily", {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    }),
+  rerunResearchReport: (filename: string) =>
+    request<BackgroundTaskAccepted>(
+      `/api/research/reports/rerun?filename=${encodeURIComponent(filename)}`,
+      { method: "POST" },
+    ),
+  deleteResearchReport: (filename: string) =>
+    request<{ filename: string; date: string; type: string }>(
+      `/api/research/reports?filename=${encodeURIComponent(filename)}`,
+      { method: "DELETE" },
+    ),
+  runWeeklyBrief: (force = false) =>
+    request<BackgroundTaskAccepted>("/api/research/reports/run-weekly-brief", {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    }),
+  runWeeklyDebrief: (force = false) =>
+    request<BackgroundTaskAccepted>("/api/research/reports/run-weekly-debrief", {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    }),
+
+  getActiveBackgroundTask: () =>
+    request<{ task: BackgroundTask | null }>("/api/tasks/active"),
+  getRecentBackgroundTasks: (limit = 3) =>
+    request<{ tasks: BackgroundTask[] }>(`/api/tasks/recent?limit=${limit}`),
+  cancelBackgroundTask: (taskId: string) =>
+    request<{ ok: boolean; task_id: string }>(`/api/tasks/${taskId}/cancel`, {
+      method: "POST",
+    }),
 
   listStrategies: () => request<{ strategies: Strategy[] }>("/api/strategies"),
   getStrategy: (id: string) => request<Strategy>(`/api/strategies/${encodeURIComponent(id)}`),
@@ -301,6 +397,26 @@ export const api = {
     }),
   listStrategyPresets: () =>
     request<{ presets: StrategyPresetMeta[] }>("/api/strategies/presets"),
+
+  getMarketStatus: () => request<MarketStatusResponse>("/api/market-status"),
+
+  getBotActivity: (limit = 20) =>
+    request<BotActivityResponse>(`/api/bot/activity?limit=${limit}`),
+};
+
+export type BotActivityEvent = {
+  id: string;
+  action_type: string;
+  title: string;
+  detail: string | null;
+  source: string | null;
+  metadata: Record<string, unknown>;
+  occurred_at: string;
+};
+
+export type BotActivityResponse = {
+  events: BotActivityEvent[];
+  latest: BotActivityEvent | null;
 };
 
 export type AiModel = {
@@ -339,6 +455,45 @@ export type NewsApiConnection = {
   enabled: boolean;
   api_key: string | null;
   api_key_set: boolean;
+};
+
+export type MassiveConnection = {
+  type: string;
+  enabled: boolean;
+  api_key: string | null;
+  api_key_set: boolean;
+};
+
+export type MarketIndicators = Record<string, boolean>;
+
+export type GeneralSettings = {
+  timezone_auto: boolean;
+  timezone: string | null;
+  show_utc_times: boolean;
+};
+
+export type MarketSessionStatus = {
+  id: string;
+  name: string;
+  status: "open" | "closed";
+  exchange_status?: string;
+  hours: string;
+  next_open?: string;
+  next_open_label?: string;
+  closes_at?: string;
+  closes_at_label?: string;
+};
+
+export type MarketStatusResponse = {
+  enabled: boolean;
+  available?: boolean;
+  configured?: boolean;
+  connection_enabled?: boolean;
+  error?: string;
+  server_time?: string;
+  fx_open?: boolean;
+  market?: string;
+  sessions: MarketSessionStatus[];
 };
 
 export type ModelConnection = {
@@ -416,6 +571,25 @@ export type ResearchScheduleMarket = {
   label: string;
   timezone: string;
   open_time_local: string;
+  close_time_local?: string;
+};
+
+export type WeeklyPromptPreview = {
+  system_prompt: string;
+  user_template: string;
+};
+
+export type WeeklyResearchSettings = {
+  weekly_brief_enabled?: boolean;
+  weekly_brief_model_id?: string | null;
+  weekly_brief_reasoning_effort?: ReasoningEffort;
+  weekly_brief_market_id?: string;
+  weekly_brief_market_offset_hours?: number;
+  weekly_debrief_enabled?: boolean;
+  weekly_debrief_model_id?: string | null;
+  weekly_debrief_reasoning_effort?: ReasoningEffort;
+  weekly_debrief_market_id?: string;
+  weekly_debrief_market_offset_hours?: number;
 };
 
 export type ResearchSettings = {
@@ -428,8 +602,25 @@ export type ResearchSettings = {
   daily_report_market_id: string;
   daily_report_market_offset_hours: number;
   last_daily_run_date: string | null;
+  weekly_brief_enabled: boolean;
+  weekly_brief_model_id: string | null;
+  weekly_brief_reasoning_effort: ReasoningEffort;
+  weekly_brief_market_id: string;
+  weekly_brief_market_offset_hours: number;
+  last_weekly_brief_run_week: string | null;
+  weekly_debrief_enabled: boolean;
+  weekly_debrief_model_id: string | null;
+  weekly_debrief_reasoning_effort: ReasoningEffort;
+  weekly_debrief_market_id: string;
+  weekly_debrief_market_offset_hours: number;
+  last_weekly_debrief_run_week: string | null;
   schedule_markets?: ResearchScheduleMarket[];
   schedule_description?: string;
+  weekly_brief_schedule_description?: string;
+  weekly_debrief_schedule_description?: string;
+  schedule_warnings?: string[];
+  weekly_brief_prompt_preview?: WeeklyPromptPreview;
+  weekly_debrief_prompt_preview?: WeeklyPromptPreview;
 };
 
 export type AssetClass = "forex" | "metals" | "stocks" | "crypto" | "futures" | "options";
@@ -438,6 +629,7 @@ export type AssetSettings = {
   asset_class: AssetClass;
   enabled: boolean;
   enabled_pairs?: string[];
+  pair_order?: string[];
   enabled_symbols?: string[];
   primary_exchange: string | null;
 };
@@ -469,7 +661,12 @@ export type ResearchSignalsSnapshot = {
   asset_classes: ResearchAssetSignals[];
 };
 
-export type ResearchReportType = "daily" | "daily_model" | "weekly" | string;
+export type ResearchReportType =
+  | "daily"
+  | "daily_model"
+  | "weekly_brief"
+  | "weekly_debrief"
+  | string;
 
 export type ResearchReportMeta = {
   filename: string;
@@ -490,6 +687,60 @@ export type ResearchReportContent = {
   model_label: string | null;
   generated_at: string | null;
   reasoning_effort: string | null;
+};
+
+export type BackgroundTaskAccepted = {
+  task_id: string;
+  status: "accepted";
+};
+
+export type BackgroundTask = {
+  id: string;
+  kind: string;
+  label: string;
+  status: "running" | "success" | "failed" | "skipped" | "cancelled";
+  message: string;
+  step: string;
+  progress: number;
+  started_at: string;
+  finished_at?: string | null;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  cancellable?: boolean;
+  cancel_requested_at?: string | null;
+};
+
+export type BackgroundTaskCompletedDetail = {
+  kind: string;
+  status: BackgroundTask["status"];
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+};
+
+export const BACKGROUND_TASK_COMPLETED_EVENT = "background-task:completed";
+
+export const RESEARCH_TASK_KINDS = {
+  daily: "research_daily",
+  dailyRerun: "research_daily_rerun",
+  weeklyBrief: "research_weekly_brief",
+  weeklyDebrief: "research_weekly_debrief",
+} as const;
+
+export type ResearchRunDailyResult = {
+  ok: boolean;
+  report_path: string | null;
+  model_report_paths: string[];
+  groups_processed: string[];
+  errors: string[];
+  skipped_reason: string | null;
+};
+
+export type ResearchRunWeeklyResult = {
+  ok: boolean;
+  report_path: string | null;
+  week_key: string | null;
+  errors: string[];
+  skipped_reason: string | null;
 };
 
 export type StrategyType = "preset" | "custom";

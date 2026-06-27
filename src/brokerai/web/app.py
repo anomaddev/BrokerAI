@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,20 +10,23 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from brokerai import __version__
-from brokerai.config.settings import get_settings
+from brokerai.config.settings import get_settings, validate_startup_settings
 from brokerai.core.control import ControlClient, ControlTimeout
 from brokerai.db import ping_db
 from brokerai.db.client import get_db
+from brokerai.web.routes.bot_activity import router as bot_activity_router
 from brokerai.web.routes.assets_settings import router as assets_settings_router
 from brokerai.web.routes.auth import require_auth, router as auth_router
 from brokerai.web.routes.data_connections_settings import router as data_connections_router
 from brokerai.web.routes.exchange_connections_settings import router as exchange_connections_router
+from brokerai.web.routes.market_status import router as market_status_router
 from brokerai.web.routes.models_settings import router as models_settings_router
 from brokerai.web.routes.research import router as research_router
 from brokerai.web.routes.research_settings_route import router as research_settings_router
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.system import router as system_router
+from brokerai.web.routes.tasks import router as tasks_router
 from brokerai.web.update_runner import (
     check_for_updates,
     installed_version_short,
@@ -33,7 +37,29 @@ from brokerai.web.update_runner import (
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BrokerAI", version=__version__)
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    validate_startup_settings()
+    try:
+        from brokerai.db.indexes import ensure_indexes
+
+        await ensure_indexes()
+    except Exception:
+        logger.warning("MongoDB unavailable — indexes not ensured", exc_info=True)
+    try:
+        from brokerai.tasks.runner import reconcile_stale_active_task
+
+        reconcile_stale_active_task()
+    except Exception:
+        logger.warning("Background task reconciliation failed", exc_info=True)
+    yield
+    from brokerai.db.client import close_db
+
+    await close_db()
+
+
+app = FastAPI(title="BrokerAI", version=__version__, lifespan=_app_lifespan)
 settings = get_settings()
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -43,12 +69,15 @@ app.include_router(auth_router)
 app.include_router(settings_router)
 app.include_router(models_settings_router)
 app.include_router(data_connections_router)
+app.include_router(market_status_router)
 app.include_router(exchange_connections_router)
 app.include_router(research_settings_router)
 app.include_router(assets_settings_router)
 app.include_router(research_router)
 app.include_router(strategies_router)
 app.include_router(system_router)
+app.include_router(bot_activity_router)
+app.include_router(tasks_router)
 
 if STATIC_DIR.exists():
     assets_dir = STATIC_DIR / "assets"
@@ -140,6 +169,7 @@ async def health() -> JSONResponse:
             ),
             "configured_pin": settings.update_pin_display,
             "orchestrator_running": heartbeat.get("running", False),
+            "orchestrator_started_at": heartbeat.get("started_at"),
             "mongodb": {"status": "ok" if mongo_ok else "unavailable"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -161,6 +191,7 @@ async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
             "research_settings",
             "asset_settings",
             "strategies",
+            "bot_activity",
         ):
             counts[name] = await handle.db[name].count_documents({})
         return JSONResponse(
