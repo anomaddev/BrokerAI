@@ -1,0 +1,21 @@
+:root {
+  --bg: #0f1419;
+  --surface: #1a2332;
+  --surface-2: #243044;
+  --border: #2d3a4f;
+  --text: #e7ecf3;
+  --muted: #8b9cb3;
+  --accent: #3b82f6;
+  --green: #22c55e;
+  --red: #ef4444;
+  --chart-bull: #22c55e;
+  --chart-bear: #ef4444;
+  --chart-ema-fast: #3b82f6;
+  --chart-ema-slow: #f59e0b;
+  --chart-adx: #a78bfa;
+  --chart-grid: rgba(45, 58, 79, 0.4);
+  --panel-width: 400px;
+  --app-chrome-height: 3.5rem;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+}

@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from typing import Any
+
+from brokerai.db.client import get_db
+from brokerai.exchanges import validate_primary_exchange
+
+ASSET_CLASSES = ("forex", "metals", "stocks", "crypto", "futures", "options")
+
+FOREX_PAIR_CATALOG = sorted([
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "USD/CHF",
+    "USD/CAD",
+    "AUD/USD",
+    "NZD/USD",
+    "EUR/GBP",
+    "EUR/JPY",
+    "EUR/CHF",
+    "EUR/AUD",
+    "EUR/CAD",
+    "EUR/NZD",
+    "GBP/JPY",
+    "GBP/CHF",
+    "GBP/AUD",
+    "GBP/CAD",
+    "GBP/NZD",
+    "AUD/JPY",
+    "AUD/CAD",
+    "AUD/CHF",
+    "AUD/NZD",
+    "CAD/JPY",
+    "CAD/CHF",
+    "CHF/JPY",
+    "NZD/JPY",
+    "NZD/CAD",
+    "NZD/CHF",
+])
+
+_FOREX_CATALOG_SET = frozenset(FOREX_PAIR_CATALOG)
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def default_pair_order(enabled_pairs: list[str] | None = None) -> list[str]:
+    """Default catalog order: enabled pairs first (A–Z), then disabled (A–Z)."""
+    enabled = sorted(p for p in (enabled_pairs or []) if p in _FOREX_CATALOG_SET)
+    enabled_set = set(enabled)
+    disabled = sorted(p for p in FOREX_PAIR_CATALOG if p not in enabled_set)
+    return enabled + disabled
+
+
+def normalize_pair_order(
+    enabled_pairs: list[str],
+    pair_order: list[str] | None,
+) -> list[str]:
+    """Build a full catalog order with enabled pairs before deactivated pairs."""
+    valid_enabled = _dedupe_preserve_order(p for p in enabled_pairs if p in _FOREX_CATALOG_SET)
+    enabled_set = set(valid_enabled)
+
+    raw_order = pair_order if pair_order else default_pair_order(valid_enabled)
+    filtered = _dedupe_preserve_order(p for p in raw_order if p in _FOREX_CATALOG_SET)
+
+    enabled_block = [p for p in filtered if p in enabled_set]
+    disabled_block = [p for p in filtered if p not in enabled_set]
+
+    for pair in valid_enabled:
+        if pair not in enabled_block:
+            enabled_block.append(pair)
+
+    for pair in FOREX_PAIR_CATALOG:
+        if pair not in enabled_set and pair not in disabled_block:
+            disabled_block.append(pair)
+
+    return enabled_block + disabled_block
+
+
+def ordered_enabled_pairs(enabled_pairs: list[str], pair_order: list[str] | None) -> list[str]:
+    """Return enabled pairs in user priority order (candle/analysis processing)."""
+    order = normalize_pair_order(enabled_pairs, pair_order)
+    enabled_set = set(enabled_pairs)
+    return [p for p in order if p in enabled_set]
+
+
+def enabled_forex_pairs(enabled_pairs: list[str]) -> list[str]:
+    """Return enabled pairs in catalog order for research (ignores user priority)."""
+    enabled_set = set(_dedupe_preserve_order(p for p in enabled_pairs if p in _FOREX_CATALOG_SET))
+    return [pair for pair in FOREX_PAIR_CATALOG if pair in enabled_set]
+
+
+class AssetSettingsRepository:
+    COLLECTION = "asset_settings"
+
+    async def get(self, asset_class: str) -> dict[str, Any]:
+        if asset_class not in ASSET_CLASSES:
+            raise ValueError(f"Unknown asset class: {asset_class}")
+
+        handle = await get_db()
+        doc = await handle.db[self.COLLECTION].find_one({"asset_class": asset_class}, {"_id": 0})
+        if doc:
+            if "primary_exchange" not in doc:
+                doc["primary_exchange"] = None
+            if asset_class == "forex":
+                enabled = list(doc.get("enabled_pairs") or [])
+                doc["enabled_pairs"] = _dedupe_preserve_order(
+                    p for p in enabled if p in _FOREX_CATALOG_SET
+                )
+                doc["pair_order"] = normalize_pair_order(
+                    doc["enabled_pairs"],
+                    doc.get("pair_order"),
+                )
+            return doc
+
+        default: dict[str, Any] = {
+            "asset_class": asset_class,
+            "enabled": False,
+            "primary_exchange": None,
+        }
+        if asset_class == "forex":
+            default["enabled_pairs"] = []
+            default["pair_order"] = default_pair_order([])
+        else:
+            default["enabled_symbols"] = []
+        return default
+
+    async def save(
+        self,
+        asset_class: str,
+        *,
+        enabled: bool,
+        enabled_pairs: list[str] | None = None,
+        pair_order: list[str] | None = None,
+        primary_exchange: str | None = None,
+    ) -> dict[str, Any]:
+        if asset_class not in ASSET_CLASSES:
+            raise ValueError(f"Unknown asset class: {asset_class}")
+
+        doc: dict[str, Any] = {
+            "asset_class": asset_class,
+            "enabled": enabled,
+            "primary_exchange": validate_primary_exchange(asset_class, primary_exchange),
+        }
+        if asset_class == "forex":
+            pairs = _dedupe_preserve_order(p for p in (enabled_pairs or []) if p in _FOREX_CATALOG_SET)
+            doc["enabled_pairs"] = pairs
+            doc["pair_order"] = normalize_pair_order(pairs, pair_order)
+        elif enabled_pairs is not None:
+            doc["enabled_symbols"] = sorted(set(enabled_pairs))
+
+        handle = await get_db()
+        await handle.db[self.COLLECTION].update_one(
+            {"asset_class": asset_class},
+            {"$set": doc},
+            upsert=True,
+        )
+        return doc
+
+    def forex_catalog(self) -> list[str]:
+        return list(FOREX_PAIR_CATALOG)
