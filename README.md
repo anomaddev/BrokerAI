@@ -20,7 +20,7 @@ Multi-bot trading platform for Proxmox LXC. BrokerAI orchestrates sub-bots, cach
 |-----|------|--------|
 | `brokers` | Routes actions to asset-class sub-brokers | stub |
 | `researcher` | Daily research / news for model input | stub |
-| `data_manager` | Caches market data from APIs | stub |
+| `data_manager` | Caches forex OHLCV from OANDA into MongoDB; schedules incremental fetches on candle close | partial |
 | `data_analyzer` | Analyzes cached data; parallel exit-signal monitors | stub |
 | `executor` | Executes trades when requested by brokers | stub |
 
@@ -86,9 +86,35 @@ Connect Compass to `mongodb://127.0.0.1:27017/brokerai`.
 
 | Collection | Purpose |
 |------------|---------|
-| `market_data` | Cached OHLCV / API payloads |
+| `market_data` | Cached OHLCV bars (symbol, timeframe, source, time) |
+| `strategies` | Saved strategy definitions (params v1, instruments, enabled flag) |
 | `research_cache` | Daily research summaries |
 | `analysis_results` | Analyzer output for brokers |
+
+### Forex candle cache (`data_manager`)
+
+For enabled forex strategies with OANDA configured, the **data manager** bot:
+
+1. **Bootstrap** — If MongoDB has fewer bars than the strategy’s `min_candles`, pulls history from OANDA once (closed bars only).
+2. **Cache** — Upserts bars into `market_data` keyed by pair, timeframe, and open time.
+3. **Schedule** — After bootstrap, waits until the next bar close for each timeframe (e.g. M15 → every 15 minutes), then fetches only the newly closed bar(s).
+
+The orchestrator still ticks every ~5 seconds, but OANDA is **not** called on every tick—only on bootstrap or when a scheduled candle close is due. Bot status includes `next_candle_fetches` per timeframe (`brokerai bots list --json`).
+
+Requirements: OANDA credentials in **Settings → Data Connections**, forex enabled in **Settings → Broker**, and at least one **enabled strategy** assigned to overlapping forex pairs.
+
+Run the data manager alone in dev:
+
+```bash
+brokerai run data-manager          # loop (default 5s tick; fetches only when due)
+brokerai run data-manager --once   # single tick
+```
+
+Strategy params schema: [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md). Caching notes: [`docs/architecture/caching.md`](docs/architecture/caching.md).
+
+### Strategies (Web UI)
+
+**Trading → Strategies** supports template-based builders (EMA Crossover, Custom), parameterized sections (timeframe, signal, filters, risk, execution), and saving to MongoDB. The data manager reads enabled strategies to decide which pairs, timeframes, and bar counts to cache.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -123,6 +149,7 @@ brokerai status
 brokerai bots list
 brokerai bots stop researcher
 brokerai bots start researcher
+brokerai run data-manager --once   # dev: one data_manager tick
 brokerai update check
 brokerai services restart   # root
 brokerai version
@@ -208,6 +235,8 @@ BrokerAI/
 ├── src/brokerai/
 │   ├── auth/                       Setup, login, sessions
 │   ├── bots/                       Sub-bot modules (Alpha taxonomy)
+│   │   └── data_manager/           OANDA forex candle cache + schedule
+│   ├── strategies/                 Strategy presets, params v1, evaluators
 │   ├── db/                         MongoDB client + repositories
 │   ├── cli/                        brokerai command
 │   ├── core/                       Orchestrator + control IPC
