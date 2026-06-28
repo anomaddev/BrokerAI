@@ -4,13 +4,16 @@ import logging
 from datetime import datetime, timezone
 
 from brokerai.bots.base import Bot
-from brokerai.bots.researcher.reports import daily_report_exists
+from brokerai.bots.researcher.weekly import (
+    completed_debrief_week,
+    preview_weekly_brief_skip_reason,
+    preview_weekly_debrief_skip_reason,
+)
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
 from brokerai.research_markets import (
     describe_schedule,
     is_past_scheduled_run,
     is_past_weekly_brief_run,
-    should_defer_weekly_brief_for_daily,
 )
 from brokerai.tasks.runner import is_research_running
 from brokerai.tasks.research import (
@@ -26,6 +29,23 @@ SCHEDULED_DAILY_REPORTS_ENABLED = True
 
 class ResearcherBot(Bot):
     name = "researcher"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._scheduled_skip_logs: dict[str, str | None] = {
+            "daily": None,
+            "weekly_brief": None,
+            "weekly_debrief": None,
+        }
+
+    def _log_scheduled_skip_once(self, key: str, message: str) -> None:
+        if self._scheduled_skip_logs.get(key) == message:
+            return
+        self._scheduled_skip_logs[key] = message
+        logger.info("Scheduled %s skipped: %s", key.replace("_", " "), message)
+
+    def _clear_scheduled_skip_log(self, key: str) -> None:
+        self._scheduled_skip_logs[key] = None
 
     async def on_start(self) -> None:
         if not SCHEDULED_DAILY_REPORTS_ENABLED:
@@ -82,10 +102,11 @@ class ResearcherBot(Bot):
         if settings.get("last_daily_run_date") == today:
             return
 
+        self._clear_scheduled_skip_log("daily")
         logger.info("Starting scheduled daily research report")
         task_id, error = await start_scheduled_daily_task()
         if error:
-            logger.debug("Scheduled daily report not started: %s", error)
+            logger.info("Scheduled daily report not started: %s", error)
         elif task_id:
             logger.info("Scheduled daily report task started: %s", task_id)
 
@@ -100,28 +121,16 @@ class ResearcherBot(Bot):
         ):
             return
 
-        today = now.date().isoformat()
-        daily_completed = (
-            settings.get("last_daily_run_date") == today or daily_report_exists(today)
-        )
-        if should_defer_weekly_brief_for_daily(
-            now,
-            daily_report_enabled=bool(settings.get("daily_report_enabled", False)),
-            daily_market_id=settings.get("daily_report_market_id", "london"),
-            daily_offset_hours=settings.get("daily_report_market_offset_hours", -2),
-            brief_market_id=settings.get("weekly_brief_market_id", "london"),
-            brief_offset_hours=settings.get("weekly_brief_market_offset_hours", -1),
-            daily_completed_today=daily_completed,
-        ):
-            logger.debug(
-                "Deferring weekly brief until today's daily report completes (same or later schedule)"
-            )
+        skip = await preview_weekly_brief_skip_reason(settings, now)
+        if skip:
+            self._log_scheduled_skip_once("weekly_brief", skip)
             return
 
+        self._clear_scheduled_skip_log("weekly_brief")
         logger.info("Starting scheduled weekly brief")
         task_id, error = await start_scheduled_weekly_brief_task()
         if error:
-            logger.debug("Scheduled weekly brief not started: %s", error)
+            logger.info("Scheduled weekly brief not started: %s", error)
         elif task_id:
             logger.info("Scheduled weekly brief task started: %s", task_id)
 
@@ -129,9 +138,18 @@ class ResearcherBot(Bot):
         if not settings.get("weekly_debrief_enabled", False):
             return
 
-        logger.info("Checking scheduled weekly debrief")
+        if completed_debrief_week(now, settings) is None:
+            return
+
+        skip = await preview_weekly_debrief_skip_reason(settings, now)
+        if skip:
+            self._log_scheduled_skip_once("weekly_debrief", skip)
+            return
+
+        self._clear_scheduled_skip_log("weekly_debrief")
+        logger.info("Starting scheduled weekly debrief")
         task_id, error = await start_scheduled_weekly_debrief_task()
         if error:
-            logger.debug("Scheduled weekly debrief not started: %s", error)
+            logger.info("Scheduled weekly debrief not started: %s", error)
         elif task_id:
             logger.info("Scheduled weekly debrief task started: %s", task_id)

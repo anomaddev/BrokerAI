@@ -1,9 +1,28 @@
 import logging
+from dataclasses import replace
+from datetime import datetime, timezone
 
 from brokerai.bots.base import Bot
+from brokerai.bots.data_manager.candle_requirements import collect_candle_requirements
+from brokerai.bots.data_manager.candle_schedule import is_candle_fetch_due, next_candle_close_at
+from brokerai.bots.data_manager.candles import (
+    fetch_and_cache_forex_candles,
+    requirement_needs_bootstrap,
+)
+from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_strategies
 from brokerai.db.repositories.market_data import MarketDataRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _format_forex_strategy(strategy: dict, matched_pairs: list[str]) -> str:
+    preset = strategy.get("preset_id") or strategy.get("strategy_type") or "custom"
+    timeframe = strategy.get("timeframe") or "—"
+    pairs_label = ", ".join(matched_pairs) if matched_pairs else "—"
+    return (
+        f"{strategy['name']} ({strategy['id'][:8]}…) · {preset} · "
+        f"{timeframe} · {pairs_label}"
+    )
 
 
 class DataManagerBot(Bot):
@@ -11,7 +30,7 @@ class DataManagerBot(Bot):
 
     def __init__(self) -> None:
         super().__init__()
-        self._repo = MarketDataRepository()
+        self._next_fetch_at: dict[str, datetime] = {}
 
     async def on_start(self) -> None:
         logger.info("Data Manager bot started")
@@ -19,11 +38,127 @@ class DataManagerBot(Bot):
     async def on_stop(self) -> None:
         logger.info("Data Manager bot stopped")
 
+    async def status(self) -> dict:
+        payload = await super().status()
+        payload["next_candle_fetches"] = {
+            timeframe: when.isoformat()
+            for timeframe, when in sorted(self._next_fetch_at.items())
+        }
+        return payload
+
+    def _schedule_next_fetch(self, timeframe: str, *, now: datetime | None = None) -> datetime:
+        when = now or datetime.now(timezone.utc)
+        next_at = next_candle_close_at(when, timeframe)
+        self._next_fetch_at[timeframe] = next_at
+        return next_at
+
+    async def _plan_fetches(self, requirements, repo: MarketDataRepository):
+        now = datetime.now(timezone.utc)
+        bootstrap = []
+        incremental = []
+        waiting = []
+
+        for requirement in requirements:
+            if await requirement_needs_bootstrap(requirement, repo):
+                bootstrap.append(requirement)
+                continue
+
+            next_at = self._next_fetch_at.get(requirement.timeframe)
+            if next_at is None:
+                next_at = self._schedule_next_fetch(requirement.timeframe, now=now)
+                waiting.append((requirement, next_at))
+                continue
+
+            if is_candle_fetch_due(now, next_at):
+                incremental.append(replace(requirement, incremental=True))
+            else:
+                waiting.append((requirement, next_at))
+
+        return bootstrap, incremental, waiting
+
     async def tick(self) -> None:
-        logger.debug("Data Manager tick — would fetch market data")
-        await self._repo.upsert(
-            symbol="STUB",
-            timeframe="1h",
-            source="stub",
-            data=[],
+        result = await load_runnable_forex_strategies()
+        if result.skip_reason:
+            logger.info("Data Manager tick — %s", result.skip_reason)
+            return
+
+        count = len(result.strategies)
+        logger.info(
+            "Data Manager tick — %d forex strateg%s with enabled pairs",
+            count,
+            "y" if count == 1 else "ies",
         )
+        for strategy, matched_pairs in result.strategies:
+            logger.info("  %s", _format_forex_strategy(strategy, matched_pairs))
+
+        requirements, warnings = collect_candle_requirements(result.strategies)
+        for warning in warnings:
+            logger.warning("Data Manager — %s", warning)
+
+        if not requirements:
+            logger.info("Data Manager tick — no candle requirements to fetch")
+            return
+
+        repo = MarketDataRepository()
+        bootstrap, incremental, waiting = await self._plan_fetches(requirements, repo)
+
+        for requirement, next_at in waiting:
+            logger.info(
+                "Data Manager — %s next fetch scheduled at %s",
+                requirement.timeframe,
+                next_at.isoformat(),
+            )
+
+        to_fetch = bootstrap + incremental
+        if not to_fetch:
+            logger.info("Data Manager tick — no candle fetches due")
+            return
+
+        if bootstrap:
+            logger.info(
+                "Data Manager tick — bootstrapping %d timeframe(s)",
+                len(bootstrap),
+            )
+            for requirement in bootstrap:
+                pairs_label = ", ".join(requirement.pairs) if requirement.pairs else "—"
+                logger.info(
+                    "  bootstrap %s · %s · %d bars",
+                    requirement.timeframe,
+                    pairs_label,
+                    requirement.bar_count,
+                )
+
+        if incremental:
+            logger.info(
+                "Data Manager tick — incremental fetch for %d timeframe(s)",
+                len(incremental),
+            )
+            for requirement in incremental:
+                pairs_label = ", ".join(requirement.pairs) if requirement.pairs else "—"
+                logger.info("  incremental %s · %s", requirement.timeframe, pairs_label)
+
+        fetch_result = await fetch_and_cache_forex_candles(to_fetch)
+        now = datetime.now(timezone.utc)
+        for requirement in to_fetch:
+            next_at = self._schedule_next_fetch(requirement.timeframe, now=now)
+            logger.info(
+                "Data Manager — %s next closed-candle fetch at %s",
+                requirement.timeframe,
+                next_at.isoformat(),
+            )
+
+        if fetch_result.candles_upserted:
+            logger.info(
+                "Data Manager tick — upserted %d candle(s) across %d/%d timeframe(s)",
+                fetch_result.candles_upserted,
+                fetch_result.fetched,
+                len(to_fetch),
+            )
+        elif fetch_result.fetched:
+            logger.info(
+                "Data Manager tick — refreshed %d/%d timeframe(s)",
+                fetch_result.fetched,
+                len(to_fetch),
+            )
+        for error in fetch_result.errors:
+            logger.warning("Data Manager — %s", error)

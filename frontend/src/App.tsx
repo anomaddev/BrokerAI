@@ -8,6 +8,7 @@ import Research from "./pages/Research";
 import ResearchReportView from "./pages/ResearchReportView";
 import Strategies from "./pages/Strategies";
 import StrategyBuilderPage from "./pages/strategies/StrategyBuilderPage";
+import StrategyEditPage from "./pages/strategies/StrategyEditPage";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
@@ -64,6 +65,7 @@ export default function App() {
           <Route path="/daily-reports/r/*" element={<ResearchReportView />} />
           <Route path="/trading/strategies" element={<Strategies />} />
           <Route path="/trading/strategies/new/:presetId" element={<StrategyBuilderPage />} />
+          <Route path="/trading/strategies/:id/edit" element={<StrategyEditPage />} />
           <Route path="/research" element={<Navigate to="/daily-reports" replace />} />
           <Route path="/research/r/*" element={<Navigate to="/daily-reports" replace />} />
           <Route path="/activity" element={<Activity />} />

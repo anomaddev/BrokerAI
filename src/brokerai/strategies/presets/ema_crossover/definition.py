@@ -47,10 +47,14 @@ DEFAULT_PARAMS: dict = {
             "fixed_pips": 30,
             "atr_multiplier": 2.5,
         },
-        "trailing": {"enabled": False, "atr_multiplier": 1.0},
     },
     "risk": {"risk_per_trade_pct": 1.0, "max_trades_per_day": 3},
-    "execution": {"sessions": ["London", "NY"], "min_confidence": 60, "override_all_strategies": False},
+    "execution": {
+        "sessions": ["London", "NY"],
+        "min_confidence": 60,
+        "override_all_strategies": False,
+        "priority": 50,
+    },
 }
 
 PARAM_SCHEMA: dict = {
@@ -70,7 +74,9 @@ PARAM_SCHEMA: dict = {
     },
     "execution": {
         "min_confidence": {"minimum": 0, "maximum": 100},
+        "priority": {"minimum": 0, "maximum": 100},
     },
+    "min_candles": {"maximum": 2000},
 }
 
 EMA_CROSSOVER_PRESET = StrategyPreset(

@@ -4,15 +4,20 @@ from typing import Any
 
 from brokerai.strategies.params.constants import (
     CONFIRMATIONS,
+    DEFAULT_PRIORITY,
     DIRECTIONS,
     FILTER_COMPARE,
     FILTER_TYPES,
     INDICATOR_TYPES,
+    MIN_CANDLES_MAX,
     PRICE_SOURCES,
+    PRIORITY_MAX,
+    PRIORITY_MIN,
     SCHEMA_VERSION,
     STOP_LOSS_MODES,
     TAKE_PROFIT_MODES,
     TIMEFRAMES,
+    TRAIL_MODES,
 )
 
 
@@ -163,7 +168,36 @@ def validate_filter(
     return normalized
 
 
-def validate_exits(spec: Any, *, schema: dict[str, Any] | None = None) -> dict[str, Any]:
+def _migrate_trailing_to_take_profit(
+    take_profit: dict[str, Any],
+    trailing: dict[str, Any],
+    *,
+    signal_type: str | None,
+) -> dict[str, Any]:
+    if not trailing.get("enabled"):
+        return take_profit
+
+    migrated = dict(take_profit)
+    migrated["mode"] = "trailing_stop"
+    atr_multiplier = trailing.get("atr_multiplier", 1.0)
+    if signal_type == "ema_crossover" and not atr_multiplier:
+        migrated["trail_mode"] = "ema_slow"
+        migrated["trail_ema_ref"] = "slow"
+    elif signal_type == "ema_crossover":
+        migrated["trail_mode"] = "atr"
+        migrated["trail_atr_multiplier"] = float(atr_multiplier)
+    else:
+        migrated["trail_mode"] = "atr"
+        migrated["trail_atr_multiplier"] = float(atr_multiplier)
+    return migrated
+
+
+def validate_exits(
+    spec: Any,
+    *,
+    schema: dict[str, Any] | None = None,
+    signal_type: str | None = None,
+) -> dict[str, Any]:
     field = "exits"
     data = _require_dict(spec, field)
     schema = schema or {}
@@ -184,35 +218,68 @@ def validate_exits(spec: Any, *, schema: dict[str, Any] | None = None) -> dict[s
             stop_loss["structure_lookback"], f"{field}.stop_loss.structure_lookback"
         )
 
-    take_profit = _require_dict(data.get("take_profit"), f"{field}.take_profit")
-    tp_mode = _require_str(take_profit.get("mode"), f"{field}.take_profit.mode")
+    take_profit_raw = _require_dict(data.get("take_profit"), f"{field}.take_profit")
+    trailing_raw = data.get("trailing")
+    if isinstance(trailing_raw, dict):
+        take_profit_raw = _migrate_trailing_to_take_profit(
+            take_profit_raw,
+            trailing_raw,
+            signal_type=signal_type,
+        )
+
+    tp_mode = _require_str(take_profit_raw.get("mode"), f"{field}.take_profit.mode")
     if tp_mode not in TAKE_PROFIT_MODES:
         raise ParamsValidationError(f"Unknown take profit mode: {tp_mode}", field=f"{field}.take_profit.mode")
+
+    if tp_mode == "reverse_crossover" and signal_type != "ema_crossover":
+        raise ParamsValidationError(
+            "reverse_crossover take profit requires ema_crossover signal",
+            field=f"{field}.take_profit.mode",
+        )
+
     tp_normalized: dict[str, Any] = {"mode": tp_mode}
-    if "risk_reward_ratio" in take_profit:
-        tp_normalized["risk_reward_ratio"] = _require_number(
-            take_profit["risk_reward_ratio"], f"{field}.take_profit.risk_reward_ratio"
-        )
-    if "fixed_pips" in take_profit:
-        tp_normalized["fixed_pips"] = _require_int(take_profit["fixed_pips"], f"{field}.take_profit.fixed_pips")
-    if "atr_multiplier" in take_profit:
-        tp_normalized["atr_multiplier"] = _require_number(
-            take_profit["atr_multiplier"], f"{field}.take_profit.atr_multiplier"
-        )
+    if tp_mode in {"fixed_pips", "rr_ratio", "atr_based"}:
+        if "risk_reward_ratio" in take_profit_raw:
+            tp_normalized["risk_reward_ratio"] = _require_number(
+                take_profit_raw["risk_reward_ratio"], f"{field}.take_profit.risk_reward_ratio"
+            )
+        if "fixed_pips" in take_profit_raw:
+            tp_normalized["fixed_pips"] = _require_int(
+                take_profit_raw["fixed_pips"], f"{field}.take_profit.fixed_pips"
+            )
+        if "atr_multiplier" in take_profit_raw:
+            tp_normalized["atr_multiplier"] = _require_number(
+                take_profit_raw["atr_multiplier"], f"{field}.take_profit.atr_multiplier"
+            )
+    elif tp_mode == "trailing_stop":
+        trail_mode = _require_str(take_profit_raw.get("trail_mode"), f"{field}.take_profit.trail_mode")
+        if trail_mode not in TRAIL_MODES:
+            raise ParamsValidationError(
+                f"Unknown trail mode: {trail_mode}",
+                field=f"{field}.take_profit.trail_mode",
+            )
+        if trail_mode == "ema_slow" and signal_type != "ema_crossover":
+            raise ParamsValidationError(
+                "ema_slow trailing stop requires ema_crossover signal",
+                field=f"{field}.take_profit.trail_mode",
+            )
+        tp_normalized["trail_mode"] = trail_mode
+        if trail_mode == "ema_slow":
+            trail_ema_ref = _require_str(
+                take_profit_raw.get("trail_ema_ref", "slow"),
+                f"{field}.take_profit.trail_ema_ref",
+            )
+            tp_normalized["trail_ema_ref"] = trail_ema_ref
+        else:
+            tp_normalized["trail_atr_multiplier"] = _require_number(
+                take_profit_raw.get("trail_atr_multiplier", 1.0),
+                f"{field}.take_profit.trail_atr_multiplier",
+            )
 
-    trailing = _require_dict(data.get("trailing"), f"{field}.trailing")
-    trailing_normalized = {
-        "enabled": _require_bool(trailing.get("enabled", False), f"{field}.trailing.enabled"),
-        "atr_multiplier": _require_number(
-            trailing.get("atr_multiplier", 1.0), f"{field}.trailing.atr_multiplier"
-        ),
-    }
-
-    _ = schema  # reserved for preset-specific bounds
+    _ = schema
     return {
         "stop_loss": sl_normalized,
         "take_profit": tp_normalized,
-        "trailing": trailing_normalized,
     }
 
 
@@ -250,12 +317,64 @@ def validate_execution(spec: Any, *, schema: dict[str, Any] | None = None) -> di
         f"{field}.override_all_strategies",
     )
 
+    priority = data.get("priority", DEFAULT_PRIORITY)
+    priority = _require_int(priority, f"{field}.priority")
+    _check_bounds(float(priority), f"{field}.priority", PRIORITY_MIN, PRIORITY_MAX)
+
     _ = schema
     return {
         "sessions": sessions,
         "min_confidence": min_confidence,
         "override_all_strategies": override_all_strategies,
+        "priority": priority,
     }
+
+
+def validate_min_candles(
+    value: Any,
+    *,
+    params: dict[str, Any],
+) -> int:
+    from brokerai.strategies.candles import compute_required_candles
+
+    computed = compute_required_candles(params)
+    if computed > MIN_CANDLES_MAX:
+        raise ParamsValidationError(
+            f"Computed minimum candles ({computed}) exceeds maximum allowed ({MIN_CANDLES_MAX})",
+            field="min_candles",
+        )
+
+    if value is None:
+        return computed
+
+    min_candles = _require_int(value, "min_candles")
+    if min_candles < computed:
+        raise ParamsValidationError(
+            f"min_candles must be >= {computed} (computed warmup from indicators/filters)",
+            field="min_candles",
+        )
+    if min_candles > MIN_CANDLES_MAX:
+        raise ParamsValidationError(
+            f"min_candles must be <= {MIN_CANDLES_MAX}",
+            field="min_candles",
+        )
+    return min_candles
+
+
+def validate_signal_monthly_limit(
+    spec: Any,
+    *,
+    expected_type: str,
+) -> dict[str, Any]:
+    field = "signal"
+    data = _require_dict(spec, field)
+    signal_type = _require_str(data.get("type"), f"{field}.type")
+    if signal_type != expected_type:
+        raise ParamsValidationError(
+            f"Expected signal type {expected_type}, got {signal_type}",
+            field=f"{field}.type",
+        )
+    return {"type": expected_type}
 
 
 def validate_signal_ema_crossover(

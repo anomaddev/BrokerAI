@@ -288,9 +288,7 @@ export default function Strategies() {
   }
 
   function openStrategy(strategy: Strategy) {
-    if (strategy.route) {
-      navigate(strategy.route);
-    }
+    navigate(`/trading/strategies/${strategy.id}/edit`);
   }
 
   const hasSavedStrategies = strategies.length > 0;

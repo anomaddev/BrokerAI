@@ -149,6 +149,14 @@ class StrategiesRepository:
         docs = await cursor.to_list(length=500)
         return [serialize_strategy(doc) for doc in docs]
 
+    async def list_enabled(self) -> list[dict[str, Any]]:
+        handle = await get_db()
+        cursor = handle.db[self.COLLECTION].find({"enabled": True}, {"_id": 0}).sort(
+            [("asset_class", 1), ("name", 1)]
+        )
+        docs = await cursor.to_list(length=500)
+        return [serialize_strategy(doc) for doc in docs]
+
     async def get_by_id(self, strategy_id: str) -> dict[str, Any] | None:
         handle = await get_db()
         doc = await handle.db[self.COLLECTION].find_one({"id": strategy_id}, {"_id": 0})
@@ -185,7 +193,7 @@ class StrategiesRepository:
             "enabled": enabled,
             "instruments": instruments,
             "instrument_selection": cleaned_selection,
-            "strategy_type": "preset",
+            "strategy_type": "custom" if preset_id == "custom" else "preset",
             "preset_id": preset_id,
             "route": preset.route,
             "params": normalized_params,

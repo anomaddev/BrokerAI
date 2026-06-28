@@ -11,10 +11,18 @@ async def ensure_indexes() -> None:
     handle = await get_db()
     db = handle.db
 
+    try:
+        await db.market_data.drop_index("market_data_symbol_timeframe_source")
+    except Exception:
+        pass
     await db.market_data.create_index(
-        [("symbol", 1), ("timeframe", 1), ("source", 1)],
+        [("symbol", 1), ("timeframe", 1), ("source", 1), ("time", 1)],
         unique=True,
-        name="market_data_symbol_timeframe_source",
+        name="market_data_symbol_timeframe_source_time",
+    )
+    await db.market_data.create_index(
+        [("symbol", 1), ("timeframe", 1), ("source", 1), ("time", -1)],
+        name="market_data_symbol_timeframe_source_time_desc",
     )
     await db.market_data.create_index(
         "expires_at",

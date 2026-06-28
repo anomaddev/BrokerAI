@@ -18,6 +18,7 @@ export type {
   PriceSource,
   StopLossMode,
   TakeProfitMode,
+  TrailMode,
   FilterCompare,
   IndicatorSpec,
   EmaIndicatorSpec,
@@ -29,12 +30,18 @@ export type {
   RsiFilterSpec,
   CustomFilterSpec,
   EmaCrossoverSignalSpec,
+  MonthlyHighSignalSpec,
+  MonthlyLowSignalSpec,
+  SignalSpec,
   StopLossSpec,
   TakeProfitSpec,
-  TrailingSpec,
   ExitsSpec,
   RiskSpec,
   ExecutionSpec,
   StrategyParamsV1,
   StrategyPresetMeta,
 } from "./types";
+
+export { SIGNAL_CATALOG, SIGNAL_CATALOG_SECTIONS, FILTER_CATALOG, findSignalCatalogEntry } from "./catalog";
+export type { SignalCatalogType, FilterCatalogType } from "./catalog";
+export { computeBuilderMinCandles, defaultAdxFilter, defaultAtrFilter } from "./helpers";

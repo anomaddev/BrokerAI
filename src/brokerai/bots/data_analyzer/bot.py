@@ -26,7 +26,7 @@ class DataAnalyzerBot(Bot):
 
     async def tick(self) -> None:
         logger.debug("Data Analyzer tick — would analyze cached data")
-        _ = await self._market_repo.find("STUB", "1h", "stub")
+        _ = await self._market_repo.find_candles("STUB", "1h", "stub", limit=1)
         if self._sub_analyzers:
             await asyncio.gather(
                 *[analyzer.evaluate() for analyzer in self._sub_analyzers.values()],

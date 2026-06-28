@@ -1,14 +1,14 @@
 import type { AssetClass } from "../../../../api/client";
 import type { StrategyAssignmentMode } from "../../../../lib/strategies/instruments";
-import { TIMEFRAME_OPTIONS, type Timeframe } from "../../../../lib/strategyParams";
+import { TIMEFRAME_OPTIONS, type Timeframe, type TakeProfitMode, type TrailMode } from "../../../../lib/strategyParams";
+import { computeBuilderMinCandles } from "../../../../lib/strategyParams/helpers";
 
 export type EmaCrossoverDirection = "long" | "short" | "both";
 export type EmaCrossoverConfirmation = "close" | "pullback" | "aggressive";
 export type StopLossType = "fixed_pips" | "atr_based" | "structure";
-export type TakeProfitType = "fixed_pips" | "rr_ratio" | "atr_based";
 export type OverlayMode = "clean" | "detailed";
 
-export { TIMEFRAME_OPTIONS, type Timeframe };
+export { TIMEFRAME_OPTIONS, type Timeframe, type TakeProfitMode, type TrailMode };
 
 export type ChartOverlays = {
   ema: boolean;
@@ -26,6 +26,7 @@ export type EmaCrossoverParams = {
   fastEma: number;
   slowEma: number;
   timeframe: Timeframe;
+  minCandles: number;
   adxFilter: boolean;
   adxPeriod: number;
   adxThreshold: number;
@@ -38,53 +39,55 @@ export type EmaCrossoverParams = {
   slAtrMultiplier: number;
   slFixedPips: number;
   slStructureLookback: number;
-  takeProfitType: TakeProfitType;
+  takeProfitType: TakeProfitMode;
   riskRewardRatio: number;
   tpFixedPips: number;
   tpAtrMultiplier: number;
-  trailingStop: boolean;
+  trailMode: TrailMode;
   trailAtrMultiplier: number;
   riskPerTrade: number;
   minConfidence: number;
   maxTradesPerDay: number;
   overrideAllStrategies: boolean;
+  priority: number;
   sessions: string[];
   overlayMode: OverlayMode;
   overlays: ChartOverlays;
 };
 
-export const DEFAULT_EMA_CROSSOVER_PARAMS: EmaCrossoverParams = {
+const BASE_DEFAULTS = {
   enabled: false,
-  assignmentMode: "asset_class",
-  assetClass: "forex",
-  selectedInstruments: [],
+  assignmentMode: "asset_class" as StrategyAssignmentMode,
+  assetClass: "forex" as AssetClass,
+  selectedInstruments: [] as string[],
   fastEma: 9,
   slowEma: 21,
-  timeframe: "M15",
+  timeframe: "M15" as Timeframe,
   adxFilter: true,
   adxPeriod: 14,
   adxThreshold: 25,
   atrFilter: true,
   atrPeriod: 14,
   minAtr: 0.0008,
-  direction: "both",
-  confirmation: "close",
-  stopLossType: "atr_based",
+  direction: "both" as EmaCrossoverDirection,
+  confirmation: "close" as EmaCrossoverConfirmation,
+  stopLossType: "atr_based" as StopLossType,
   slAtrMultiplier: 1.5,
   slFixedPips: 15,
   slStructureLookback: 10,
-  takeProfitType: "rr_ratio",
+  takeProfitType: "rr_ratio" as TakeProfitMode,
   riskRewardRatio: 2.0,
   tpFixedPips: 30,
   tpAtrMultiplier: 2.5,
-  trailingStop: false,
+  trailMode: "atr" as TrailMode,
   trailAtrMultiplier: 1.0,
   riskPerTrade: 1.0,
   minConfidence: 60,
   maxTradesPerDay: 3,
   overrideAllStrategies: false,
+  priority: 50,
   sessions: ["London", "NY"],
-  overlayMode: "detailed",
+  overlayMode: "detailed" as OverlayMode,
   overlays: {
     ema: true,
     signals: true,
@@ -92,6 +95,19 @@ export const DEFAULT_EMA_CROSSOVER_PARAMS: EmaCrossoverParams = {
     adx: true,
     atr: true,
   },
+};
+
+export const DEFAULT_EMA_CROSSOVER_PARAMS: EmaCrossoverParams = {
+  ...BASE_DEFAULTS,
+  minCandles: computeBuilderMinCandles({
+    fastEma: BASE_DEFAULTS.fastEma,
+    slowEma: BASE_DEFAULTS.slowEma,
+    adxFilter: BASE_DEFAULTS.adxFilter,
+    atrFilter: BASE_DEFAULTS.atrFilter,
+    adxPeriod: BASE_DEFAULTS.adxPeriod,
+    atrPeriod: BASE_DEFAULTS.atrPeriod,
+    slStructureLookback: BASE_DEFAULTS.slStructureLookback,
+  }),
 };
 
 export const SESSION_OPTIONS = ["London", "NY", "Asia", "Sydney"] as const;

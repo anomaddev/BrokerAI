@@ -15,4 +15,5 @@ export type StrategyPreset = {
   route: string;
   icon: LucideIcon;
   tags?: string[];
+  locked?: boolean;
 };

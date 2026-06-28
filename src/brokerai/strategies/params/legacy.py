@@ -54,6 +54,20 @@ def _legacy_timeframe(raw: dict[str, Any]) -> str:
 
 def migrate_ema_crossover_flat(raw: dict[str, Any]) -> dict[str, Any]:
     """Convert legacy flat EMA crossover params to StrategyParams v1."""
+    take_profit_mode = raw.get("take_profit_type", "rr_ratio")
+    take_profit: dict[str, Any] = {
+        "mode": take_profit_mode,
+        "risk_reward_ratio": float(raw.get("risk_reward_ratio", 2.0)),
+        "fixed_pips": int(raw.get("tp_fixed_pips", 30)),
+        "atr_multiplier": float(raw.get("tp_atr_multiplier", 2.5)),
+    }
+    if raw.get("trailing_stop"):
+        take_profit = {
+            "mode": "trailing_stop",
+            "trail_mode": "atr",
+            "trail_atr_multiplier": float(raw.get("trail_atr_multiplier", 1.0)),
+        }
+
     return {
         "schema_version": SCHEMA_VERSION,
         "timeframe": _legacy_timeframe(raw),
@@ -100,16 +114,7 @@ def migrate_ema_crossover_flat(raw: dict[str, Any]) -> dict[str, Any]:
                 "fixed_pips": int(raw.get("sl_fixed_pips", 15)),
                 "structure_lookback": int(raw.get("sl_structure_lookback", 10)),
             },
-            "take_profit": {
-                "mode": raw.get("take_profit_type", "rr_ratio"),
-                "risk_reward_ratio": float(raw.get("risk_reward_ratio", 2.0)),
-                "fixed_pips": int(raw.get("tp_fixed_pips", 30)),
-                "atr_multiplier": float(raw.get("tp_atr_multiplier", 2.5)),
-            },
-            "trailing": {
-                "enabled": bool(raw.get("trailing_stop", False)),
-                "atr_multiplier": float(raw.get("trail_atr_multiplier", 1.0)),
-            },
+            "take_profit": take_profit,
         },
         "risk": {
             "risk_per_trade_pct": float(raw.get("risk_per_trade", 1.0)),
@@ -119,5 +124,6 @@ def migrate_ema_crossover_flat(raw: dict[str, Any]) -> dict[str, Any]:
             "sessions": list(raw.get("sessions") or ["London", "NY"]),
             "min_confidence": int(raw.get("min_confidence", 60)),
             "override_all_strategies": bool(raw.get("override_all_strategies", False)),
+            "priority": int(raw.get("priority", 50)),
         },
     }

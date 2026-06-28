@@ -24,6 +24,7 @@ import {
   MARKET_OFFSET_OPTIONS,
   offsetLabel,
   schedulePreviewParts,
+  weeklyBriefSchedulePreviewParts,
 } from "./researchMarkets";
 
 const REASONING_OPTIONS: { value: ReasoningEffort; label: string }[] = [
@@ -359,7 +360,7 @@ export default function ReportsTab() {
     [dailyMarket, dailyReportMarketOffsetHours, timeOptions],
   );
   const briefPreview = useMemo(
-    () => schedulePreviewParts(briefMarket, weeklyBriefMarketOffsetHours, new Date(), timeOptions),
+    () => weeklyBriefSchedulePreviewParts(briefMarket, weeklyBriefMarketOffsetHours, new Date(), timeOptions),
     [briefMarket, weeklyBriefMarketOffsetHours, timeOptions],
   );
   const debriefPreview = useMemo(
@@ -751,8 +752,10 @@ export default function ReportsTab() {
 
                   {weeklyBriefEnabled && briefPreview && (
                     <div className="research-schedule-preview">
-                      <span className="research-schedule-preview-kicker">Next run (today)</span>
-                      <p className="research-schedule-preview-time">~{briefPreview.runTimeUtc}</p>
+                      <span className="research-schedule-preview-kicker">Next run (week open)</span>
+                      <p className="research-schedule-preview-time">
+                        ~{briefPreview.runTimeUtc} · {briefPreview.runDate}
+                      </p>
                       <p className="research-schedule-preview-detail">
                         {briefPreview.offsetLabel} · {briefPreview.marketLabel} · opens{" "}
                         {briefPreview.openTimeLocal} {briefPreview.timezone}
@@ -902,7 +905,9 @@ export default function ReportsTab() {
                   {weeklyDebriefEnabled && debriefPreview && (
                     <div className="research-schedule-preview">
                       <span className="research-schedule-preview-kicker">Week ending (Friday)</span>
-                      <p className="research-schedule-preview-time">~{debriefPreview.runTimeUtc}</p>
+                      <p className="research-schedule-preview-time">
+                        ~{debriefPreview.runTimeUtc} · {debriefPreview.runDate}
+                      </p>
                       <p className="research-schedule-preview-detail">
                         {debriefPreview.offsetLabel} · {debriefPreview.marketLabel} · closes{" "}
                         {debriefPreview.closeTimeLocal} {debriefPreview.timezone}

@@ -26,7 +26,14 @@ export default function CreateStrategyOverlay({ onClose }: CreateStrategyOverlay
       titleId={step === "mode" ? "create-strategy-title" : "create-strategy-preset-title"}
     >
       {step === "mode" ? (
-        <StrategyModeStep onSelectPreset={() => setStep("preset")} onCancel={onClose} />
+        <StrategyModeStep
+          onSelectPreset={() => setStep("preset")}
+          onSelectCustom={() => {
+            onClose();
+            navigate("/trading/strategies/new/custom");
+          }}
+          onCancel={onClose}
+        />
       ) : (
         <StrategyPresetStep
           onSelect={handleSelectPreset}

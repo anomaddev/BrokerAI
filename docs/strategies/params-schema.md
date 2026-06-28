@@ -15,6 +15,7 @@ BrokerAI stores strategy configuration in MongoDB as structured **StrategyParams
 {
   "schema_version": 1,
   "timeframe": "M15",
+  "min_candles": 63,
   "indicators": { },
   "signal": { },
   "filters": [ ],
@@ -171,17 +172,15 @@ Ordered array. All **enabled** filters must pass (logical AND).
 
 | Field | Type | Values |
 |-------|------|--------|
-| `mode` | string | `fixed_pips`, `rr_ratio`, `atr_based` |
+| `mode` | string | `fixed_pips`, `rr_ratio`, `atr_based`, `reverse_crossover`, `trailing_stop` |
 | `risk_reward_ratio` | number | Used when `mode` is `rr_ratio` |
 | `fixed_pips` | integer | Used when `mode` is `fixed_pips` |
 | `atr_multiplier` | number | Used when `mode` is `atr_based` |
+| `trail_mode` | string | `ema_slow` or `atr` when `mode` is `trailing_stop` |
+| `trail_atr_multiplier` | number | Used when `trail_mode` is `atr` |
+| `trail_ema_ref` | string | Indicator ref when `trail_mode` is `ema_slow` |
 
-#### `trailing`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `enabled` | boolean | Trailing stop on/off |
-| `atr_multiplier` | number | Trail distance in ATR units |
+`reverse_crossover` and `trail_mode: ema_slow` require `signal.type` of `ema_crossover`.
 
 ### `risk`
 
@@ -190,6 +189,12 @@ Ordered array. All **enabled** filters must pass (logical AND).
 | `risk_per_trade_pct` | number | 0.25–5.0 (% of account) |
 | `max_trades_per_day` | integer | 1–20 |
 
+### `min_candles`
+
+| Field | Type | Bounds | Description |
+|-------|------|--------|-------------|
+| `min_candles` | integer | computed–2000 | Minimum bars required before strategy runs on next candle; defaults to computed warm-up |
+
 ### `execution`
 
 | Field | Type | Description |
@@ -197,6 +202,9 @@ Ordered array. All **enabled** filters must pass (logical AND).
 | `sessions` | string[] | At least one session name (e.g. `London`, `NY`) |
 | `min_confidence` | integer | 0–100 minimum signal confidence |
 | `override_all_strategies` | boolean | When true, this strategy takes priority over other enabled strategies on overlapping instruments (default `false`) |
+| `priority` | integer | 0–100; lower value = higher priority (default `50`) |
+
+Note: `max_trades_per_day` is stored under `risk` but displayed in the Execution UI section.
 
 ---
 

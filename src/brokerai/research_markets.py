@@ -139,6 +139,61 @@ def week_end_close_date(week_start: date, market_id: str) -> date:
     return week_start + timedelta(days=4)
 
 
+def week_open_date(d: date) -> date:
+    """Monday of the week containing *d* (Mon–Fri). Sat/Sun roll forward to next Monday."""
+    if d.weekday() >= 5:
+        return d + timedelta(days=7 - d.weekday())
+    return d - timedelta(days=d.weekday())
+
+
+def _utc_now(now: datetime | None = None) -> datetime:
+    ref = now or datetime.now(timezone.utc)
+    if ref.tzinfo is None:
+        return ref.replace(tzinfo=timezone.utc)
+    return ref.astimezone(timezone.utc)
+
+
+def market_local_date(market_id: str, now: datetime) -> date:
+    market = get_market(normalize_market_id(market_id))
+    assert market is not None
+    return _utc_now(now).astimezone(ZoneInfo(market.timezone)).date()
+
+
+def weekly_brief_run_date(market_id: str, now: datetime | None = None) -> date:
+    """Monday (week open) for the weekly brief in the chosen market's calendar."""
+    ref = _utc_now(now)
+    local_today = market_local_date(market_id, ref)
+    return week_open_date(local_today)
+
+
+def scheduled_weekly_brief_run_utc(
+    market_id: str,
+    offset_hours: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Scheduled weekly brief time for the current target week (Monday open + offset)."""
+    ref = _utc_now(now)
+    run_day = weekly_brief_run_date(market_id, ref)
+    return scheduled_run_utc(market_id, offset_hours, on=run_day)
+
+
+def next_weekly_brief_run_utc(
+    market_id: str,
+    offset_hours: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Next weekly brief run (rolls forward after this week's slot has passed)."""
+    ref = _utc_now(now)
+    run_day = weekly_brief_run_date(market_id, ref)
+    scheduled = scheduled_run_utc(market_id, offset_hours, on=run_day)
+    if ref >= scheduled:
+        run_day = run_day + timedelta(days=7)
+        scheduled = scheduled_run_utc(market_id, offset_hours, on=run_day)
+    return scheduled
+
+
 def scheduled_run_utc(
     market_id: str,
     offset_hours: int,
@@ -171,12 +226,62 @@ def scheduled_close_run_utc(
     return market_close_utc(market.id, on) + timedelta(hours=offset)
 
 
+def weekly_debrief_close_date(market_id: str, now: datetime | None = None) -> date:
+    """Friday ending the debrief target week in the chosen market's calendar."""
+    ref = _utc_now(now)
+    local_today = market_local_date(market_id, ref)
+    week_start = week_open_date(local_today)
+    return week_end_close_date(week_start, market_id)
+
+
+def scheduled_weekly_debrief_run_utc(
+    market_id: str,
+    offset_hours: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Scheduled debrief time for the current target week (Friday close + offset)."""
+    close_day = weekly_debrief_close_date(market_id, now)
+    return scheduled_close_run_utc(market_id, offset_hours, on=close_day)
+
+
+def next_weekly_debrief_run_utc(
+    market_id: str,
+    offset_hours: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Next weekly debrief run (rolls forward after this week's slot has passed)."""
+    ref = _utc_now(now)
+    close_day = weekly_debrief_close_date(market_id, ref)
+    scheduled = scheduled_close_run_utc(market_id, offset_hours, on=close_day)
+    if ref >= scheduled:
+        close_day = close_day + timedelta(days=7)
+        scheduled = scheduled_close_run_utc(market_id, offset_hours, on=close_day)
+    return scheduled
+
+
+def next_weekly_debrief_close_date(
+    market_id: str,
+    offset_hours: int,
+    *,
+    now: datetime | None = None,
+) -> date:
+    """Friday date for the next debrief run."""
+    ref = _utc_now(now)
+    close_day = weekly_debrief_close_date(market_id, ref)
+    scheduled = scheduled_close_run_utc(market_id, offset_hours, on=close_day)
+    if ref >= scheduled:
+        close_day = close_day + timedelta(days=7)
+    return close_day
+
+
 def scheduled_weekly_debrief_utc(
     week_start: date,
     market_id: str,
     offset_hours: int,
 ) -> datetime:
-    """Scheduled debrief time for a completed week (Friday close + offset)."""
+    """Scheduled debrief time for a specific week (Friday close + offset)."""
     close_day = week_end_close_date(week_start, market_id)
     return scheduled_close_run_utc(market_id, offset_hours, on=close_day)
 
@@ -199,7 +304,9 @@ def is_past_weekly_brief_run(
     market_id: str,
     offset_hours: int,
 ) -> bool:
-    return is_past_scheduled_run(now, market_id, offset_hours)
+    ref = _utc_now(now)
+    scheduled = scheduled_weekly_brief_run_utc(market_id, offset_hours, now=ref)
+    return ref >= scheduled
 
 
 def is_past_weekly_debrief_run(
@@ -242,6 +349,25 @@ def describe_schedule(market_id: str, offset_hours: int) -> str:
     )
 
 
+def describe_weekly_brief_schedule(market_id: str, offset_hours: int) -> str:
+    market = get_market(normalize_market_id(market_id))
+    assert market is not None
+    offset = normalize_market_offset_hours(offset_hours)
+    open_label = market.open_time.strftime("%H:%M")
+    offset_label = _offset_label(offset, anchor="open")
+
+    now = datetime.now(timezone.utc)
+    scheduled = next_weekly_brief_run_utc(market.id, offset, now=now)
+    run_day = weekly_brief_run_date(market.id, now)
+    if now >= scheduled_run_utc(market.id, offset, on=run_day):
+        run_day = run_day + timedelta(days=7)
+    run_utc = scheduled.strftime("%H:%M UTC")
+    return (
+        f"{offset_label} ({market.label}, opens {open_label} {market.timezone}) — "
+        f"~{run_utc} · week open {run_day.isoformat()}"
+    )
+
+
 def describe_close_schedule(market_id: str, offset_hours: int, *, week_start: date | None = None) -> str:
     market = get_market(normalize_market_id(market_id))
     assert market is not None
@@ -250,15 +376,16 @@ def describe_close_schedule(market_id: str, offset_hours: int, *, week_start: da
     offset_label = _offset_label(offset, anchor="close")
 
     if week_start is None:
-        ref = datetime.now(timezone.utc)
-        on = ref.astimezone(ZoneInfo(market.timezone)).date()
-        week_start = on - timedelta(days=on.weekday())
-    close_day = week_end_close_date(week_start, market.id)
-    scheduled = scheduled_close_run_utc(market.id, offset, on=close_day)
+        now = datetime.now(timezone.utc)
+        scheduled = next_weekly_debrief_run_utc(market.id, offset, now=now)
+        close_day = next_weekly_debrief_close_date(market.id, offset, now=now)
+    else:
+        close_day = week_end_close_date(week_start, market.id)
+        scheduled = scheduled_close_run_utc(market.id, offset, on=close_day)
     run_utc = scheduled.strftime("%H:%M UTC")
     return (
         f"{offset_label} ({market.label}, closes {close_label} {market.timezone}) — "
-        f"week ending {close_day.isoformat()} ~{run_utc}"
+        f"~{run_utc} · week ending {close_day.isoformat()}"
     )
 
 
@@ -281,7 +408,7 @@ def detect_schedule_conflict(
 
     ref = datetime.now(timezone.utc)
     if on is None:
-        on = ref.astimezone(ZoneInfo(brief_market.timezone)).date()
+        on = weekly_brief_run_date(brief_market.id, ref)
 
     daily_utc = scheduled_run_utc(daily_market.id, daily_offset_hours, on=on)
     brief_utc = scheduled_run_utc(brief_market.id, brief_offset_hours, on=on)
@@ -311,19 +438,15 @@ def should_defer_weekly_brief_for_daily(
     if not daily_report_enabled or daily_completed_today:
         return False
 
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    else:
-        now = now.astimezone(timezone.utc)
-
-    on = now.date()
+    ref = _utc_now(now)
+    on = weekly_brief_run_date(brief_market_id, ref)
     daily_utc = scheduled_run_utc(daily_market_id, daily_offset_hours, on=on)
     brief_utc = scheduled_run_utc(brief_market_id, brief_offset_hours, on=on)
 
     if brief_utc < daily_utc:
         return False
 
-    return now >= daily_utc
+    return ref >= daily_utc
 
 
 def collect_schedule_warnings(

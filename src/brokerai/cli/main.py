@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 
 from brokerai import __version__
@@ -20,6 +21,7 @@ from brokerai.cli.output import print_bot_result, print_bots, print_help, print_
 from brokerai.cli.research import register_research_commands
 from brokerai.config.settings import get_settings
 from brokerai.core.control import ControlClient, ControlError, ControlTimeout
+from brokerai.bots.dev_loop import run_bot_loop
 from brokerai.core.orchestrator import run_orchestrator
 
 
@@ -104,6 +106,29 @@ def _cmd_run_orchestrator(_: argparse.Namespace) -> int:
     return 0
 
 
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=get_settings().log_level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+
+def _cmd_run_data_manager(args: argparse.Namespace) -> int:
+    _configure_logging()
+    try:
+        asyncio.run(
+            run_bot_loop(
+                "data_manager",
+                interval_seconds=args.interval,
+                once=args.once,
+            )
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return 0
+
+
 def _cmd_version(args: argparse.Namespace) -> int:
     lock = read_version_lock()
     payload = {
@@ -183,6 +208,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_sub = run.add_subparsers(dest="run_target", required=True)
     run_orch = run_sub.add_parser("orchestrator", help="Run the orchestrator (systemd)")
     run_orch.set_defaults(func=_cmd_run_orchestrator)
+
+    run_data_manager = run_sub.add_parser(
+        "data-manager",
+        help="Run the data manager tick loop (local development)",
+    )
+    run_data_manager.add_argument(
+        "--interval",
+        type=float,
+        default=5.0,
+        metavar="SECS",
+        help="Seconds between ticks (default: 5)",
+    )
+    run_data_manager.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single tick and exit",
+    )
+    run_data_manager.set_defaults(func=_cmd_run_data_manager)
 
     register_research_commands(sub)
 

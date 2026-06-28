@@ -15,6 +15,7 @@ from brokerai.research_markets import (
     collect_schedule_warnings,
     describe_close_schedule,
     describe_schedule,
+    describe_weekly_brief_schedule,
     get_market,
     list_schedule_markets,
     normalize_market_id,
@@ -106,7 +107,7 @@ def _enrich_settings_payload(settings: dict) -> dict:
             settings.get("daily_report_market_id", "london"),
             settings.get("daily_report_market_offset_hours", -2),
         ),
-        "weekly_brief_schedule_description": describe_schedule(
+        "weekly_brief_schedule_description": describe_weekly_brief_schedule(
             settings.get("weekly_brief_market_id", "london"),
             settings.get("weekly_brief_market_offset_hours", -1),
         ),

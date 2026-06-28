@@ -1611,6 +1611,32 @@
   color: var(--text);
 }
 
+.param-control--readonly .param-control-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.param-control-value--locked {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.param-control--readonly .param-control-value--locked {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.param-control--readonly .param-control-label-row .param-control-value {
+  flex-shrink: 0;
+}
+
 .param-slider {
   width: 100%;
   max-width: 100%;
@@ -1618,20 +1644,58 @@
   cursor: pointer;
 }
 
-.param-stepper--inline {
+.param-number-input {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-sizing: border-box;
+}
+
+.param-number-input--inline {
   width: auto;
   max-width: 100%;
 }
 
-.param-stepper--inline .param-stepper-input {
-  width: 2.5rem;
-  padding: 0.2rem;
+.param-number-input--inline .param-number-input-field {
+  width: 3.5rem;
+  padding: 0.2rem 0.35rem;
   font-size: 0.8rem;
 }
 
-.param-stepper--inline .param-stepper-btn {
-  padding: 0.2rem 0.45rem;
+.param-number-input--invalid {
+  border-color: var(--red);
+}
+
+.param-number-input-field {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-variant-numeric: tabular-nums;
   font-size: 0.85rem;
+}
+
+.param-number-input--inline .param-number-input-field {
+  text-align: right;
+}
+
+.param-number-input-field:focus {
+  outline: none;
+}
+
+.param-number-input-affix {
+  flex-shrink: 0;
+  padding-right: 0.45rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .param-stepper {

@@ -105,3 +105,162 @@ async def test_connection(
         return True, f"OANDA connection successful (account {account_id})", accounts
 
     return True, f"OANDA connection successful ({len(accounts)} account(s) found)", accounts
+
+
+def forex_pair_to_instrument(pair: str) -> str:
+    """Convert ``EUR/USD`` to OANDA instrument id ``EUR_USD``."""
+    return pair.replace("/", "_").strip().upper()
+
+
+OANDA_GRANULARITY_BY_TIMEFRAME: dict[str, str] = {
+    "M1": "M1",
+    "M2": "M2",
+    "M4": "M4",
+    "M5": "M5",
+    "M10": "M10",
+    "M15": "M15",
+    "M30": "M30",
+    "H1": "H1",
+    "H2": "H2",
+    "H3": "H3",
+    "H4": "H4",
+    "H6": "H6",
+    "H8": "H8",
+    "H12": "H12",
+    "D1": "D",
+    "W1": "W",
+    "MN": "M",
+}
+
+
+def timeframe_to_granularity(timeframe: str) -> str | None:
+    return OANDA_GRANULARITY_BY_TIMEFRAME.get(timeframe)
+
+
+def normalize_oanda_candle(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize a closed OANDA candle payload to a compact OHLCV dict."""
+    if raw.get("complete") is not True:
+        return None
+
+    mid = raw.get("mid") or raw.get("bid") or raw.get("ask")
+    if not isinstance(mid, dict):
+        return None
+
+    try:
+        return {
+            "time": raw["time"],
+            "open": float(mid["o"]),
+            "high": float(mid["h"]),
+            "low": float(mid["l"]),
+            "close": float(mid["c"]),
+            "volume": int(raw.get("volume") or 0),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _parse_oanda_candles(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candles: list[dict[str, Any]] = []
+    for raw in payload.get("candles") or []:
+        if not isinstance(raw, dict):
+            continue
+        normalized = normalize_oanda_candle(raw)
+        if normalized is not None:
+            candles.append(normalized)
+    return candles
+
+
+def _oanda_request_count(requested: int) -> int:
+    """Request one extra bar so filtering incomplete candles still yields enough closed bars."""
+    return max(1, min(int(requested) + 1, 5000))
+
+
+def _trim_closed_candles(candles: list[dict[str, Any]], requested: int) -> list[dict[str, Any]]:
+    if len(candles) <= requested:
+        return candles
+    return candles[-requested:]
+
+
+async def fetch_candles(
+    access_token: str,
+    environment: str,
+    instrument: str,
+    granularity: str,
+    count: int,
+    *,
+    price: str = "M",
+) -> list[dict[str, Any]]:
+    """Fetch mid OHLCV candles from OANDA."""
+    if not access_token.strip():
+        raise ValueError("OANDA access token is not configured")
+
+    url = f"{base_url(environment)}/v3/instruments/{instrument}/candles"
+    params = {
+        "granularity": granularity,
+        "count": _oanda_request_count(count),
+        "price": price,
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token), params=params)
+        response.raise_for_status()
+        payload = response.json()
+
+    return _trim_closed_candles(_parse_oanda_candles(payload), count)
+
+
+async def fetch_candles_to(
+    access_token: str,
+    environment: str,
+    instrument: str,
+    granularity: str,
+    to_time: str,
+    *,
+    count: int = 5000,
+    price: str = "M",
+) -> list[dict[str, Any]]:
+    """Fetch mid OHLCV candles from OANDA ending at *to_time* (exclusive)."""
+    if not access_token.strip():
+        raise ValueError("OANDA access token is not configured")
+
+    url = f"{base_url(environment)}/v3/instruments/{instrument}/candles"
+    params = {
+        "granularity": granularity,
+        "to": to_time,
+        "count": _oanda_request_count(count),
+        "price": price,
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token), params=params)
+        response.raise_for_status()
+        payload = response.json()
+
+    return _trim_closed_candles(_parse_oanda_candles(payload), count)
+
+
+async def fetch_candles_from(
+    access_token: str,
+    environment: str,
+    instrument: str,
+    granularity: str,
+    from_time: str,
+    *,
+    count: int = 5000,
+    price: str = "M",
+) -> list[dict[str, Any]]:
+    """Fetch mid OHLCV candles from OANDA starting at *from_time* (inclusive)."""
+    if not access_token.strip():
+        raise ValueError("OANDA access token is not configured")
+
+    url = f"{base_url(environment)}/v3/instruments/{instrument}/candles"
+    params = {
+        "granularity": granularity,
+        "from": from_time,
+        "count": _oanda_request_count(count),
+        "price": price,
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token), params=params)
+        response.raise_for_status()
+        payload = response.json()
+
+    return _trim_closed_candles(_parse_oanda_candles(payload), count)

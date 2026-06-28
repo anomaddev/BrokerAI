@@ -17,3 +17,4 @@ class StrategyPreset(ABC):
     signal_type: str
     default_params: dict[str, Any] = field(default_factory=dict)
     param_schema: dict[str, Any] = field(default_factory=dict)
+    locked: bool = True

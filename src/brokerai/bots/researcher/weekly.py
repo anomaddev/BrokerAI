@@ -22,7 +22,6 @@ from brokerai.bots.researcher.reports import (
     load_historical_weekly_debriefs,
     load_weekend_daily_reports_for_week,
     load_weekly_brief_for_week,
-    resolve_weekly_target_date,
     weekly_brief_path,
     weekly_debrief_path,
     write_report_file,
@@ -37,6 +36,7 @@ from brokerai.research_markets import (
     is_past_weekly_brief_run,
     is_past_weekly_debrief_run,
     should_defer_weekly_brief_for_daily,
+    weekly_brief_run_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,9 +89,14 @@ def _weekly_header(
     ]
 
 
-def _target_week_for_brief(now: datetime) -> tuple[date, str]:
-    week_start = resolve_weekly_target_date(now.date())
+def _target_week_for_brief(now: datetime, market_id: str) -> tuple[date, str]:
+    week_start = weekly_brief_run_date(market_id, now)
     return week_start, iso_week_key(week_start)
+
+
+def completed_debrief_week(now: datetime, settings: dict) -> tuple[date, str] | None:
+    """Return the most recent week whose Friday close schedule has passed."""
+    return _completed_debrief_week(now, settings)
 
 
 def _completed_debrief_week(now: datetime, settings: dict) -> tuple[date, str] | None:
@@ -126,26 +131,27 @@ def _daily_dicts(entries: list) -> list[dict[str, str]]:
     return [{"date": entry.date, "content": entry.content} for entry in entries]
 
 
-async def run_weekly_brief(
+async def preview_weekly_brief_skip_reason(
+    settings: dict,
+    now: datetime,
     *,
     force: bool = False,
     manual: bool = False,
-    on_progress: ProgressCallback | None = None,
-) -> WeeklyRunResult:
-    now = datetime.now(timezone.utc)
-    settings_repo = ResearchSettingsRepository()
-    settings = await settings_repo.get()
-
+) -> str | None:
     if not manual and not settings.get("weekly_brief_enabled", False):
-        return WeeklyRunResult(ok=False, skipped_reason="Weekly brief is disabled")
+        return "Weekly brief is disabled"
 
-    week_start, week_key = _target_week_for_brief(now)
+    week_start, week_key = _target_week_for_brief(
+        now, settings.get("weekly_brief_market_id", "london")
+    )
     if not force and settings.get("last_weekly_brief_run_week") == week_key:
-        return WeeklyRunResult(ok=False, skipped_reason=f"Weekly brief already ran for {week_key}")
+        return f"Weekly brief already ran for {week_key}"
+    if not force and load_weekly_brief_for_week(week_start):
+        return f"Weekly brief already exists for {week_key}"
 
     model, model_skip = await _resolve_weekly_model(settings, "weekly_brief_model_id")
     if model_skip:
-        return WeeklyRunResult(ok=False, skipped_reason=model_skip)
+        return model_skip
 
     today = now.date().isoformat()
     daily_completed = (
@@ -161,23 +167,73 @@ async def run_weekly_brief(
             brief_offset_hours=settings.get("weekly_brief_market_offset_hours", -1),
             daily_completed_today=daily_completed,
         ):
-            return WeeklyRunResult(
-                ok=False,
-                skipped_reason=f"Daily report for {today} is not ready yet",
-            )
+            return f"Daily report for {today} is not ready yet"
         if not daily_completed:
-            return WeeklyRunResult(
-                ok=False,
-                skipped_reason=f"Daily report for {today} is not ready yet",
-            )
+            return f"Daily report for {today} is not ready yet"
+
+    open_day = week_start.isoformat()
+    if not load_daily_report_content(open_day):
+        return f"Open-day daily report missing for {open_day}"
+
+    return None
+
+
+async def preview_weekly_debrief_skip_reason(
+    settings: dict,
+    now: datetime,
+    *,
+    force: bool = False,
+    manual: bool = False,
+) -> str | None:
+    if not manual and not settings.get("weekly_debrief_enabled", False):
+        return "Weekly debrief is disabled"
+
+    target = _completed_debrief_week(now, settings)
+    if target is None:
+        return "Weekly debrief schedule has not passed for a completed week"
+
+    week_start, week_key = target
+    if not force and settings.get("last_weekly_debrief_run_week") == week_key:
+        return f"Weekly debrief already ran for {week_key}"
+
+    model, model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
+    if model_skip:
+        return model_skip
+
+    weekday_dailies = load_daily_reports_for_week(week_start)
+    if len(weekday_dailies) < MIN_WEEKDAY_DAILIES_FOR_DEBRIEF:
+        return f"Insufficient weekday dailies for week {week_key}"
+
+    return None
+
+
+async def run_weekly_brief(
+    *,
+    force: bool = False,
+    manual: bool = False,
+    on_progress: ProgressCallback | None = None,
+) -> WeeklyRunResult:
+    now = datetime.now(timezone.utc)
+    settings_repo = ResearchSettingsRepository()
+    settings = await settings_repo.get()
+
+    skip = await preview_weekly_brief_skip_reason(
+        settings,
+        now,
+        force=force,
+        manual=manual,
+    )
+    if skip:
+        return WeeklyRunResult(ok=False, skipped_reason=skip)
+
+    week_start, week_key = _target_week_for_brief(
+        now, settings.get("weekly_brief_market_id", "london")
+    )
+    model, _model_skip = await _resolve_weekly_model(settings, "weekly_brief_model_id")
 
     open_day = week_start.isoformat()
     open_daily = load_daily_report_content(open_day)
-    if not open_daily:
-        return WeeklyRunResult(
-            ok=False,
-            skipped_reason=f"Open-day daily report missing for {open_day}",
-        )
+    assert open_daily is not None
 
     _emit_progress(on_progress, "load", "Loading daily reports…", 15)
     weekend_dailies = load_weekend_daily_reports_for_week(week_start)
@@ -189,7 +245,6 @@ async def run_weekly_brief(
         daily_offset_hours=settings.get("daily_report_market_offset_hours", -2),
         brief_market_id=settings.get("weekly_brief_market_id", "london"),
         brief_offset_hours=settings.get("weekly_brief_market_offset_hours", -1),
-        on=now.date(),
     )
     if conflict:
         logger.warning("Weekly brief schedule conflict: %s", conflict)
@@ -262,32 +317,22 @@ async def run_weekly_debrief(
     settings_repo = ResearchSettingsRepository()
     settings = await settings_repo.get()
 
-    if not manual and not settings.get("weekly_debrief_enabled", False):
-        return WeeklyRunResult(ok=False, skipped_reason="Weekly debrief is disabled")
+    skip = await preview_weekly_debrief_skip_reason(
+        settings,
+        now,
+        force=force,
+        manual=manual,
+    )
+    if skip:
+        return WeeklyRunResult(ok=False, skipped_reason=skip)
 
     target = _completed_debrief_week(now, settings)
-    if target is None:
-        return WeeklyRunResult(
-            ok=False,
-            skipped_reason="Weekly debrief schedule has not passed for a completed week",
-        )
-
+    assert target is not None
     week_start, week_key = target
-    if not force and settings.get("last_weekly_debrief_run_week") == week_key:
-        return WeeklyRunResult(ok=False, skipped_reason=f"Weekly debrief already ran for {week_key}")
-
-    model, model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
-    if model_skip:
-        return WeeklyRunResult(ok=False, skipped_reason=model_skip)
+    model, _model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
 
     _emit_progress(on_progress, "load", "Loading week context…", 15)
     weekday_dailies = load_daily_reports_for_week(week_start)
-    if len(weekday_dailies) < MIN_WEEKDAY_DAILIES_FOR_DEBRIEF:
-        return WeeklyRunResult(
-            ok=False,
-            skipped_reason=f"Insufficient weekday dailies for week {week_key}",
-        )
-
     missing_dates: list[str] = []
     for offset in range(5):
         day = week_start + timedelta(days=offset)

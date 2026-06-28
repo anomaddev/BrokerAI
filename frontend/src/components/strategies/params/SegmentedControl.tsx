@@ -7,6 +7,7 @@ type SegmentedControlProps<T extends string> = {
   label: string;
   value: T;
   options: SegmentedOption<T>[];
+  readOnly?: boolean;
   onChange: (value: T) => void;
 };
 
@@ -14,8 +15,20 @@ export default function SegmentedControl<T extends string>({
   label,
   value,
   options,
+  readOnly,
   onChange,
 }: SegmentedControlProps<T>) {
+  const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
+
+  if (readOnly) {
+    return (
+      <div className="param-control param-control--readonly">
+        <span className="param-control-label">{label}</span>
+        <span className="param-control-value param-control-value--locked">{selectedLabel}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="param-control">
       <span className="param-control-label">{label}</span>

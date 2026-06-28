@@ -1,4 +1,4 @@
-import { LineChart } from "lucide-react";
+import { LineChart, SlidersHorizontal } from "lucide-react";
 import { ASSET_CLASS_LABELS } from "../../../lib/strategies/instruments";
 import type { StrategyPreset } from "./types";
 
@@ -12,6 +12,18 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     route: "/trading/strategies/new/ema-crossover",
     icon: LineChart,
     tags: ["Trend", "Forex"],
+    locked: true,
+  },
+  {
+    id: "custom",
+    label: "Custom",
+    description: "Build your own strategy by adding signals, filters, and rules from scratch.",
+    assetClasses: ["forex", "metals", "stocks", "crypto", "futures", "options"],
+    enabledPills: [{ label: "All asset classes", assetClass: "forex" }],
+    route: "/trading/strategies/new/custom",
+    icon: SlidersHorizontal,
+    tags: ["Flexible"],
+    locked: false,
   },
 ];
 

@@ -351,7 +351,7 @@ export default function StrategyChartShell({
                 : `TP ${params.riskRewardRatio.toFixed(1)}R`,
         }),
       );
-      if (params.trailingStop) {
+      if (params.takeProfitType === "trailing_stop" && params.trailMode === "atr") {
         candlePriceLinesRef.current.push(
           candleSeries.createPriceLine({
             price: entry - chartData.atr * params.trailAtrMultiplier,

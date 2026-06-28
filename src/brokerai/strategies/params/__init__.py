@@ -22,6 +22,8 @@ def _to_v1_raw(preset: StrategyPreset, raw: dict[str, Any]) -> dict[str, Any]:
         return {}
     if raw.get("schema_version") == SCHEMA_VERSION:
         return raw
+    if "indicators" in raw or "signal" in raw or "timeframe" in raw:
+        return {**raw, "schema_version": SCHEMA_VERSION}
     if is_legacy_flat_params(raw):
         if preset.signal_type == "ema_crossover":
             return migrate_ema_crossover_flat(raw)
@@ -42,5 +44,7 @@ def prepare_params(preset: StrategyPreset, raw: dict[str, Any]) -> dict[str, Any
 def normalize_stored_params(preset: StrategyPreset, stored: dict[str, Any] | None) -> dict[str, Any]:
     """Normalize params read from MongoDB (includes legacy migration)."""
     if not stored:
+        if preset.id == "custom":
+            return dict(preset.default_params)
         return validate_params(preset, preset.default_params)
     return prepare_params(preset, stored)

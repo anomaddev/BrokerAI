@@ -60,8 +60,17 @@ export type PriceSource = (typeof PRICE_SOURCES)[number];
 export const STOP_LOSS_MODES = ["fixed_pips", "atr_based", "structure"] as const;
 export type StopLossMode = (typeof STOP_LOSS_MODES)[number];
 
-export const TAKE_PROFIT_MODES = ["fixed_pips", "rr_ratio", "atr_based"] as const;
+export const TAKE_PROFIT_MODES = [
+  "fixed_pips",
+  "rr_ratio",
+  "atr_based",
+  "reverse_crossover",
+  "trailing_stop",
+] as const;
 export type TakeProfitMode = (typeof TAKE_PROFIT_MODES)[number];
+
+export const TRAIL_MODES = ["ema_slow", "atr"] as const;
+export type TrailMode = (typeof TRAIL_MODES)[number];
 
 export const FILTER_COMPARE = ["gte", "lte", "gt", "lt", "eq"] as const;
 export type FilterCompare = (typeof FILTER_COMPARE)[number];
@@ -124,6 +133,14 @@ export type CustomFilterSpec = {
 
 export type FilterSpec = AdxFilterSpec | AtrFilterSpec | RsiFilterSpec | CustomFilterSpec;
 
+export type MonthlyHighSignalSpec = {
+  type: "monthly_high";
+};
+
+export type MonthlyLowSignalSpec = {
+  type: "monthly_low";
+};
+
 export type EmaCrossoverSignalSpec = {
   type: "ema_crossover";
   fast_ref: string;
@@ -131,6 +148,8 @@ export type EmaCrossoverSignalSpec = {
   direction: Direction;
   confirmation: Confirmation;
 };
+
+export type SignalSpec = EmaCrossoverSignalSpec | MonthlyHighSignalSpec | MonthlyLowSignalSpec;
 
 export type StopLossSpec = {
   mode: StopLossMode;
@@ -144,17 +163,14 @@ export type TakeProfitSpec = {
   risk_reward_ratio?: number;
   fixed_pips?: number;
   atr_multiplier?: number;
-};
-
-export type TrailingSpec = {
-  enabled: boolean;
-  atr_multiplier: number;
+  trail_mode?: TrailMode;
+  trail_atr_multiplier?: number;
+  trail_ema_ref?: string;
 };
 
 export type ExitsSpec = {
   stop_loss: StopLossSpec;
   take_profit: TakeProfitSpec;
-  trailing: TrailingSpec;
 };
 
 export type RiskSpec = {
@@ -166,13 +182,15 @@ export type ExecutionSpec = {
   sessions: string[];
   min_confidence: number;
   override_all_strategies?: boolean;
+  priority?: number;
 };
 
 export type StrategyParamsV1 = {
   schema_version: typeof SCHEMA_VERSION;
   timeframe: Timeframe;
+  min_candles?: number;
   indicators: Record<string, IndicatorSpec>;
-  signal: EmaCrossoverSignalSpec;
+  signal: SignalSpec;
   filters: FilterSpec[];
   exits: ExitsSpec;
   risk: RiskSpec;
@@ -186,6 +204,7 @@ export type StrategyPresetMeta = {
   asset_classes: string[];
   route: string;
   signal_type: string;
+  locked?: boolean;
   default_params: StrategyParamsV1;
   param_schema: Record<string, unknown>;
 };

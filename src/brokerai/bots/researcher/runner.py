@@ -35,7 +35,7 @@ from brokerai.db.repositories.ai_models import AiModelsRepository
 from brokerai.db.repositories.data_connections import DataConnectionsRepository
 from brokerai.db.repositories.research_cache import ResearchCacheRepository
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
-from brokerai.research_markets import describe_close_schedule, describe_schedule
+from brokerai.research_markets import describe_close_schedule, describe_schedule, describe_weekly_brief_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ async def get_research_status() -> dict:
         "weekly_debrief_enabled": settings.get("weekly_debrief_enabled", False),
         "last_weekly_brief_run_week": settings.get("last_weekly_brief_run_week"),
         "last_weekly_debrief_run_week": settings.get("last_weekly_debrief_run_week"),
-        "weekly_brief_schedule_description": describe_schedule(
+        "weekly_brief_schedule_description": describe_weekly_brief_schedule(
             settings.get("weekly_brief_market_id", "london"),
             settings.get("weekly_brief_market_offset_hours", -1),
         ),

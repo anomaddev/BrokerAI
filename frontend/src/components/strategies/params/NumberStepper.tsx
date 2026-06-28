@@ -1,3 +1,5 @@
+import NumberInput from "./NumberInput";
+
 type NumberStepperProps = {
   id: string;
   label: string;
@@ -6,6 +8,9 @@ type NumberStepperProps = {
   max: number;
   step?: number;
   invalid?: boolean;
+  readOnly?: boolean;
+  /** Show +/- increment buttons. Defaults to false. */
+  showButtons?: boolean;
   onChange: (value: number) => void;
 };
 
@@ -21,8 +26,26 @@ export default function NumberStepper({
   max,
   step = 1,
   invalid,
+  readOnly,
+  showButtons = false,
   onChange,
 }: NumberStepperProps) {
+  if (readOnly || !showButtons) {
+    return (
+      <NumberInput
+        id={id}
+        label={label}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        invalid={invalid}
+        readOnly={readOnly}
+        onChange={onChange}
+      />
+    );
+  }
+
   return (
     <div className="param-control">
       <label htmlFor={id} className="param-control-label">
@@ -37,18 +60,15 @@ export default function NumberStepper({
         >
           −
         </button>
-        <input
+        <NumberInput
           id={id}
-          type="number"
-          className="param-stepper-input"
+          value={value}
           min={min}
           max={max}
           step={step}
-          value={value}
-          onChange={(e) => {
-            const next = Number(e.target.value);
-            if (!Number.isNaN(next)) onChange(clamp(next, min, max));
-          }}
+          invalid={invalid}
+          embedded
+          onChange={onChange}
         />
         <button
           type="button"

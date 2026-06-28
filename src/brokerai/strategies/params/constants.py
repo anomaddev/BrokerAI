@@ -49,11 +49,19 @@ CONFIRMATIONS = frozenset({"close", "pullback", "aggressive"})
 FILTER_COMPARE = frozenset({"gte", "lte", "gt", "lt", "eq"})
 
 STOP_LOSS_MODES = frozenset({"fixed_pips", "atr_based", "structure"})
-TAKE_PROFIT_MODES = frozenset({"fixed_pips", "rr_ratio", "atr_based"})
+TAKE_PROFIT_MODES = frozenset(
+    {"fixed_pips", "rr_ratio", "atr_based", "reverse_crossover", "trailing_stop"}
+)
+TRAIL_MODES = frozenset({"ema_slow", "atr"})
+
+MIN_CANDLES_MAX = 2000
+PRIORITY_MIN = 0
+PRIORITY_MAX = 100
+DEFAULT_PRIORITY = 50
 
 INDICATOR_TYPES = frozenset({"ema", "sma", "rsi"})
 FILTER_TYPES = frozenset({"adx", "atr", "rsi", "custom"})
-SIGNAL_TYPES = frozenset({"ema_crossover"})
+SIGNAL_TYPES = frozenset({"ema_crossover", "monthly_high", "monthly_low"})
 
 PRICE_SOURCES = frozenset({"close", "open", "high", "low", "hl2", "hlc3", "ohlc4"})
 

@@ -1,9 +1,10 @@
 type StrategyModeStepProps = {
   onSelectPreset: () => void;
+  onSelectCustom: () => void;
   onCancel: () => void;
 };
 
-export default function StrategyModeStep({ onSelectPreset, onCancel }: StrategyModeStepProps) {
+export default function StrategyModeStep({ onSelectPreset, onSelectCustom, onCancel }: StrategyModeStepProps) {
   return (
     <>
       <h4 className="model-overlay-title" id="create-strategy-title">
@@ -17,10 +18,9 @@ export default function StrategyModeStep({ onSelectPreset, onCancel }: StrategyM
             Start from a built-in strategy template you can tweak and save.
           </span>
         </button>
-        <button type="button" className="model-provider-card" disabled>
+        <button type="button" className="model-provider-card" onClick={onSelectCustom}>
           <span className="model-provider-card-label">Custom</span>
           <span className="model-provider-card-desc">Build your own strategy from scratch.</span>
-          <span className="exchange-coming-soon">Coming soon</span>
         </button>
       </div>
       <div className="confirm-actions">

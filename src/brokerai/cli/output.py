@@ -66,7 +66,12 @@ def print_help(version: str, topic: str | None = None) -> None:
                     "brokerai services restart",
                 ]
             ),
-            "run": "brokerai run orchestrator",
+            "run": "\n".join(
+                [
+                    "brokerai run orchestrator",
+                    "brokerai run data-manager [--interval SECS] [--once]",
+                ]
+            ),
             "version": "brokerai version [--json]",
             "research": "\n".join(
                 [
@@ -110,6 +115,7 @@ Commands:
   services restart    Restart orchestrator and web UI (requires root)
   version             Show package and installed version
   run orchestrator    Run orchestrator process (used by systemd)
+  run data-manager    Run data manager tick loop for development
   help [topic]        Show this help or help for a command group
 
 Examples:
@@ -117,6 +123,8 @@ Examples:
   brokerai bots list
   brokerai bots stop research
   brokerai research run-daily --force
+  brokerai run data-manager --interval 10
+  brokerai run data-manager --once
   brokerai update check
   sudo brokerai update apply
   brokerai help bots

@@ -1,3 +1,5 @@
+import NumberInput from "./NumberInput";
+
 type LiveSliderProps = {
   id: string;
   label: string;
@@ -6,15 +8,12 @@ type LiveSliderProps = {
   max: number;
   step?: number;
   unit?: string;
+  suffix?: string;
   formatValue?: (value: number) => string;
-  showStepper?: boolean;
   invalid?: boolean;
+  readOnly?: boolean;
   onChange: (value: number) => void;
 };
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 export default function LiveSlider({
   id,
@@ -24,12 +23,26 @@ export default function LiveSlider({
   max,
   step = 1,
   unit,
+  suffix,
   formatValue,
-  showStepper,
   invalid,
+  readOnly,
   onChange,
 }: LiveSliderProps) {
-  const display = formatValue ? formatValue(value) : `${value}${unit ? ` ${unit}` : ""}`;
+  const display = formatValue
+    ? `${formatValue(value)}${suffix ?? ""}`
+    : `${value}${unit ? ` ${unit}` : ""}${suffix ?? ""}`;
+
+  if (readOnly) {
+    return (
+      <div className="param-control param-control--readonly">
+        <div className="param-control-label-row">
+          <span className="param-control-label">{label}</span>
+          <span className="param-control-value">{display}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="param-control">
@@ -38,44 +51,22 @@ export default function LiveSlider({
           {label}
         </label>
         <div className="param-control-value-row">
-          {showStepper && (
-            <div className={`param-stepper param-stepper--inline${invalid ? " param-stepper--invalid" : ""}`}>
-              <button
-                type="button"
-                className="param-stepper-btn"
-                aria-label={`Decrease ${label}`}
-                onClick={() => onChange(clamp(value - step, min, max))}
-              >
-                −
-              </button>
-              <input
-                id={id}
-                type="number"
-                className="param-stepper-input"
-                min={min}
-                max={max}
-                step={step}
-                value={value}
-                onChange={(e) => {
-                  const next = Number(e.target.value);
-                  if (!Number.isNaN(next)) onChange(clamp(next, min, max));
-                }}
-              />
-              <button
-                type="button"
-                className="param-stepper-btn"
-                aria-label={`Increase ${label}`}
-                onClick={() => onChange(clamp(value + step, min, max))}
-              >
-                +
-              </button>
-            </div>
-          )}
-          {!showStepper && <span className="param-control-value">{display}</span>}
+          <NumberInput
+            id={id}
+            value={value}
+            min={min}
+            max={max}
+            step={step}
+            unit={unit}
+            suffix={suffix}
+            formatValue={formatValue}
+            invalid={invalid}
+            inline
+            onChange={onChange}
+          />
         </div>
       </div>
       <input
-        id={showStepper ? undefined : id}
         type="range"
         className="param-slider"
         min={min}
@@ -85,8 +76,8 @@ export default function LiveSlider({
         aria-valuenow={value}
         aria-valuemin={min}
         aria-valuemax={max}
+        aria-label={label}
         onChange={(e) => onChange(Number(e.target.value))}
-        aria-label={showStepper ? label : undefined}
       />
     </div>
   );
