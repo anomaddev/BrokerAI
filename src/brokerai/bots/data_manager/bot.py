@@ -3,14 +3,15 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from brokerai.bots.base import Bot
-from brokerai.bots.data_manager.candle_requirements import collect_candle_requirements
+from brokerai.bots.data_manager.candle_requirements import CandleRequirement, collect_candle_requirements
 from brokerai.bots.data_manager.candle_schedule import is_candle_fetch_due, next_candle_close_at
 from brokerai.bots.data_manager.candles import (
+    OANDA_SOURCE,
     fetch_and_cache_forex_candles,
     requirement_needs_bootstrap,
 )
 from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_strategies
-from brokerai.db.repositories.market_data import MarketDataRepository
+from brokerai.bots.data_manager.service import DataManagerService, set_data_manager_service
 
 logger = logging.getLogger(__name__)
 
@@ -31,19 +32,44 @@ class DataManagerBot(Bot):
     def __init__(self) -> None:
         super().__init__()
         self._next_fetch_at: dict[str, datetime] = {}
+        self._service = DataManagerService()
+
+    @property
+    def service(self) -> DataManagerService:
+        return self._service
 
     async def on_start(self) -> None:
+        set_data_manager_service(self._service)
         logger.info("Data Manager bot started")
 
     async def on_stop(self) -> None:
+        set_data_manager_service(None)
         logger.info("Data Manager bot stopped")
 
     async def status(self) -> dict:
         payload = await super().status()
+        now = datetime.now(timezone.utc)
+        fetches = dict(self._next_fetch_at)
+        if not fetches:
+            from brokerai.config.settings import get_settings
+
+            for timeframe in get_settings().candle_default_timeframes.split(","):
+                tf = timeframe.strip()
+                if tf:
+                    fetches[tf] = next_candle_close_at(now, tf)
         payload["next_candle_fetches"] = {
             timeframe: when.isoformat()
-            for timeframe, when in sorted(self._next_fetch_at.items())
+            for timeframe, when in sorted(fetches.items())
         }
+        payload["registered_demand"] = [
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "source": source,
+                "bar_count": bar_count,
+            }
+            for symbol, timeframe, source, bar_count in self._service.registered_demand()
+        ]
         return payload
 
     def _schedule_next_fetch(self, timeframe: str, *, now: datetime | None = None) -> datetime:
@@ -52,27 +78,50 @@ class DataManagerBot(Bot):
         self._next_fetch_at[timeframe] = next_at
         return next_at
 
-    async def _plan_fetches(self, requirements, repo: MarketDataRepository):
+    async def _plan_fetches(self, requirements):
         now = datetime.now(timezone.utc)
         bootstrap = []
         incremental = []
         waiting = []
 
         for requirement in requirements:
-            if await requirement_needs_bootstrap(requirement, repo):
+            if await requirement_needs_bootstrap(requirement, self._service):
                 bootstrap.append(requirement)
+                if self._next_fetch_at.get(requirement.timeframe) is None:
+                    self._schedule_next_fetch(requirement.timeframe, now=now)
+                    incremental.append(replace(requirement, incremental=True))
                 continue
 
             next_at = self._next_fetch_at.get(requirement.timeframe)
             if next_at is None:
                 next_at = self._schedule_next_fetch(requirement.timeframe, now=now)
-                waiting.append((requirement, next_at))
+                incremental.append(replace(requirement, incremental=True))
                 continue
 
             if is_candle_fetch_due(now, next_at):
                 incremental.append(replace(requirement, incremental=True))
             else:
                 waiting.append((requirement, next_at))
+
+        for symbol, timeframe, _source, bar_count in self._service.registered_demand():
+            demand_req = CandleRequirement(
+                timeframe=timeframe,
+                pairs=(symbol,),
+                bar_count=bar_count,
+            )
+            if await requirement_needs_bootstrap(demand_req, self._service):
+                bootstrap.append(demand_req)
+                if self._next_fetch_at.get(timeframe) is None:
+                    self._schedule_next_fetch(timeframe, now=now)
+                    incremental.append(replace(demand_req, incremental=True))
+                continue
+            next_at = self._next_fetch_at.get(timeframe)
+            if next_at is None:
+                next_at = self._schedule_next_fetch(timeframe, now=now)
+                incremental.append(replace(demand_req, incremental=True))
+                continue
+            if is_candle_fetch_due(now, next_at):
+                incremental.append(replace(demand_req, incremental=True))
 
         return bootstrap, incremental, waiting
 
@@ -83,27 +132,26 @@ class DataManagerBot(Bot):
             return
 
         count = len(result.strategies)
-        logger.info(
+        logger.debug(
             "Data Manager tick — %d forex strateg%s with enabled pairs",
             count,
             "y" if count == 1 else "ies",
         )
         for strategy, matched_pairs in result.strategies:
-            logger.info("  %s", _format_forex_strategy(strategy, matched_pairs))
+            logger.debug("  %s", _format_forex_strategy(strategy, matched_pairs))
 
         requirements, warnings = collect_candle_requirements(result.strategies)
         for warning in warnings:
             logger.warning("Data Manager — %s", warning)
 
-        if not requirements:
+        if not requirements and not self._service.registered_demand():
             logger.info("Data Manager tick — no candle requirements to fetch")
             return
 
-        repo = MarketDataRepository()
-        bootstrap, incremental, waiting = await self._plan_fetches(requirements, repo)
+        bootstrap, incremental, waiting = await self._plan_fetches(requirements)
 
         for requirement, next_at in waiting:
-            logger.info(
+            logger.debug(
                 "Data Manager — %s next fetch scheduled at %s",
                 requirement.timeframe,
                 next_at.isoformat(),
@@ -111,7 +159,7 @@ class DataManagerBot(Bot):
 
         to_fetch = bootstrap + incremental
         if not to_fetch:
-            logger.info("Data Manager tick — no candle fetches due")
+            logger.debug("Data Manager tick — no candle fetches due")
             return
 
         if bootstrap:
@@ -137,7 +185,7 @@ class DataManagerBot(Bot):
                 pairs_label = ", ".join(requirement.pairs) if requirement.pairs else "—"
                 logger.info("  incremental %s · %s", requirement.timeframe, pairs_label)
 
-        fetch_result = await fetch_and_cache_forex_candles(to_fetch)
+        fetch_result = await fetch_and_cache_forex_candles(to_fetch, service=self._service)
         now = datetime.now(timezone.utc)
         for requirement in to_fetch:
             next_at = self._schedule_next_fetch(requirement.timeframe, now=now)

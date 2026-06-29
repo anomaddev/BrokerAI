@@ -4,6 +4,7 @@ from typing import Any
 
 from brokerai.db.client import get_db
 from brokerai.exchanges import validate_primary_exchange
+from brokerai.market_sessions import normalize_enabled_sessions
 
 ASSET_CLASSES = ("forex", "metals", "stocks", "crypto", "futures", "options")
 
@@ -119,6 +120,7 @@ class AssetSettingsRepository:
                     doc["enabled_pairs"],
                     doc.get("pair_order"),
                 )
+                doc["enabled_sessions"] = normalize_enabled_sessions(doc.get("enabled_sessions"))
             return doc
 
         default: dict[str, Any] = {
@@ -129,6 +131,7 @@ class AssetSettingsRepository:
         if asset_class == "forex":
             default["enabled_pairs"] = []
             default["pair_order"] = default_pair_order([])
+            default["enabled_sessions"] = normalize_enabled_sessions(None)
         else:
             default["enabled_symbols"] = []
         return default
@@ -140,6 +143,7 @@ class AssetSettingsRepository:
         enabled: bool,
         enabled_pairs: list[str] | None = None,
         pair_order: list[str] | None = None,
+        enabled_sessions: dict[str, bool] | None = None,
         primary_exchange: str | None = None,
     ) -> dict[str, Any]:
         if asset_class not in ASSET_CLASSES:
@@ -154,6 +158,11 @@ class AssetSettingsRepository:
             pairs = _dedupe_preserve_order(p for p in (enabled_pairs or []) if p in _FOREX_CATALOG_SET)
             doc["enabled_pairs"] = pairs
             doc["pair_order"] = normalize_pair_order(pairs, pair_order)
+            if enabled_sessions is not None:
+                doc["enabled_sessions"] = normalize_enabled_sessions(enabled_sessions)
+            else:
+                existing = await self.get("forex")
+                doc["enabled_sessions"] = normalize_enabled_sessions(existing.get("enabled_sessions"))
         elif enabled_pairs is not None:
             doc["enabled_symbols"] = sorted(set(enabled_pairs))
 

@@ -16,7 +16,8 @@ from brokerai.activity.constants import (
 )
 from brokerai.activity.log import record_bot_activity
 from brokerai.activity.monitor import ActivityMonitor
-from brokerai.bots import BOT_REGISTRY, Bot
+from brokerai.bots import get_bot_registry
+from brokerai.bots.base import Bot
 from brokerai.config.settings import get_settings, validate_startup_settings
 from brokerai.core.control import ControlServer
 
@@ -32,16 +33,67 @@ class Orchestrator:
         self._tasks: dict[str, asyncio.Task] = {}
 
     def _load_bots(self) -> None:
+        bot_registry = get_bot_registry()
         for name in self.settings.enabled_bot_names:
-            bot_cls = BOT_REGISTRY.get(name)
+            bot_cls = bot_registry.get(name)
             if bot_cls is None:
                 logger.warning("Unknown bot '%s', skipping", name)
                 continue
             self.bots[name] = bot_cls()
 
+        data_analyzer = self.bots.get("data_analyzer")
+        executor = self.bots.get("executor")
+        brokers = self.bots.get("brokers")
+        data_manager = self.bots.get("data_manager")
+        if data_manager is not None and hasattr(data_manager, "service"):
+            service = data_manager.service
+            for bot in (data_analyzer, executor, brokers):
+                if bot is not None and hasattr(bot, "attach_data_manager"):
+                    bot.attach_data_manager(service)
+        if (
+            data_analyzer is not None
+            and executor is not None
+            and hasattr(executor, "attach_data_analyzer")
+        ):
+            executor.attach_data_analyzer(data_analyzer)
+        if executor is not None and brokers is not None and hasattr(brokers, "attach_executor"):
+            brokers.attach_executor(executor)
+
+    async def _run_startup_pass(self) -> None:
+        """Warm candle cache and run one analysis cycle before periodic bot loops."""
+        data_manager = self.bots.get("data_manager")
+        data_analyzer = self.bots.get("data_analyzer")
+
+        if data_manager is None and data_analyzer is None:
+            return
+
+        if data_manager is not None:
+            logger.info("Orchestrator startup — warming candle cache")
+            try:
+                await data_manager.tick()
+            except Exception:
+                logger.exception("Orchestrator startup — data_manager pass failed")
+
+        if data_analyzer is not None and hasattr(data_analyzer, "run_startup_pass"):
+            try:
+                await data_analyzer.run_startup_pass()
+            except Exception:
+                logger.exception("Orchestrator startup — data_analyzer pass failed")
+
+        executor = self.bots.get("executor")
+        if executor is not None and hasattr(executor, "run_startup_pass"):
+            try:
+                await executor.run_startup_pass()
+            except Exception:
+                logger.exception("Orchestrator startup — executor pass failed")
+
     async def start_all(self) -> None:
         for name, bot in self.bots.items():
             await bot.start()
+
+        await self._run_startup_pass()
+
+        for name, bot in self.bots.items():
             self._tasks[name] = asyncio.create_task(self._run_bot(name, bot))
         self._running = True
         self._started_at = datetime.now(timezone.utc)

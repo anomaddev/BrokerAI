@@ -11,6 +11,13 @@ import {
   selectAllPairs,
 } from "../../lib/forexPairOrder";
 import {
+  DEFAULT_FOREX_TRADING_SESSIONS,
+  normalizeForexTradingSessions,
+  type ForexTradingSessions,
+} from "../../lib/forexTradingSessions";
+import { MARKET_SESSION_DEFS } from "../../lib/marketSessionDefs";
+import { useGeneralSettings } from "../../hooks/useGeneralSettings";
+import {
   connectedExchangesForAssetClass,
   type Exchange,
   type ExchangeId,
@@ -87,6 +94,7 @@ function PrimaryExchangeField({
 }
 
 export default function AssetClassTab({ assetClass, label }: AssetClassTabProps) {
+  const { formatSessionHours } = useGeneralSettings();
   const [enabled, setEnabled] = useState(false);
   const [primaryExchange, setPrimaryExchange] = useState("");
   const [exchangeConnections, setExchangeConnections] = useState<
@@ -95,6 +103,9 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
   const [catalog, setCatalog] = useState<string[]>([]);
   const [enabledPairs, setEnabledPairs] = useState<string[]>([]);
   const [pairOrder, setPairOrder] = useState<string[]>([]);
+  const [enabledSessions, setEnabledSessions] = useState<ForexTradingSessions>(
+    DEFAULT_FOREX_TRADING_SESSIONS,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,9 +114,10 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
     primaryExchange,
     enabledPairs,
     pairOrder,
+    enabledSessions,
     assetClass,
   });
-  snapshotRef.current = { enabled, primaryExchange, enabledPairs, pairOrder, assetClass };
+  snapshotRef.current = { enabled, primaryExchange, enabledPairs, pairOrder, enabledSessions, assetClass };
 
   const persistAssetSettings = useCallback(async () => {
     const snapshot = snapshotRef.current;
@@ -113,6 +125,7 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
       enabled: snapshot.enabled,
       enabled_pairs: snapshot.assetClass === "forex" ? snapshot.enabledPairs : undefined,
       pair_order: snapshot.assetClass === "forex" ? snapshot.pairOrder : undefined,
+      enabled_sessions: snapshot.assetClass === "forex" ? snapshot.enabledSessions : undefined,
       primary_exchange: snapshot.primaryExchange || null,
     });
   }, []);
@@ -151,6 +164,7 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
           setPairOrder(
             normalizePairOrder(catalogList, enabledList, data.pair_order),
           );
+          setEnabledSessions(normalizeForexTradingSessions(data.enabled_sessions));
           setEnabled(data.enabled);
           const savedExchange = data.primary_exchange ?? "";
           setPrimaryExchange(
@@ -198,6 +212,18 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
   function schedulePairSave() {
     scheduleSave(400);
   }
+
+  function toggleTradingSession(sessionId: string, next: boolean) {
+    setEnabledSessions((current) => {
+      const updated = { ...current, [sessionId]: next };
+      snapshotRef.current = { ...snapshotRef.current, enabledSessions: updated };
+      return updated;
+    });
+    scheduleSave();
+  }
+
+  const allSessionsDisabled =
+    assetClass === "forex" && !Object.values(enabledSessions).some(Boolean);
 
   function selectAllPairsAction() {
     const result = selectAllPairs(catalog, pairOrder, enabledPairs);
@@ -256,6 +282,42 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
           />
           {assetClass === "forex" ? (
             <>
+              <section className="account-section-card">
+                <div className="settings-section-intro">
+                  <h3 className="settings-subtitle">Trading sessions</h3>
+                  <p className="settings-muted forex-pairs-hint">
+                    Choose which forex market sessions the bot may open new trades during. Strategy
+                    session filters still apply on top of this setting.
+                  </p>
+                </div>
+                <div
+                  className="forex-pairs-grid"
+                  style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
+                >
+                  {MARKET_SESSION_DEFS.map((session) => {
+                    const checked = enabledSessions[session.id] ?? true;
+                    return (
+                      <label
+                        key={session.id}
+                        className={`forex-pair-checkbox${checked ? " forex-pair-checkbox--checked" : ""}`}
+                        title={formatSessionHours(session)}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => toggleTradingSession(session.id, e.target.checked)}
+                        />
+                        <span className="forex-pair-label">{session.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {allSessionsDisabled && (
+                  <p className="param-helper param-helper--warn">
+                    Select at least one session to allow forex trading.
+                  </p>
+                )}
+              </section>
               <div className="forex-pairs-header">
                 <div className="settings-section-intro">
                   <h3 className="settings-subtitle">Pair priority</h3>

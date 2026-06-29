@@ -34,6 +34,16 @@ def normalize_market_indicators(raw: object) -> dict[str, bool]:
     return {session_id: bool(raw.get(session_id, True)) for session_id in TRADING_SESSION_IDS}
 
 
+def default_enabled_sessions() -> dict[str, bool]:
+    """Default forex trading sessions (all enabled)."""
+    return default_market_indicators()
+
+
+def normalize_enabled_sessions(raw: object) -> dict[str, bool]:
+    """Normalize forex asset-settings session toggles."""
+    return normalize_market_indicators(raw)
+
+
 def _minutes_since_midnight(when: datetime) -> int:
     return when.hour * 60 + when.minute
 
@@ -114,6 +124,17 @@ def current_session_close(session: TradingSession, when: datetime) -> datetime |
     return None
 
 
+def _parse_exchange_open(exchange_status: str | None) -> bool | None:
+    if not exchange_status:
+        return None
+    normalized = exchange_status.strip().lower()
+    if normalized in ("open", "extended-hours"):
+        return True
+    if normalized == "closed":
+        return False
+    return None
+
+
 def session_status(
     session: TradingSession,
     when: datetime,
@@ -121,7 +142,11 @@ def session_status(
     fx_open: bool,
     exchange_status: str | None = None,
 ) -> dict[str, str]:
-    active = fx_open and is_session_active(session, when)
+    exchange_open = _parse_exchange_open(exchange_status)
+    if exchange_open is not None:
+        active = exchange_open
+    else:
+        active = fx_open and is_forex_hours(when) and is_session_active(session, when)
     status = "open" if active else "closed"
     payload: dict[str, str] = {
         "id": session.id,

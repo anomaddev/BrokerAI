@@ -29,6 +29,11 @@ async def ensure_indexes() -> None:
         expireAfterSeconds=0,
         name="market_data_expires_at_ttl",
     )
+    await db.candle_sync_state.create_index(
+        [("symbol", 1), ("timeframe", 1), ("source", 1)],
+        unique=True,
+        name="candle_sync_state_symbol_timeframe_source",
+    )
     await db.research_cache.create_index(
         [("date", 1), ("category", 1)],
         unique=True,
@@ -74,4 +79,10 @@ async def ensure_indexes() -> None:
     )
     await db.strategies.create_index("preset_id", name="strategies_preset_id")
     await db.bot_activity.create_index([("occurred_at", -1)], name="bot_activity_occurred_at")
+    await db.trades.create_index("id", unique=True, name="trades_id")
+    await db.trades.create_index(
+        [("strategy_id", 1), ("pair", 1), "trade_date"],
+        name="trades_strategy_pair_date",
+    )
+    await db.trades.create_index([("status", 1)], name="trades_status")
     logger.info("MongoDB indexes ensured")

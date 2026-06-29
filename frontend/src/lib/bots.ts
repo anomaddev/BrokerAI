@@ -16,6 +16,7 @@ export type BotStatusItem = {
   state: string;
   started_at?: string | null;
   last_error?: string | null;
+  next_candle_fetches?: Record<string, string>;
 };
 
 export function formatBotName(name: string): string {

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import signal
 
-from brokerai.bots import BOT_REGISTRY
+from brokerai.bots import get_bot_registry
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,10 @@ async def run_bot_loop(
     once: bool = False,
 ) -> None:
     """Start *bot_name*, call ``tick()`` on an interval until interrupted."""
-    bot_cls = BOT_REGISTRY.get(bot_name)
+    bot_registry = get_bot_registry()
+    bot_cls = bot_registry.get(bot_name)
     if bot_cls is None:
-        known = ", ".join(sorted(BOT_REGISTRY))
+        known = ", ".join(sorted(bot_registry))
         raise ValueError(f"Unknown bot {bot_name!r}. Known: {known}")
 
     if interval_seconds <= 0:

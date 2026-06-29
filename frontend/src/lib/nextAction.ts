@@ -1,7 +1,11 @@
 import type { MarketSessionStatus, ResearchScheduleMarket, ResearchSettings } from "../api/client";
 import type { OverallBotStatus } from "./bots";
+import {
+  candleWindowStartAtMs,
+  isKnownTimeframe,
+  nextCandleCloseAtMs,
+} from "./candleSchedule";
 import type { MarketIndicators } from "./displaySettings";
-import { isMarketIndicatorEnabled } from "./displaySettings";
 import { formatAppTimeOfDay, type TimeFormatOptions } from "./formatTime";
 import { findEarliestNextMarketOpen, type MarketOpenTarget } from "./marketSessions";
 import type { Timeframe } from "./strategyParams/types";
@@ -177,30 +181,6 @@ function nextPendingReportDateIso(settings: ResearchSettings, now: Date): string
   return null;
 }
 
-function timeframeToMs(timeframe: Timeframe): number {
-  const map: Record<Timeframe, number> = {
-    M1: 60_000,
-    M2: 120_000,
-    M3: 180_000,
-    M4: 240_000,
-    M5: 300_000,
-    M10: 600_000,
-    M15: 900_000,
-    M30: 1_800_000,
-    H1: 3_600_000,
-    H2: 7_200_000,
-    H3: 10_800_000,
-    H4: 14_400_000,
-    H6: 21_600_000,
-    H8: 28_800_000,
-    H12: 43_200_000,
-    D1: 86_400_000,
-    W1: 604_800_000,
-    MN: 2_592_000_000,
-  };
-  return map[timeframe];
-}
-
 export function formatCountdown(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.ceil(durationMs / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -310,10 +290,9 @@ function computeMarketOpenAction(
 }
 
 function computeCandleUpdateAction(now: Date, timeframe: Timeframe = PLACEHOLDER_CANDLE_TIMEFRAME): NextActionState {
-  const durationMs = timeframeToMs(timeframe);
   const nowMs = now.getTime();
-  const targetAt = Math.ceil(nowMs / durationMs) * durationMs;
-  const windowStartAt = targetAt - durationMs;
+  const targetAt = nextCandleCloseAtMs(nowMs, timeframe);
+  const windowStartAt = candleWindowStartAtMs(targetAt, timeframe);
 
   return buildActionState(
     "candle_update",
@@ -324,8 +303,45 @@ function computeCandleUpdateAction(now: Date, timeframe: Timeframe = PLACEHOLDER
   );
 }
 
+function resolveNextCandleUpdateAction(
+  nextCandleFetches: Record<string, string> | null | undefined,
+  now: Date,
+  candleTimeframe?: Timeframe | null,
+): NextActionState {
+  const nowMs = now.getTime();
+  let bestTimeframe: Timeframe | null = null;
+  let bestTargetAt = Number.POSITIVE_INFINITY;
+
+  if (nextCandleFetches) {
+    for (const [timeframe, iso] of Object.entries(nextCandleFetches)) {
+      if (!isKnownTimeframe(timeframe)) continue;
+      const parsed = Date.parse(iso);
+      if (Number.isNaN(parsed)) continue;
+      const targetAt = parsed <= nowMs ? nextCandleCloseAtMs(nowMs, timeframe) : parsed;
+      if (targetAt < bestTargetAt) {
+        bestTargetAt = targetAt;
+        bestTimeframe = timeframe;
+      }
+    }
+  }
+
+  if (bestTimeframe) {
+    const windowStartAt = candleWindowStartAtMs(bestTargetAt, bestTimeframe);
+    return buildActionState(
+      "candle_update",
+      `Next candle (${TIMEFRAME_LABELS[bestTimeframe]})`,
+      bestTargetAt,
+      windowStartAt,
+      nowMs,
+    );
+  }
+
+  return computeCandleUpdateAction(now, candleTimeframe ?? PLACEHOLDER_CANDLE_TIMEFRAME);
+}
+
 export function computeNextAction(input: {
   marketsOpen: boolean;
+  orchestratorRunning: boolean;
   researchSettings: ResearchSettings | null;
   marketSessions: MarketSessionStatus[];
   marketIndicators: MarketIndicators;
@@ -333,22 +349,20 @@ export function computeNextAction(input: {
   marketServerTime?: string;
   now?: Date;
   candleTimeframe?: Timeframe | null;
+  nextCandleFetches?: Record<string, string> | null;
 }): NextActionState | null {
   const now = input.now ?? new Date();
   const nowMs = now.getTime();
+
+  if (input.marketsOpen && input.orchestratorRunning) {
+    return resolveNextCandleUpdateAction(input.nextCandleFetches, now, input.candleTimeframe);
+  }
 
   if (input.researchSettings?.daily_report_enabled) {
     const dailyAction = computeUpcomingDailyReportAction(input.researchSettings, now);
     if (dailyAction) {
       return dailyAction;
     }
-  }
-
-  if (input.marketsOpen) {
-    if (input.candleTimeframe) {
-      return computeCandleUpdateAction(now, input.candleTimeframe);
-    }
-    return computeCandleUpdateAction(now, PLACEHOLDER_CANDLE_TIMEFRAME);
   }
 
   const marketOpenAction = computeMarketOpenAction(

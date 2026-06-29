@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from brokerai.db.repositories.asset_settings import ASSET_CLASSES, AssetSettingsRepository
+from brokerai.market_sessions import TRADING_SESSIONS, session_hours_label
 from brokerai.web.routes.auth import require_auth
 
 router = APIRouter(prefix="/api/settings/assets", tags=["settings-assets"])
@@ -14,7 +15,19 @@ class AssetSettingsBody(BaseModel):
     enabled: bool
     enabled_pairs: list[str] | None = None
     pair_order: list[str] | None = None
+    enabled_sessions: dict[str, bool] | None = None
     primary_exchange: str | None = None
+
+
+def _forex_sessions_payload() -> list[dict[str, str]]:
+    return [
+        {
+            "id": session.id,
+            "name": session.name,
+            "hours": session_hours_label(session),
+        }
+        for session in TRADING_SESSIONS
+    ]
 
 
 @router.get("/forex/pairs")
@@ -28,6 +41,8 @@ async def get_forex_pairs(_username: str = Depends(require_auth)) -> JSONRespons
             "pair_order": settings.get("pair_order") or [],
             "enabled": bool(settings.get("enabled")),
             "primary_exchange": settings.get("primary_exchange"),
+            "enabled_sessions": settings.get("enabled_sessions") or {},
+            "sessions": _forex_sessions_payload(),
         }
     )
 
@@ -59,6 +74,7 @@ async def save_asset_settings(
             enabled=body.enabled,
             enabled_pairs=body.enabled_pairs if asset_class == "forex" else None,
             pair_order=body.pair_order if asset_class == "forex" else None,
+            enabled_sessions=body.enabled_sessions if asset_class == "forex" else None,
             primary_exchange=body.primary_exchange,
         )
     except ValueError as exc:

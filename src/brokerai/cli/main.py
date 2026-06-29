@@ -19,6 +19,7 @@ from brokerai.cli.helpers import (
 )
 from brokerai.cli.output import print_bot_result, print_bots, print_help, print_json, print_status
 from brokerai.cli.research import register_research_commands
+from brokerai.cli.candles import register_candles_commands
 from brokerai.config.settings import get_settings
 from brokerai.core.control import ControlClient, ControlError, ControlTimeout
 from brokerai.bots.dev_loop import run_bot_loop
@@ -228,6 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_data_manager.set_defaults(func=_cmd_run_data_manager)
 
     register_research_commands(sub)
+    register_candles_commands(sub)
 
     version = sub.add_parser("version", help="Show version information")
     version.add_argument("--json", action="store_true")

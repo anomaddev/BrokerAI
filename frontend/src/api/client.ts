@@ -178,7 +178,16 @@ export const api = {
       body: JSON.stringify(data),
     }),
   health: () => request<Record<string, unknown>>("/api/health"),
-  bots: () => request<{ bots: Array<{ name: string; state: string }> }>("/api/bots"),
+  bots: () =>
+    request<{
+      bots: Array<{
+        name: string;
+        state: string;
+        started_at?: string | null;
+        last_error?: string | null;
+        next_candle_fetches?: Record<string, string>;
+      }>;
+    }>("/api/bots"),
   dbStats: () =>
     request<{ database: string; collections: Record<string, number>; error?: string }>(
       "/api/system/db",
@@ -319,6 +328,8 @@ export const api = {
       pair_order: string[];
       enabled: boolean;
       primary_exchange: string | null;
+      enabled_sessions: Record<string, boolean>;
+      sessions: { id: string; name: string; hours: string }[];
     }>("/api/settings/assets/forex/pairs"),
   getAssetSettings: (assetClass: AssetClass) =>
     request<AssetSettings>(`/api/settings/assets/${assetClass}`),
@@ -328,6 +339,7 @@ export const api = {
       enabled: boolean;
       enabled_pairs?: string[];
       pair_order?: string[];
+      enabled_sessions?: Record<string, boolean>;
       primary_exchange?: string | null;
     },
   ) =>
@@ -631,6 +643,7 @@ export type AssetSettings = {
   enabled_pairs?: string[];
   pair_order?: string[];
   enabled_symbols?: string[];
+  enabled_sessions?: Record<string, boolean>;
   primary_exchange: string | null;
 };
 

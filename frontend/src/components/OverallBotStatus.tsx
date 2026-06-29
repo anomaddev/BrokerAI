@@ -202,18 +202,20 @@ export default function OverallBotStatus() {
   const tooltip = resolveOverallStatusTooltip({ status, bots });
 
   const showNextAction = status === "running" || status === "sleeping";
+  const dataManager = bots.find((bot) => bot.name === "data_manager");
   let nextAction: NextActionState | null = null;
 
   if (showNextAction) {
     nextAction = computeNextAction({
       marketsOpen,
+      orchestratorRunning,
       researchSettings,
       marketSessions,
       marketIndicators: indicators,
       marketAvailable,
       marketServerTime: marketStatus?.server_time,
       now: new Date(now),
-      candleTimeframe: null,
+      nextCandleFetches: dataManager?.next_candle_fetches,
     });
   }
 

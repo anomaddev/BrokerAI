@@ -90,6 +90,4 @@ EMA_CROSSOVER_PRESET = StrategyPreset(
     param_schema=PARAM_SCHEMA,
 )
 
-# Future modules:
-# - signals.py: crossover detection logic
-# - filters.py: ADX/ATR filter evaluation
+# Runtime modules live under brokerai.trading.presets.ema_crossover

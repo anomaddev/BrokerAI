@@ -44,6 +44,10 @@ class MarketDataRepository:
                 "volume": candle.get("volume", 0),
                 "fetched_at": now,
             }
+            if candle.get("sessions") is not None:
+                document["sessions"] = candle["sessions"]
+            if candle.get("trading_day_et") is not None:
+                document["trading_day_et"] = candle["trading_day_et"]
             if expires_at is not None:
                 document["expires_at"] = expires_at
 
@@ -110,6 +114,7 @@ class MarketDataRepository:
         until: str | None = None,
         limit: int | None = None,
         ascending: bool = True,
+        sessions: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return individual cached candles, optionally bounded by open time."""
         handle = await get_db()
@@ -125,6 +130,8 @@ class MarketDataRepository:
             time_filter["$lte"] = until
         if time_filter:
             query["time"] = time_filter
+        if sessions:
+            query["sessions"] = {"$in": sessions}
 
         cursor = handle.db[self.COLLECTION].find(query, {"_id": 0}).sort(
             "time",
@@ -134,6 +141,59 @@ class MarketDataRepository:
             cursor = cursor.limit(max(1, limit))
 
         return await cursor.to_list(length=limit or 5000)
+
+    async def find_latest_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        source: str,
+        *,
+        limit: int,
+        since: str | None = None,
+        until: str | None = None,
+        sessions: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the most recent *limit* candles in ascending time order."""
+        rows = await self.find_candles(
+            symbol,
+            timeframe,
+            source,
+            since=since,
+            until=until,
+            limit=limit,
+            ascending=False,
+            sessions=sessions,
+        )
+        rows.reverse()
+        return rows
+
+    async def find_candle_times(
+        self,
+        symbol: str,
+        timeframe: str,
+        source: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> set[str]:
+        """Return stored candle open times (projection-only) for gap detection."""
+        handle = await get_db()
+        query: dict[str, Any] = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "source": source,
+        }
+        time_filter: dict[str, Any] = {}
+        if since is not None:
+            time_filter["$gte"] = since
+        if until is not None:
+            time_filter["$lte"] = until
+        if time_filter:
+            query["time"] = time_filter
+
+        cursor = handle.db[self.COLLECTION].find(query, {"_id": 0, "time": 1})
+        docs = await cursor.to_list(length=None)
+        return {str(doc["time"]) for doc in docs if doc.get("time")}
 
     async def count_candles(
         self,
