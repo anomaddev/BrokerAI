@@ -1,8 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { MassiveConnection, NewsApiConnection } from "../api/client";
 import DataSourceLogo from "./DataSourceLogo";
 import ToggleSwitch from "./ToggleSwitch";
-import useAutoSave from "../hooks/useAutoSave";
 import type { DataSource } from "../lib/dataSources";
 
 export type ApiKeyConnection = NewsApiConnection | MassiveConnection;
@@ -47,26 +46,28 @@ export default function ApiKeyDataSourceRow({
   const canEnable = apiKeySet && !keyDirty;
   const busy = testing || deleting;
 
-  const persistEnabled = useCallback(async () => {
-    const data = await saveConnection({
-      api_key: apiKeyRef.current,
-      enabled: enabledRef.current,
-    });
-    setEnabled(data.enabled);
-    setApiKeySet(data.api_key_set);
-    setApiKey("");
-    onConnectionChange(data);
-  }, [onConnectionChange, saveConnection]);
+  async function handleEnabledChange(next: boolean) {
+    if (!canEnable) return;
 
-  const { saveNow } = useAutoSave({
-    onSave: persistEnabled,
-    canSave: () => canEnable,
-  });
-
-  function handleEnabledChange(next: boolean) {
+    const previous = enabled;
     enabledRef.current = next;
     setEnabled(next);
-    saveNow();
+    setError(null);
+
+    try {
+      const data = await saveConnection({
+        api_key: apiKeyRef.current,
+        enabled: next,
+      });
+      setEnabled(data.enabled);
+      setApiKeySet(data.api_key_set);
+      setApiKey("");
+      onConnectionChange(data);
+    } catch (err) {
+      enabledRef.current = previous;
+      setEnabled(previous);
+      setError(err instanceof Error ? err.message : "Failed to save");
+    }
   }
 
   async function handleTest() {
