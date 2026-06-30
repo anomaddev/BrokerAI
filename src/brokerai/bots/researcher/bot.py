@@ -68,6 +68,11 @@ class ResearcherBot(Bot):
         logger.info("Researcher bot stopped")
 
     async def tick(self) -> None:
+        from brokerai.config.settings import get_settings
+
+        if get_settings().use_secretary_pipeline:
+            return
+
         if not SCHEDULED_DAILY_REPORTS_ENABLED:
             return
 

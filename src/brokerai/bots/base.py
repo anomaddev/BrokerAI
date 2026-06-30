@@ -1,6 +1,13 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any, Generic, TypeVar
+
+RequestT = TypeVar("RequestT")
+ResultT = TypeVar("ResultT")
 
 
 class BotState(str, Enum):
@@ -51,3 +58,30 @@ class Bot(ABC):
     @abstractmethod
     async def tick(self) -> None:
         """Periodic work loop iteration."""
+
+
+@dataclass
+class WorkerResult(Generic[ResultT]):
+    """Output from a one-shot ephemeral worker run."""
+
+    ok: bool
+    data: ResultT | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class EphemeralBot(Bot, Generic[RequestT, ResultT]):
+    """Spin-up/spin-down worker invoked by Secretary or Broker via WorkerPool."""
+
+    async def on_start(self) -> None:
+        return None
+
+    async def on_stop(self) -> None:
+        return None
+
+    async def tick(self) -> None:
+        """No-op — ephemeral workers are invoked via run()."""
+
+    @abstractmethod
+    async def run(self, request: RequestT) -> WorkerResult[ResultT]:
+        """Execute one unit of work and return a structured result."""

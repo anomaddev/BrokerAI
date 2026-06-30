@@ -225,6 +225,22 @@ async def list_bots(_username: str = Depends(require_auth)) -> JSONResponse:
     return JSONResponse({"bots": bots})
 
 
+@app.get("/api/pipeline/status")
+async def pipeline_status(_username: str = Depends(require_auth)) -> JSONResponse:
+    heartbeat = _read_heartbeat()
+    pipeline = heartbeat.get("pipeline")
+    if pipeline is not None:
+        return JSONResponse(pipeline)
+    return JSONResponse(
+        {
+            "enabled": settings.use_secretary_pipeline,
+            "use_secretary_pipeline": settings.use_secretary_pipeline,
+            "queued_jobs": 0,
+            "active_pipelines": 0,
+        }
+    )
+
+
 @app.get("/api/update/status")
 async def update_status(_username: str = Depends(require_auth)) -> JSONResponse:
     payload = await resolve_update_status()

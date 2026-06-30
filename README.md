@@ -14,17 +14,18 @@ Multi-bot trading platform for Proxmox LXC. BrokerAI orchestrates sub-bots, cach
 | **MongoDB** | Local cache for market data, research, and analysis results |
 | **Auto-update** | Systemd timer checks GitHub every 6 hours |
 
-### Sub-bots (Alpha taxonomy)
+### Sub-bots (The Loop taxonomy)
 
 | Bot | Role | Status |
 |-----|------|--------|
-| `brokers` | Routes actions to asset-class sub-brokers | stub |
-| `researcher` | Daily research / news for model input | stub |
-| `data_manager` | Caches forex OHLCV from OANDA into MongoDB; schedules incremental fetches on candle close | partial |
-| `data_analyzer` | Analyzes cached data; parallel exit-signal monitors | stub |
-| `executor` | Executes trades when requested by brokers | stub |
+| `secretary` | Task coordinator: candle timeline, parallel pipelines, timed research | active |
+| `broker` | Execution gates, exit monitors, associate dispatch | active |
+| `researcher` | Daily/weekly reports (on-demand via Secretary) | partial |
+| `data_manager` | Legacy persistent candle fetcher (legacy mode) | partial |
+| `data_analyzer` | Legacy persistent analyzer (legacy mode) | partial |
+| `executor` / `brokers` | Legacy execution pipeline (legacy mode) | partial |
 
-Sub-brokers under **Brokers**: crypto, forex, stocks, futures, options (stubs).
+Spin-up/spin-down workers: Data Manager, Data Analyst, Associate, Researcher. See [`docs/architecture/the-loop.md`](docs/architecture/the-loop.md).
 
 ## Architecture
 
@@ -38,13 +39,16 @@ Proxmox Host
                             └── /usr/local/bin/brokerai
 ```
 
-**Data flow:**
+**Data flow (Secretary mode):**
 
 ```
-Researcher ──► research_cache ──┐
-                                 ├──► Data Analyzer ──► analysis_results ──► Brokers ──► Executor
-Data Manager ──► market_data ────┘
+Secretary ──► Data Manager worker ──► MongoDB (market_data)
+         ──► Data Analyst worker ──► strategy_analysis_runs
+         ──► Broker ──► Associate workers ──► trades
+Researcher worker (on demand) ──► research_cache
 ```
+
+Legacy mode (`BROKERAI_USE_SECRETARY_PIPELINE=false`): independent 5s tick bots (`data_manager` → `data_analyzer` → `executor` → `brokers`).
 
 **Runtime paths (container):**
 
@@ -165,7 +169,9 @@ Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev).
 |----------|---------|-------------|
 | `BROKERAI_SECRET_KEY` | _(generated on install)_ | Session signing secret |
 | `BROKERAI_WEB_PORT` | `1989` | Web UI port |
-| `BROKERAI_ENABLED_BOTS` | `brokers,researcher,data_manager,data_analyzer,executor` | Active bots |
+| `BROKERAI_ENABLED_BOTS` | `secretary,broker,researcher` | Active bots (Secretary mode) |
+| `BROKERAI_USE_SECRETARY_PIPELINE` | `true` | Secretary-coordinated pipeline |
+| `BROKERAI_PIPELINE_CONCURRENCY` | `10` | Max parallel symbol pipelines |
 | `BROKERAI_MONGODB_URI` | `mongodb://127.0.0.1:27017` | MongoDB URI |
 | `BROKERAI_MONGODB_DB` | `brokerai` | MongoDB database |
 | `BROKERAI_DATA_DIR` | `/var/lib/brokerai/data` | Runtime state |
@@ -178,7 +184,8 @@ Template: [`config/config.env.example`](config/config.env.example)
 Update config:
 
 ```bash
-BROKERAI_ENABLED_BOTS=brokers,researcher,data_manager,data_analyzer,executor
+BROKERAI_ENABLED_BOTS=secretary,broker,researcher
+BROKERAI_USE_SECRETARY_PIPELINE=true
 ```
 
 ## Web API

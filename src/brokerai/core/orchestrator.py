@@ -23,6 +23,8 @@ from brokerai.core.control import ControlServer
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_PIPELINE_BOTS = frozenset({"data_manager", "data_analyzer", "executor", "brokers"})
+
 
 class Orchestrator:
     def __init__(self) -> None:
@@ -34,12 +36,35 @@ class Orchestrator:
 
     def _load_bots(self) -> None:
         bot_registry = get_bot_registry()
+        use_secretary = self.settings.use_secretary_pipeline
+
         for name in self.settings.enabled_bot_names:
+            if use_secretary and name in _LEGACY_PIPELINE_BOTS:
+                logger.info(
+                    "Skipping legacy bot '%s' — use_secretary_pipeline is enabled",
+                    name,
+                )
+                continue
             bot_cls = bot_registry.get(name)
             if bot_cls is None:
                 logger.warning("Unknown bot '%s', skipping", name)
                 continue
             self.bots[name] = bot_cls()
+
+        self._wire_bots(use_secretary)
+
+    def _wire_bots(self, use_secretary: bool) -> None:
+        secretary = self.bots.get("secretary")
+        broker = self.bots.get("broker")
+
+        if secretary is not None and broker is not None:
+            if hasattr(secretary, "attach_broker"):
+                secretary.attach_broker(broker)
+            if hasattr(broker, "attach_data_manager") and hasattr(secretary, "service"):
+                broker.attach_data_manager(secretary.service)
+
+        if use_secretary:
+            return
 
         data_analyzer = self.bots.get("data_analyzer")
         executor = self.bots.get("executor")
@@ -59,8 +84,18 @@ class Orchestrator:
         if executor is not None and brokers is not None and hasattr(brokers, "attach_executor"):
             brokers.attach_executor(executor)
 
+    def _tick_interval_seconds(self, name: str) -> float:
+        settings = self.settings
+        if name == "secretary":
+            return float(settings.secretary_tick_interval_seconds)
+        if name == "broker":
+            return float(settings.broker_sync_interval_seconds)
+        return 5.0
+
     async def _run_startup_pass(self) -> None:
-        """Warm candle cache and run one analysis cycle before periodic bot loops."""
+        if self.settings.use_secretary_pipeline:
+            return
+
         data_manager = self.bots.get("data_manager")
         data_analyzer = self.bots.get("data_analyzer")
 
@@ -148,11 +183,28 @@ class Orchestrator:
     async def get_statuses(self) -> list[dict]:
         return [await bot.status() for bot in self.bots.values()]
 
+    async def get_pipeline_status(self) -> dict:
+        secretary = self.bots.get("secretary")
+        if secretary is None:
+            return {"enabled": False}
+        status = await secretary.status()
+        return {
+            "enabled": True,
+            "use_secretary_pipeline": self.settings.use_secretary_pipeline,
+            "queued_jobs": status.get("queued_jobs", 0),
+            "active_pipelines": status.get("active_pipelines", 0),
+            "last_completed_at": status.get("last_completed_at"),
+            "avg_pipeline_duration_ms": status.get("avg_pipeline_duration_ms"),
+            "max_backlog_seen": status.get("max_backlog_seen"),
+            "worker_pool": status.get("worker_pool"),
+        }
+
     async def _run_bot(self, name: str, bot: Bot) -> None:
+        interval = self._tick_interval_seconds(name)
         while self._running:
             try:
                 await bot.tick()
-                await asyncio.sleep(5)
+                await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -165,7 +217,7 @@ class Orchestrator:
                     source=name,
                     metadata={"bot": name},
                 )
-                await asyncio.sleep(5)
+                await asyncio.sleep(interval)
 
     async def activity_monitor_loop(self, monitor: ActivityMonitor) -> None:
         while self._running:
@@ -184,6 +236,7 @@ class Orchestrator:
                 "running": self._running,
                 "started_at": self._started_at.isoformat() if self._started_at else None,
                 "bots": await self.get_statuses(),
+                "pipeline": await self.get_pipeline_status(),
             }
             (data_dir / "heartbeat.json").write_text(json.dumps(heartbeat, indent=2))
             await asyncio.sleep(10)

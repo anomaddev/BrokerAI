@@ -2,7 +2,9 @@
 
 BrokerAI runs as a single Python asyncio process: the **orchestrator** loads enabled sub-bots, schedules their work on a fixed interval, and runs auxiliary loops for heartbeat, control IPC, and activity monitoring.
 
-This document describes how that main loop works and how the trading pipeline (`data_manager` → `data_analyzer` → `executor` → `brokers`) fits together.
+**Secretary mode (default):** See [The Loop](./the-loop.md) for the `secretary` → workers → `broker` architecture. Legacy independent tick bots remain available when `BROKERAI_USE_SECRETARY_PIPELINE=false`.
+
+This document describes orchestrator mechanics and the **legacy** trading pipeline (`data_manager` → `data_analyzer` → `executor` → `brokers`).
 
 ## Entry point
 
