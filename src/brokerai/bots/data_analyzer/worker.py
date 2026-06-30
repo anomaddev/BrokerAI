@@ -63,6 +63,15 @@ class ForexDataAnalystWorker(EphemeralBot[PipelineContext, list[AnalysisResult]]
                 source=OANDA_SOURCE,
             )
 
+        logger.info(
+            "Data Analyst — analyzing %d strateg%s for %s %s through %s",
+            len(unit.strategies),
+            "y" if len(unit.strategies) == 1 else "ies",
+            unit.pair,
+            unit.timeframe,
+            latest_time or "unknown",
+        )
+
         cache = _indicator_cache.warm(
             unit.pair,
             unit.timeframe,
