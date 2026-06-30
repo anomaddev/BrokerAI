@@ -53,6 +53,21 @@ class Orchestrator:
 
         self._wire_bots(use_secretary)
 
+        if use_secretary:
+            if "secretary" not in self.bots:
+                logger.warning(
+                    "use_secretary_pipeline is enabled but secretary is not in enabled_bots — "
+                    "candle fetch and strategy analysis will not run"
+                )
+        else:
+            has_manager = "data_manager" in self.bots
+            has_analyzer = "data_analyzer" in self.bots
+            if has_manager and not has_analyzer:
+                logger.warning(
+                    "data_manager is enabled without data_analyzer — candles will be cached "
+                    "but strategy analysis will not run on new bars"
+                )
+
     def _wire_bots(self, use_secretary: bool) -> None:
         secretary = self.bots.get("secretary")
         broker = self.bots.get("broker")

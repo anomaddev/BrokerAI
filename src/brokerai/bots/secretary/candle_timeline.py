@@ -71,7 +71,8 @@ class CandleTimeline:
         if not all_requirements:
             return [], warnings
 
-        due_units: list[tuple[str, str, int, bool, bool]] = []
+        # (pair, timeframe, bar_count, bootstrap, incremental, fetch_due)
+        due_units: list[tuple[str, str, int, bool, bool, bool]] = []
 
         for requirement in all_requirements:
             needs_bootstrap = await requirement_needs_bootstrap(requirement, service)
@@ -91,6 +92,7 @@ class CandleTimeline:
                         requirement.bar_count,
                         needs_bootstrap,
                         not needs_bootstrap,
+                        True,
                     )
                 )
 
@@ -111,7 +113,14 @@ class CandleTimeline:
                         unit.pair, unit.timeframe, latest
                     ):
                         due_units.append(
-                            (unit.pair, unit.timeframe, unit.bar_count, False, True)
+                            (
+                                unit.pair,
+                                unit.timeframe,
+                                unit.bar_count,
+                                False,
+                                True,
+                                False,
+                            )
                         )
 
         jobs: list[CandleJob] = []
@@ -125,16 +134,22 @@ class CandleTimeline:
 
         seen: set[str] = set()
         trigger_time = when
-        for pair, timeframe, bar_count, bootstrap, incremental in due_units:
+        for pair, timeframe, bar_count, bootstrap, incremental, fetch_due in due_units:
             unit = units_by_key.get((pair, timeframe))
             strategies = tuple(unit.strategies) if unit else ()
             if not strategies and not bootstrap:
                 continue
 
             latest = await service.latest_candle_time(pair, timeframe, source="oanda")
-            if latest and not GLOBAL_CANDLE_REVISIONS.has_changed(pair, timeframe, latest):
-                if not bootstrap:
-                    continue
+            # Fetch-due jobs must run even when the new bar is not visible yet — the
+            # candle only appears after the Data Manager worker fetch step.
+            if (
+                not fetch_due
+                and latest
+                and not GLOBAL_CANDLE_REVISIONS.has_changed(pair, timeframe, latest)
+                and not bootstrap
+            ):
+                continue
 
             dedupe = f"{pair}|{timeframe}|{trigger_time.isoformat()}"
             if dedupe in seen:

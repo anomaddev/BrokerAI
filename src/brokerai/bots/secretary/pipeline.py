@@ -65,6 +65,29 @@ class PipelineRunner:
                 )
 
             if not context.strategies:
+                logger.info(
+                    "Pipeline — fetch complete for %s %s, no strategies to analyze",
+                    context.symbol,
+                    context.timeframe,
+                )
+                duration_ms = int((time.monotonic() - started) * 1000)
+                return PipelineResult(job_id=job.job_id, ok=True, duration_ms=duration_ms)
+
+            if (
+                not context.bootstrap
+                and context.latest_candle_time
+                and not GLOBAL_CANDLE_REVISIONS.has_changed(
+                    context.symbol,
+                    context.timeframe,
+                    context.latest_candle_time,
+                )
+            ):
+                logger.info(
+                    "Pipeline — skipping analysis for %s %s (candle %s already analyzed)",
+                    context.symbol,
+                    context.timeframe,
+                    context.latest_candle_time,
+                )
                 duration_ms = int((time.monotonic() - started) * 1000)
                 return PipelineResult(job_id=job.job_id, ok=True, duration_ms=duration_ms)
 
