@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     candle_sync_chunk_size: int = 5000
     candle_sync_concurrency: int = 4
     candle_default_timeframes: str = "M15"
+    use_secretary_pipeline: bool = True
+    pipeline_concurrency: int = 10
+    oanda_fetch_concurrency: int = 8
+    analysis_concurrency: int = 10
+    secretary_tick_interval_seconds: int = 5
+    broker_sync_interval_seconds: int = 30
+    pipeline_candle_cache_ttl_seconds: int = 60
 
     @property
     def auth_dir(self) -> Path:

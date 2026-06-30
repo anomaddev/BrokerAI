@@ -22,6 +22,67 @@ def _auth_headers(api_key: str | None) -> dict[str, str]:
     return {}
 
 
+def _parse_api_error_body(response: httpx.Response) -> str | None:
+    """Extract a human-readable message from provider JSON error bodies."""
+    try:
+        data = response.json()
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    err = data.get("error")
+    if isinstance(err, dict):
+        for key in ("message", "detail", "code"):
+            value = err.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for key in ("message", "detail", "error"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _http_status_hint(status_code: int, *, provider_label: str) -> str | None:
+    if status_code == 403 and provider_label == "Grok":
+        return (
+            "Check console.x.ai: API key ACLs must include api-key:model:grok-4.3 (or "
+            "api-key:model:*) and api-key:endpoint:*. X Premium / SuperGrok web "
+            "subscriptions do not grant API access — create a pay-as-you-go API key."
+        )
+    if status_code == 401:
+        return f"Verify the {provider_label} API key in Settings → Models."
+    return None
+
+
+def _raise_for_status_with_detail(response: httpx.Response, *, provider_label: str) -> None:
+    if response.is_success:
+        return
+    detail = _parse_api_error_body(response)
+    hint = _http_status_hint(response.status_code, provider_label=provider_label)
+    parts = [f"{provider_label} returned HTTP {response.status_code}"]
+    if detail:
+        parts.append(detail)
+    if hint:
+        parts.append(hint)
+    try:
+        req = response.request
+    except RuntimeError:
+        req = httpx.Request("POST", "https://localhost")
+    raise httpx.HTTPStatusError(
+        " — ".join(parts),
+        request=req,
+        response=response,
+    )
+
+
+def _grok_effort_payload(reasoning_effort: str | None) -> dict:
+    """Map BrokerAI reasoning_effort to xAI's `effort` parameter."""
+    if not reasoning_effort:
+        return {}
+    return {"effort": reasoning_effort}
+
+
 async def _post_with_retry(
     client: httpx.AsyncClient,
     url: str,
@@ -117,6 +178,7 @@ async def test_openai_compatible(
     api_key: str | None,
     *,
     provider_label: str = "API",
+    provider_type: str | None = None,
 ) -> tuple[bool, str]:
     if not api_key:
         return False, f"{provider_label} API key is required"
@@ -131,11 +193,21 @@ async def test_openai_compatible(
                 return False, f"{provider_label} authentication failed"
             if response.status_code >= 400:
                 chat_ok, chat_msg = await _test_openai_compatible_chat(
-                    client, base, model_name, headers, provider_label
+                    client,
+                    base,
+                    model_name,
+                    headers,
+                    provider_label,
+                    provider_type=provider_type,
                 )
                 if chat_ok:
                     return True, chat_msg
-                return False, f"{provider_label} returned HTTP {response.status_code}"
+                detail = _parse_api_error_body(response) or f"HTTP {response.status_code}"
+                hint = _http_status_hint(response.status_code, provider_label=provider_label)
+                msg = f"{provider_label} returned {detail}"
+                if hint:
+                    msg = f"{msg}. {hint}"
+                return False, msg
 
             data = response.json()
             model_ids: set[str] = set()
@@ -158,17 +230,26 @@ async def _test_openai_compatible_chat(
     model_name: str,
     headers: dict[str, str],
     provider_label: str,
+    *,
+    provider_type: str | None = None,
 ) -> tuple[bool, str]:
     url = f"{base}/chat/completions"
-    payload = {
+    payload: dict = {
         "model": model_name,
         "messages": [{"role": "user", "content": "Reply with OK only."}],
         "max_tokens": 5,
     }
+    if provider_type == "grok":
+        payload.update(_grok_effort_payload("low"))
     try:
         response = await client.post(url, json=payload, headers=headers)
         if response.status_code >= 400:
-            return False, f"Chat completion failed: HTTP {response.status_code}"
+            detail = _parse_api_error_body(response) or f"HTTP {response.status_code}"
+            hint = _http_status_hint(response.status_code, provider_label=provider_label)
+            msg = f"Chat completion failed: {detail}"
+            if hint:
+                msg = f"{msg}. {hint}"
+            return False, msg
         return True, f"{provider_label} chat successful (model: {model_name})"
     except httpx.HTTPError as exc:
         return False, f"{provider_label} chat failed: {exc}"
@@ -203,6 +284,7 @@ async def analyze_openai_compatible(
     *,
     provider_label: str = "API",
     reasoning_effort: str | None = None,
+    provider_type: str | None = None,
 ) -> str:
     if not api_key:
         raise RuntimeError(f"{provider_label} API key is required")
@@ -217,6 +299,7 @@ async def analyze_openai_compatible(
         messages=messages,
         provider_label=provider_label,
         reasoning_effort=reasoning_effort,
+        provider_type=provider_type,
     )
 
 
@@ -228,13 +311,18 @@ async def _request_chat_completion(
     messages: list[dict[str, str]],
     provider_label: str,
     reasoning_effort: str | None = None,
+    provider_type: str | None = None,
 ) -> str:
     payload: dict = {
         "model": model_name,
         "messages": messages,
         "max_tokens": _RESEARCH_MAX_OUTPUT_TOKENS,
     }
-    if reasoning_effort:
+    if provider_type == "grok":
+        payload.update(_grok_effort_payload(reasoning_effort))
+        if not reasoning_effort:
+            payload["temperature"] = 0.3
+    elif reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
     else:
         payload["temperature"] = 0.3
@@ -243,7 +331,7 @@ async def _request_chat_completion(
         response = await _post_with_retry(
             client, url, json=payload, headers=headers
         )
-        if response.status_code == 400 and reasoning_effort:
+        if response.status_code == 400 and reasoning_effort and provider_type != "grok":
             fallback = {
                 "model": model_name,
                 "messages": messages,
@@ -253,7 +341,8 @@ async def _request_chat_completion(
             response = await _post_with_retry(
                 client, url, json=fallback, headers=headers
             )
-        response.raise_for_status()
+        if not response.is_success:
+            _raise_for_status_with_detail(response, provider_label=provider_label)
         return _parse_chat_completion(response.json(), provider_label)
 
 
@@ -301,20 +390,24 @@ async def grok_web_search(
         "input": messages,
         "tools": [{"type": "web_search"}],
         "max_output_tokens": _RESEARCH_MAX_OUTPUT_TOKENS,
+        **_grok_effort_payload(reasoning_effort),
     }
-    if reasoning_effort:
-        payload["reasoning_effort"] = reasoning_effort
 
     async with httpx.AsyncClient(timeout=_GROK_RESPONSES_TIMEOUT) as client:
         response = await _post_with_retry(
             client, url, json=payload, headers=headers
         )
         if response.status_code == 400 and reasoning_effort:
-            fallback = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+            fallback = {
+                k: v
+                for k, v in payload.items()
+                if k != "effort"
+            }
             response = await _post_with_retry(
                 client, url, json=fallback, headers=headers
             )
-        response.raise_for_status()
+        if not response.is_success:
+            _raise_for_status_with_detail(response, provider_label="Grok")
         return _parse_responses_output(response.json())
 
 
@@ -338,20 +431,24 @@ async def grok_x_search(
         "input": messages,
         "tools": [{"type": "x_search"}],
         "max_output_tokens": _RESEARCH_MAX_OUTPUT_TOKENS,
+        **_grok_effort_payload(reasoning_effort),
     }
-    if reasoning_effort:
-        payload["reasoning_effort"] = reasoning_effort
 
     async with httpx.AsyncClient(timeout=_GROK_RESPONSES_TIMEOUT) as client:
         response = await _post_with_retry(
             client, url, json=payload, headers=headers
         )
         if response.status_code == 400 and reasoning_effort:
-            fallback = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+            fallback = {
+                k: v
+                for k, v in payload.items()
+                if k != "effort"
+            }
             response = await _post_with_retry(
                 client, url, json=fallback, headers=headers
             )
-        response.raise_for_status()
+        if not response.is_success:
+            _raise_for_status_with_detail(response, provider_label="Grok")
         return _parse_responses_output(response.json())
 
 
@@ -366,7 +463,11 @@ async def test_model(
     if model_type in _OPENAI_COMPAT_TYPES:
         label = _PROVIDER_LABELS.get(model_type, model_type)
         return await test_openai_compatible(
-            base_url, model_name, api_key, provider_label=label
+            base_url,
+            model_name,
+            api_key,
+            provider_label=label,
+            provider_type=model_type,
         )
     return False, f"Provider type '{model_type}' is not supported yet"
 
@@ -397,5 +498,6 @@ async def analyze_with_model(
             api_key,
             provider_label=label,
             reasoning_effort=reasoning_effort,
+            provider_type=model_type,
         )
     raise RuntimeError(f"Provider type '{model_type}' is not supported yet")

@@ -30,8 +30,31 @@ class ForexRuntime:
         return build_work_plan(strategies, asset_class=self.asset_class)
 
 
+class _StubAssetRuntime:
+    """Placeholder runtime for asset classes not yet implemented."""
+
+    def __init__(self, asset_class: str) -> None:
+        self.asset_class = asset_class
+
+    async def load_runnable_strategies(self) -> ForexStrategyLoadResult:
+        from brokerai.bots.data_manager.forex_strategies import ForexStrategyLoadResult
+
+        return ForexStrategyLoadResult(
+            strategies=[],
+            skip_reason=f"{self.asset_class} runtime not implemented",
+        )
+
+    def build_work_plan(self, strategies: list[tuple[dict, list[str]]]) -> WorkPlan:
+        return build_work_plan(strategies, asset_class=self.asset_class)
+
+
 _RUNTIMES: dict[str, AssetRuntime] = {
     "forex": ForexRuntime(),
+    "stocks": _StubAssetRuntime("stocks"),
+    "options": _StubAssetRuntime("options"),
+    "futures": _StubAssetRuntime("futures"),
+    "metals": _StubAssetRuntime("metals"),
+    "crypto": _StubAssetRuntime("crypto"),
 }
 
 

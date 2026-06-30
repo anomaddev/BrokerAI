@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from brokerai.bots.data_manager.candle_requirements import required_candle_bars, strategy_params, strategy_timeframe
+from brokerai.bots.data_manager.candles import OANDA_SOURCE
+from brokerai.bots.data_manager.service import DataManagerService
+from brokerai.db.repositories.strategy_analysis_runs import StrategyAnalysisRunsRepository
+from brokerai.trading.ai_confirmation import maybe_confirm_trade_intent
+from brokerai.trading.execution_gates import passes_execution_gates, resolve_priority_conflicts
+from brokerai.trading.types import AnalysisResult, TradeIntent
+
+
+def serialize_intent(intent: TradeIntent | None) -> dict | None:
+    if intent is None:
+        return None
+    return {
+        "direction": intent.direction,
+        "entry_price": intent.entry_price,
+        "stop_loss": intent.stop_loss,
+        "take_profit": intent.take_profit,
+        "confidence": intent.confidence,
+    }
+
+
+async def persist_execution_outcome(
+    analysis: AnalysisResult,
+    *,
+    processed_at: datetime,
+    gates_passed: bool,
+    gate_reasons: list[str],
+    priority_winner: bool,
+    intent_queued: bool,
+    intent: TradeIntent | None,
+) -> None:
+    if not analysis.run_id:
+        return
+    execution = {
+        "processed_at": processed_at.isoformat(),
+        "gates_passed": gates_passed,
+        "gate_reasons": gate_reasons,
+        "priority_winner": priority_winner,
+        "intent_queued": intent_queued,
+        "intent": serialize_intent(intent),
+    }
+    await StrategyAnalysisRunsRepository().update_execution(analysis.run_id, execution)
+
+
+async def apply_execution_gates(
+    analyses: list[AnalysisResult],
+    strategies_by_id: dict[str, dict],
+    *,
+    trade_counts: dict,
+    asset_enabled_sessions: list | None,
+    when: datetime,
+    data_manager: DataManagerService,
+) -> list[TradeIntent]:
+    gated: list[tuple[AnalysisResult, dict, dict]] = []
+
+    for analysis in analyses:
+        strategy = strategies_by_id.get(analysis.strategy_id)
+        if strategy is None:
+            continue
+        params = strategy_params(strategy)
+        passed, reasons = passes_execution_gates(
+            analysis,
+            params,
+            trade_counts,
+            when=when,
+            asset_enabled_sessions=asset_enabled_sessions,
+        )
+        if passed:
+            gated.append((analysis, params, strategy))
+        else:
+            await persist_execution_outcome(
+                analysis,
+                processed_at=when,
+                gates_passed=False,
+                gate_reasons=reasons,
+                priority_winner=False,
+                intent_queued=False,
+                intent=None,
+            )
+
+    winners = resolve_priority_conflicts([(analysis, params) for analysis, params, _ in gated])
+    winner_ids = {(analysis.strategy_id, analysis.pair) for analysis, _ in winners}
+
+    intents: list[TradeIntent] = []
+    for analysis, params, strategy in gated:
+        key = (analysis.strategy_id, analysis.pair)
+        if key not in winner_ids:
+            await persist_execution_outcome(
+                analysis,
+                processed_at=when,
+                gates_passed=True,
+                gate_reasons=[],
+                priority_winner=False,
+                intent_queued=False,
+                intent=None,
+            )
+            continue
+
+        timeframe = strategy_timeframe(strategy)
+        candles: list[dict] = []
+        if timeframe:
+            candles = await data_manager.request_candles(
+                analysis.pair,
+                timeframe,
+                bar_count=required_candle_bars(strategy),
+                source=OANDA_SOURCE,
+                requester="broker",
+            )
+
+        intent = await maybe_confirm_trade_intent(
+            analysis,
+            params,
+            candles,
+            asset_class="forex",
+        )
+        if intent is not None:
+            intents.append(intent)
+
+        await persist_execution_outcome(
+            analysis,
+            processed_at=when,
+            gates_passed=True,
+            gate_reasons=[],
+            priority_winner=True,
+            intent_queued=intent is not None,
+            intent=intent,
+        )
+
+    return intents

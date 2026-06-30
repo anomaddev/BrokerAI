@@ -273,7 +273,7 @@ async def run_weekly_brief(
             if sources.any_active:
                 group_articles = await prefetch_forex_articles(forex_target, sources)
                 for group in group_articles.values():
-                    articles.extend(group)
+                    articles.extend(group.articles)
 
     reasoning = settings.get("weekly_brief_reasoning_effort") or "high"
     messages = build_weekly_brief_messages(

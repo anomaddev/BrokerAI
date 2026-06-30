@@ -26,5 +26,8 @@ class CandleRevisionTracker:
         }
 
 
-# Tracks the latest candle time the data analyzer last processed per (pair, timeframe).
+# Tracks the latest candle time the pipeline last processed per (pair, timeframe).
 GLOBAL_CANDLE_REVISIONS = CandleRevisionTracker()
+
+# Alias for Secretary-coordinated pipeline revision tracking.
+PipelineRevisionTracker = CandleRevisionTracker
