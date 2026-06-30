@@ -41,7 +41,7 @@ async def test_plan_fetches_bootstraps_immediately():
     requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
     bot._service = _mock_service(0)
 
-    bootstrap, incremental, waiting = await bot._plan_fetches([requirement])
+    bootstrap, incremental, waiting = await bot._plan_fetches([requirement], [])
 
     assert len(bootstrap) == 1
     assert len(incremental) == 1
@@ -55,7 +55,7 @@ async def test_plan_fetches_runs_initial_incremental_when_cache_ready():
     requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
     bot._service = _mock_service(100)
 
-    bootstrap, incremental, waiting = await bot._plan_fetches([requirement])
+    bootstrap, incremental, waiting = await bot._plan_fetches([requirement], [])
 
     assert bootstrap == []
     assert len(incremental) == 1
@@ -71,7 +71,7 @@ async def test_plan_fetches_waits_for_next_close_when_cache_ready():
     requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
     bot._service = _mock_service(100)
 
-    bootstrap, incremental, waiting = await bot._plan_fetches([requirement])
+    bootstrap, incremental, waiting = await bot._plan_fetches([requirement], [])
 
     assert bootstrap == []
     assert incremental == []
@@ -85,9 +85,25 @@ async def test_plan_fetches_runs_incremental_when_due():
     requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
     bot._service = _mock_service(100)
 
-    bootstrap, incremental, waiting = await bot._plan_fetches([requirement])
+    bootstrap, incremental, waiting = await bot._plan_fetches([requirement], [])
 
     assert bootstrap == []
     assert len(incremental) == 1
     assert incremental[0].incremental is True
+    assert waiting == []
+
+
+@pytest.mark.asyncio
+async def test_plan_fetches_includes_watch_requirements():
+    bot = DataManagerBot()
+    strategy_req = CandleRequirement(timeframe="M15", pairs=("GBP/USD",), bar_count=63)
+    watch_req = CandleRequirement(timeframe="H1", pairs=("EUR/USD",), bar_count=50)
+    bot._service = _mock_service(100)
+
+    bootstrap, incremental, waiting = await bot._plan_fetches([strategy_req], [watch_req])
+
+    assert bootstrap == []
+    assert len(incremental) == 2
+    timeframes = {req.timeframe for req in incremental}
+    assert timeframes == {"M15", "H1"}
     assert waiting == []

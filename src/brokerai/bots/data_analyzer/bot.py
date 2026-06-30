@@ -8,6 +8,7 @@ from brokerai.bots.data_analyzer.sub_analyzer import SubAnalyzer
 from brokerai.bots.data_manager.candle_requirements import strategy_params
 from brokerai.bots.data_manager.candles import OANDA_SOURCE
 from brokerai.bots.data_manager.service import DataManagerService
+from brokerai.db.repositories.strategy_analysis_runs import StrategyAnalysisRunsRepository
 from brokerai.db.repositories.trades import TradesRepository
 from brokerai.trading.asset_runtime import get_asset_runtime
 from brokerai.trading.candle_context import load_candles_for_unit
@@ -246,6 +247,11 @@ class DataAnalyzerBot(Bot):
                     cache,
                     timeframe=unit.timeframe,
                 )
+                persisted = await StrategyAnalysisRunsRepository().insert_from_result(
+                    analysis,
+                    candle_time=latest_time,
+                )
+                analysis.run_id = persisted["id"]
                 log_analysis_result(analysis)
                 self._last_results[(analysis.strategy_id, unit.pair)] = analysis
                 analyzed_any = True

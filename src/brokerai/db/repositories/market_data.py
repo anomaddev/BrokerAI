@@ -142,6 +142,33 @@ class MarketDataRepository:
 
         return await cursor.to_list(length=limit or 5000)
 
+    async def find_candles_after(
+        self,
+        symbol: str,
+        timeframe: str,
+        source: str,
+        after: str,
+        *,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Return candles strictly after *after* in ascending time order."""
+        handle = await get_db()
+        cursor = (
+            handle.db[self.COLLECTION]
+            .find(
+                {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "source": source,
+                    "time": {"$gt": after},
+                },
+                {"_id": 0},
+            )
+            .sort("time", 1)
+            .limit(max(1, limit))
+        )
+        return await cursor.to_list(length=max(1, limit))
+
     async def find_latest_candles(
         self,
         symbol: str,

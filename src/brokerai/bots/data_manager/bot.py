@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from brokerai.bots.base import Bot
 from brokerai.bots.data_manager.candle_requirements import CandleRequirement, collect_candle_requirements
 from brokerai.bots.data_manager.candle_schedule import is_candle_fetch_due, next_candle_close_at
+from brokerai.bots.data_manager.candle_watch import collect_watch_requirements
 from brokerai.bots.data_manager.candles import (
     OANDA_SOURCE,
     fetch_and_cache_forex_candles,
@@ -78,13 +79,14 @@ class DataManagerBot(Bot):
         self._next_fetch_at[timeframe] = next_at
         return next_at
 
-    async def _plan_fetches(self, requirements):
+    async def _plan_fetches(self, requirements, watch_requirements: list[CandleRequirement]):
         now = datetime.now(timezone.utc)
         bootstrap = []
         incremental = []
         waiting = []
+        all_requirements = list(requirements) + list(watch_requirements)
 
-        for requirement in requirements:
+        for requirement in all_requirements:
             if await requirement_needs_bootstrap(requirement, self._service):
                 bootstrap.append(requirement)
                 if self._next_fetch_at.get(requirement.timeframe) is None:
@@ -127,28 +129,41 @@ class DataManagerBot(Bot):
 
     async def tick(self) -> None:
         result = await load_runnable_forex_strategies()
+        watch_requirements = await collect_watch_requirements()
+
         if result.skip_reason:
-            logger.info("Data Manager tick — %s", result.skip_reason)
-            return
+            if not watch_requirements and not self._service.registered_demand():
+                logger.info("Data Manager tick — %s", result.skip_reason)
+                return
+            logger.info(
+                "Data Manager tick — %s; continuing for %d watch(es)",
+                result.skip_reason,
+                len(watch_requirements),
+            )
+            requirements: list[CandleRequirement] = []
+            warnings: list[str] = []
+        else:
+            count = len(result.strategies)
+            logger.debug(
+                "Data Manager tick — %d forex strateg%s with enabled pairs",
+                count,
+                "y" if count == 1 else "ies",
+            )
+            for strategy, matched_pairs in result.strategies:
+                logger.debug("  %s", _format_forex_strategy(strategy, matched_pairs))
 
-        count = len(result.strategies)
-        logger.debug(
-            "Data Manager tick — %d forex strateg%s with enabled pairs",
-            count,
-            "y" if count == 1 else "ies",
-        )
-        for strategy, matched_pairs in result.strategies:
-            logger.debug("  %s", _format_forex_strategy(strategy, matched_pairs))
+            requirements, warnings = collect_candle_requirements(result.strategies)
+            for warning in warnings:
+                logger.warning("Data Manager — %s", warning)
 
-        requirements, warnings = collect_candle_requirements(result.strategies)
-        for warning in warnings:
-            logger.warning("Data Manager — %s", warning)
-
-        if not requirements and not self._service.registered_demand():
+        if not requirements and not watch_requirements and not self._service.registered_demand():
             logger.info("Data Manager tick — no candle requirements to fetch")
             return
 
-        bootstrap, incremental, waiting = await self._plan_fetches(requirements)
+        bootstrap, incremental, waiting = await self._plan_fetches(
+            requirements,
+            watch_requirements,
+        )
 
         for requirement, next_at in waiting:
             logger.debug(

@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ColorType,
-  CrosshairMode,
   LineStyle,
   createChart,
   type IChartApi,
@@ -12,6 +10,11 @@ import {
 import ChartOverlayToggle from "./ChartOverlayToggle";
 import SignalFlagOverlay from "./SignalFlagOverlay";
 import type { EmaCrossoverParams } from "../../../pages/strategies/presets/emaCrossover/defaults";
+import {
+  CANDLESTICK_SERIES_OPTIONS,
+  createBrokerChartOptions,
+  fitTimeScaleToBounds,
+} from "../../../lib/chart/brokerChartOptions";
 import {
   computeAdx,
   computeAtr,
@@ -34,20 +37,6 @@ type StrategyChartShellProps = {
 
 function toChartTime(unixSeconds: number): UTCTimestamp {
   return unixSeconds as UTCTimestamp;
-}
-
-function fitTimeScaleToBounds(chart: IChartApi, barCount: number) {
-  if (barCount < 1) return;
-  const timeScale = chart.timeScale();
-  timeScale.applyOptions({
-    rightOffset: 0,
-    fixLeftEdge: true,
-    fixRightEdge: true,
-  });
-  timeScale.setVisibleLogicalRange({
-    from: 0,
-    to: Math.max(barCount - 1, 0),
-  });
 }
 
 export default function StrategyChartShell({
@@ -101,40 +90,12 @@ export default function StrategyChartShell({
     if (!priceContainerRef.current || !adxContainerRef.current) return;
 
     const signalScaleMargin = locked ? 0.32 : 0.22;
-
-    const chartOptions = {
-      layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#8b9cb3",
-        fontSize: locked ? 12 : 11,
-      },
-      grid: {
-        vertLines: { visible: false },
-        horzLines: { color: "rgba(45, 58, 79, 0.4)" },
-      },
-      crosshair: {
-        mode: locked ? CrosshairMode.Hidden : CrosshairMode.Normal,
-        vertLine: { color: "#8b9cb3", style: LineStyle.Dashed, width: 1 },
-        horzLine: { color: "#8b9cb3", style: LineStyle.Dashed, width: 1 },
-      },
-      rightPriceScale: {
-        borderColor: "#2d3a4f",
-        scaleMargins: {
-          top: signalScaleMargin,
-          bottom: signalScaleMargin,
-        },
-      },
-      timeScale: {
-        borderColor: "#2d3a4f",
-        timeVisible: true,
-        secondsVisible: false,
-        rightOffset: 0,
-        fixLeftEdge: true,
-        fixRightEdge: true,
-      },
-      handleScroll: !locked,
-      handleScale: !locked,
-    };
+    const chartOptions = createBrokerChartOptions({
+      locked,
+      fontSize: locked ? 12 : 11,
+      signalScaleMargin,
+      fixTimeScaleEdges: true,
+    });
 
     const priceChart = createChart(priceContainerRef.current, {
       ...chartOptions,
@@ -150,14 +111,7 @@ export default function StrategyChartShell({
     priceChartRef.current = priceChart;
     adxChartRef.current = adxChart;
 
-    const candleSeries = priceChart.addCandlestickSeries({
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#0f1419",
-      borderDownColor: "#0f1419",
-      wickUpColor: "rgba(34, 197, 94, 0.8)",
-      wickDownColor: "rgba(239, 68, 68, 0.8)",
-    });
+    const candleSeries = priceChart.addCandlestickSeries(CANDLESTICK_SERIES_OPTIONS);
     const fastSeries = priceChart.addLineSeries({
       color: "#3b82f6",
       lineWidth: 2,
@@ -197,8 +151,8 @@ export default function StrategyChartShell({
       const count = barCountRef.current;
       if (count < 1) return;
       requestAnimationFrame(() => {
-        fitTimeScaleToBounds(priceChart, count);
-        fitTimeScaleToBounds(adxChart, count);
+        fitTimeScaleToBounds(priceChart, count, { fixEdges: true });
+        fitTimeScaleToBounds(adxChart, count, { fixEdges: true });
       });
     };
 
@@ -408,8 +362,8 @@ export default function StrategyChartShell({
     requestAnimationFrame(() => {
       if (!hasFittedTimeScaleRef.current) {
         hasFittedTimeScaleRef.current = true;
-        if (priceChartRef.current) fitTimeScaleToBounds(priceChartRef.current, candles.length);
-        if (adxChartRef.current) fitTimeScaleToBounds(adxChartRef.current, candles.length);
+        if (priceChartRef.current) fitTimeScaleToBounds(priceChartRef.current, candles.length, { fixEdges: true });
+        if (adxChartRef.current) fitTimeScaleToBounds(adxChartRef.current, candles.length, { fixEdges: true });
       }
       setChartLayoutRevision((revision) => revision + 1);
     });

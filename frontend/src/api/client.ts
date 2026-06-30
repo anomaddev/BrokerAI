@@ -48,6 +48,22 @@ export type MeResponse = {
   last_name?: string | null;
 };
 
+export type CandleBar = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type CandlesResponse = {
+  symbol: string;
+  timeframe: string;
+  source: string;
+  candles: CandleBar[];
+};
+
 export const PROFILE_PHOTO_PATH = "/api/auth/profile-photo";
 
 export function profilePhotoUrl(cacheBust?: number): string {
@@ -331,6 +347,14 @@ export const api = {
       enabled_sessions: Record<string, boolean>;
       sessions: { id: string; name: string; hours: string }[];
     }>("/api/settings/assets/forex/pairs"),
+  getCandles: (params: { symbol: string; timeframe: string; limit?: number }) =>
+    request<CandlesResponse>(
+      `/api/market-data/candles?symbol=${encodeURIComponent(params.symbol)}&timeframe=${encodeURIComponent(params.timeframe)}&limit=${params.limit ?? 200}`,
+    ),
+  getCandleDelta: (params: { symbol: string; timeframe: string; after: string }) =>
+    request<CandlesResponse & { latest_time: string }>(
+      `/api/market-data/candles/delta?symbol=${encodeURIComponent(params.symbol)}&timeframe=${encodeURIComponent(params.timeframe)}&after=${encodeURIComponent(params.after)}`,
+    ),
   getAssetSettings: (assetClass: AssetClass) =>
     request<AssetSettings>(`/api/settings/assets/${assetClass}`),
   saveAssetSettings: (
@@ -414,6 +438,28 @@ export const api = {
 
   getBotActivity: (limit = 20) =>
     request<BotActivityResponse>(`/api/bot/activity?limit=${limit}`),
+
+  listStrategyAnalysisRuns: (params?: {
+    limit?: number;
+    before?: string;
+    strategy_id?: string;
+    pair?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.before) search.set("before", params.before);
+    if (params?.strategy_id) search.set("strategy_id", params.strategy_id);
+    if (params?.pair) search.set("pair", params.pair);
+    const query = search.toString();
+    return request<StrategyAnalysisRunsResponse>(
+      `/api/strategy-analysis-runs${query ? `?${query}` : ""}`,
+    );
+  },
+
+  getStrategyAnalysisRun: (runId: string) =>
+    request<StrategyAnalysisRun>(
+      `/api/strategy-analysis-runs/${encodeURIComponent(runId)}`,
+    ),
 };
 
 export type BotActivityEvent = {
@@ -429,6 +475,45 @@ export type BotActivityEvent = {
 export type BotActivityResponse = {
   events: BotActivityEvent[];
   latest: BotActivityEvent | null;
+};
+
+export type StrategyAnalysisIntent = {
+  direction: string;
+  entry_price: number;
+  stop_loss: number | null;
+  take_profit: number | null;
+  confidence: number;
+};
+
+export type StrategyAnalysisExecution = {
+  processed_at: string;
+  gates_passed: boolean;
+  gate_reasons: string[];
+  priority_winner: boolean;
+  intent_queued: boolean;
+  intent: StrategyAnalysisIntent | null;
+};
+
+export type StrategyAnalysisRun = {
+  id: string;
+  strategy_id: string;
+  strategy_name: string;
+  pair: string;
+  timeframe: string;
+  direction: string | null;
+  confidence: number;
+  signal_type: string;
+  min_candles: number;
+  metadata: Record<string, unknown>;
+  candle_time: string | null;
+  analyzed_at: string;
+  run_type: string;
+  execution: StrategyAnalysisExecution | null;
+};
+
+export type StrategyAnalysisRunsResponse = {
+  runs: StrategyAnalysisRun[];
+  latest: StrategyAnalysisRun | null;
 };
 
 export type AiModel = {

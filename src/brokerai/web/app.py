@@ -19,12 +19,14 @@ from brokerai.web.routes.assets_settings import router as assets_settings_router
 from brokerai.web.routes.auth import require_auth, router as auth_router
 from brokerai.web.routes.data_connections_settings import router as data_connections_router
 from brokerai.web.routes.exchange_connections_settings import router as exchange_connections_router
+from brokerai.web.routes.market_data import router as market_data_router
 from brokerai.web.routes.market_status import router as market_status_router
 from brokerai.web.routes.models_settings import router as models_settings_router
 from brokerai.web.routes.research import router as research_router
 from brokerai.web.routes.research_settings_route import router as research_settings_router
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.strategies import router as strategies_router
+from brokerai.web.routes.strategy_analysis_runs import router as strategy_analysis_runs_router
 from brokerai.web.routes.system import router as system_router
 from brokerai.web.routes.tasks import router as tasks_router
 from brokerai.web.update_runner import (
@@ -70,11 +72,13 @@ app.include_router(settings_router)
 app.include_router(models_settings_router)
 app.include_router(data_connections_router)
 app.include_router(market_status_router)
+app.include_router(market_data_router)
 app.include_router(exchange_connections_router)
 app.include_router(research_settings_router)
 app.include_router(assets_settings_router)
 app.include_router(research_router)
 app.include_router(strategies_router)
+app.include_router(strategy_analysis_runs_router)
 app.include_router(system_router)
 app.include_router(bot_activity_router)
 app.include_router(tasks_router)
@@ -191,6 +195,7 @@ async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
             "research_settings",
             "asset_settings",
             "strategies",
+            "strategy_analysis_runs",
             "bot_activity",
         ):
             counts[name] = await handle.db[name].count_documents({})

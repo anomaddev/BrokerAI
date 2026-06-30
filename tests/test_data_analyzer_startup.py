@@ -61,9 +61,15 @@ async def test_first_tick_analyzes_when_no_prior_revision():
     with (
         patch("brokerai.bots.data_analyzer.bot.get_asset_runtime", return_value=_mock_runtime(unit)),
         patch("brokerai.bots.data_analyzer.bot.run_strategy_analysis") as run_analysis,
+        patch(
+            "brokerai.bots.data_analyzer.bot.StrategyAnalysisRunsRepository",
+        ) as runs_repo_cls,
         patch.object(bot, "_sync_exit_monitors", new_callable=AsyncMock),
     ):
-        run_analysis.return_value = AnalysisResult(
+        runs_repo = AsyncMock()
+        runs_repo.insert_from_result.return_value = {"id": "run-123"}
+        runs_repo_cls.return_value = runs_repo
+        analysis = AnalysisResult(
             strategy_id="strategy-1",
             strategy_name="Test",
             pair="EUR/USD",
@@ -73,9 +79,12 @@ async def test_first_tick_analyzes_when_no_prior_revision():
             min_candles=63,
             signal_type="hold",
         )
+        run_analysis.return_value = analysis
         await bot.run_startup_pass()
 
     run_analysis.assert_called_once()
+    runs_repo.insert_from_result.assert_awaited_once()
+    assert analysis.run_id == "run-123"
     data_manager.request_candles.assert_awaited_once()
     assert data_manager.request_candles.await_args.kwargs["bar_count"] == 63
 

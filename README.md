@@ -110,7 +110,7 @@ brokerai run data-manager          # loop (default 5s tick; fetches only when du
 brokerai run data-manager --once   # single tick
 ```
 
-Strategy params schema: [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md). Caching notes: [`docs/architecture/caching.md`](docs/architecture/caching.md).
+Strategy params schema: [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md). Orchestrator and bot loops: [`docs/architecture/orchestrator-and-bot-loops.md`](docs/architecture/orchestrator-and-bot-loops.md). Data Manager: [`docs/architecture/data-manager.md`](docs/architecture/data-manager.md). Data Analyzer: [`docs/architecture/data-analyzer.md`](docs/architecture/data-analyzer.md). Caching notes: [`docs/architecture/caching.md`](docs/architecture/caching.md).
 
 ### Strategies (Web UI)
 

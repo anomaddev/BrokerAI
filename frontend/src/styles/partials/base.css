@@ -1184,6 +1184,13 @@ input {
   padding: 0;
 }
 
+.main-content:has(.explore-page) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
 .page-title {
   font-size: 1.25rem;
   margin-bottom: 1rem;

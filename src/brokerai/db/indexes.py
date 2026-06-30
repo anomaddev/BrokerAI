@@ -34,6 +34,15 @@ async def ensure_indexes() -> None:
         unique=True,
         name="candle_sync_state_symbol_timeframe_source",
     )
+    await db.candle_watch.create_index(
+        [("symbol", 1), ("timeframe", 1), ("source", 1), ("requester", 1)],
+        unique=True,
+        name="candle_watch_symbol_timeframe_source_requester",
+    )
+    await db.candle_watch.create_index(
+        [("source", 1), ("updated_at", -1)],
+        name="candle_watch_source_updated_at",
+    )
     await db.research_cache.create_index(
         [("date", 1), ("category", 1)],
         unique=True,
@@ -85,4 +94,17 @@ async def ensure_indexes() -> None:
         name="trades_strategy_pair_date",
     )
     await db.trades.create_index([("status", 1)], name="trades_status")
+    await db.strategy_analysis_runs.create_index(
+        "id",
+        unique=True,
+        name="strategy_analysis_runs_id",
+    )
+    await db.strategy_analysis_runs.create_index(
+        [("strategy_id", 1), ("analyzed_at", -1)],
+        name="strategy_analysis_runs_strategy_analyzed_at",
+    )
+    await db.strategy_analysis_runs.create_index(
+        [("analyzed_at", -1)],
+        name="strategy_analysis_runs_analyzed_at",
+    )
     logger.info("MongoDB indexes ensured")

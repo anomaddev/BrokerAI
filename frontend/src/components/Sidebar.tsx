@@ -3,14 +3,17 @@ import { NavLink } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Compass,
   Database,
   FileText,
+  History,
   LayoutDashboard,
   LineChart,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
   TrendingUp,
+  Zap,
 } from "lucide-react";
 import { api } from "../api/client";
 import SidebarStatusPanel from "./SidebarStatusPanel";
@@ -40,11 +43,18 @@ type NavSection = {
 const NAV_SECTIONS: NavSection[] = [
   {
     label: "Research & Analysis",
-    items: [{ to: "/daily-reports", label: "Reports", icon: FileText }],
+    items: [
+      { to: "/daily-reports", label: "Reports", icon: FileText },
+      { to: "/trading/explore", label: "Explore", icon: Compass },
+      { to: "/research/backtesting", label: "Backtesting", icon: History },
+    ],
   },
   {
     label: "Trading",
-    items: [{ to: "/trading/strategies", label: "Strategies", icon: LineChart }],
+    items: [
+      { to: "/trading/strategies", label: "Strategies", icon: LineChart },
+      { to: "/trading/analysis", label: "Live Analysis", icon: Zap },
+    ],
   },
 ];
 

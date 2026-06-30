@@ -10,6 +10,7 @@ from brokerai.bots.data_manager.candles import OANDA_SOURCE
 from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_strategies
 from brokerai.bots.data_manager.service import DataManagerService
 from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+from brokerai.db.repositories.strategy_analysis_runs import StrategyAnalysisRunsRepository
 from brokerai.db.repositories.trades import TradesRepository
 from brokerai.trading.ai_confirmation import maybe_confirm_trade_intent
 from brokerai.trading.execution_gates import passes_execution_gates, resolve_priority_conflicts
@@ -94,6 +95,40 @@ class ExecutorBot(Bot):
         for analysis in results:
             self._processed_analysis_at[(analysis.strategy_id, analysis.pair)] = analysis.analyzed_at
 
+    def _serialize_intent(self, intent: TradeIntent | None) -> dict | None:
+        if intent is None:
+            return None
+        return {
+            "direction": intent.direction,
+            "entry_price": intent.entry_price,
+            "stop_loss": intent.stop_loss,
+            "take_profit": intent.take_profit,
+            "confidence": intent.confidence,
+        }
+
+    async def _persist_execution_outcome(
+        self,
+        analysis: AnalysisResult,
+        *,
+        processed_at: datetime,
+        gates_passed: bool,
+        gate_reasons: list[str],
+        priority_winner: bool,
+        intent_queued: bool,
+        intent: TradeIntent | None,
+    ) -> None:
+        if not analysis.run_id:
+            return
+        execution = {
+            "processed_at": processed_at.isoformat(),
+            "gates_passed": gates_passed,
+            "gate_reasons": gate_reasons,
+            "priority_winner": priority_winner,
+            "intent_queued": intent_queued,
+            "intent": self._serialize_intent(intent),
+        }
+        await StrategyAnalysisRunsRepository().update_execution(analysis.run_id, execution)
+
     async def tick(self) -> None:
         if self._data_analyzer is None:
             logger.debug("Executor tick — no data analyzer attached")
@@ -140,13 +175,32 @@ class ExecutorBot(Bot):
                     analysis.pair,
                     ",".join(reasons),
                 )
+                await self._persist_execution_outcome(
+                    analysis,
+                    processed_at=now,
+                    gates_passed=False,
+                    gate_reasons=reasons,
+                    priority_winner=False,
+                    intent_queued=False,
+                    intent=None,
+                )
 
         winners = resolve_priority_conflicts([(analysis, params) for analysis, params, _ in gated])
         winner_ids = {(analysis.strategy_id, analysis.pair) for analysis, _ in winners}
 
         intents: list[TradeIntent] = []
         for analysis, params, strategy in gated:
-            if (analysis.strategy_id, analysis.pair) not in winner_ids:
+            key = (analysis.strategy_id, analysis.pair)
+            if key not in winner_ids:
+                await self._persist_execution_outcome(
+                    analysis,
+                    processed_at=now,
+                    gates_passed=True,
+                    gate_reasons=[],
+                    priority_winner=False,
+                    intent_queued=False,
+                    intent=None,
+                )
                 continue
             candles = await self._load_candles(strategy, analysis.pair)
             intent = await maybe_confirm_trade_intent(
@@ -166,6 +220,15 @@ class ExecutorBot(Bot):
                     intent.stop_loss,
                     intent.take_profit,
                 )
+            await self._persist_execution_outcome(
+                analysis,
+                processed_at=now,
+                gates_passed=True,
+                gate_reasons=[],
+                priority_winner=True,
+                intent_queued=intent is not None,
+                intent=intent,
+            )
 
         self._pending_intents = intents
         self._last_processed_at = now.isoformat()

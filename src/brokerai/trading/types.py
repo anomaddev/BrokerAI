@@ -32,6 +32,7 @@ class AnalysisResult:
     signal_type: str
     metadata: dict[str, Any] = field(default_factory=dict)
     analyzed_at: datetime | None = None
+    run_id: str | None = None
 
 
 @dataclass
