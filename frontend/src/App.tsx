@@ -14,6 +14,7 @@ import StrategyEditPage from "./pages/strategies/StrategyEditPage";
 import Activity from "./pages/Activity";
 import StrategyAnalysis from "./pages/StrategyAnalysis";
 import StrategyAnalysisRunView from "./pages/StrategyAnalysisRunView";
+import Trades from "./pages/Trades";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
 
@@ -72,6 +73,7 @@ export default function App() {
           <Route path="/trading/strategies" element={<Strategies />} />
           <Route path="/trading/strategies/new/:presetId" element={<StrategyBuilderPage />} />
           <Route path="/trading/strategies/:id/edit" element={<StrategyEditPage />} />
+          <Route path="/trading/trades" element={<Trades />} />
           <Route path="/trading/analysis" element={<StrategyAnalysis />} />
           <Route path="/trading/analysis/:runId" element={<StrategyAnalysisRunView />} />
           <Route path="/research" element={<Navigate to="/daily-reports" replace />} />

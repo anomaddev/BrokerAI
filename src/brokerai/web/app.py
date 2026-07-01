@@ -27,6 +27,7 @@ from brokerai.web.routes.research_settings_route import router as research_setti
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.strategy_analysis_runs import router as strategy_analysis_runs_router
+from brokerai.web.routes.trades import router as trades_router
 from brokerai.web.routes.system import router as system_router
 from brokerai.web.routes.tasks import router as tasks_router
 from brokerai.web.update_runner import (
@@ -79,6 +80,7 @@ app.include_router(assets_settings_router)
 app.include_router(research_router)
 app.include_router(strategies_router)
 app.include_router(strategy_analysis_runs_router)
+app.include_router(trades_router)
 app.include_router(system_router)
 app.include_router(bot_activity_router)
 app.include_router(tasks_router)
@@ -196,6 +198,7 @@ async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
             "asset_settings",
             "strategies",
             "strategy_analysis_runs",
+            "trades",
             "bot_activity",
         ):
             counts[name] = await handle.db[name].count_documents({})

@@ -13,7 +13,7 @@ function minutesSinceMidnight(date: Date): number {
   return date.getUTCHours() * 60 + date.getUTCMinutes();
 }
 
-function isForexHours(date: Date): boolean {
+export function isForexHours(date: Date): boolean {
   const weekday = date.getUTCDay();
   const minutes = minutesSinceMidnight(date);
 

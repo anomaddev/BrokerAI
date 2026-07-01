@@ -460,6 +460,33 @@ export const api = {
     request<StrategyAnalysisRun>(
       `/api/strategy-analysis-runs/${encodeURIComponent(runId)}`,
     ),
+
+  listTrades: (params?: {
+    status?: "open" | "closed" | "all";
+    limit?: number;
+    before?: string;
+    strategy_id?: string;
+    pair?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.before) search.set("before", params.before);
+    if (params?.strategy_id) search.set("strategy_id", params.strategy_id);
+    if (params?.pair) search.set("pair", params.pair);
+    const query = search.toString();
+    return request<TradesListResponse>(`/api/trades${query ? `?${query}` : ""}`);
+  },
+
+  getTrade: (tradeId: string) =>
+    request<Trade>(`/api/trades/${encodeURIComponent(tradeId)}`),
+
+  closeTrade: (tradeId: string) =>
+    request<Trade>(`/api/trades/${encodeURIComponent(tradeId)}/close`, {
+      method: "POST",
+    }),
+
+  getTradeReconciliation: () => request<TradeReconciliation>("/api/trades/reconciliation"),
 };
 
 export type BotActivityEvent = {
@@ -515,6 +542,79 @@ export type StrategyAnalysisRunsResponse = {
   runs: StrategyAnalysisRun[];
   latest: StrategyAnalysisRun | null;
 };
+
+export type Trade = {
+  id: string;
+  strategy_id: string;
+  strategy_name: string;
+  pair: string;
+  asset_class: string;
+  direction: string;
+  entry_price: number;
+  stop_loss: number | null;
+  take_profit: number | null;
+  exit_mode: string;
+  risk_pct: number;
+  units: number | null;
+  confidence: number;
+  status: "open" | "closed";
+  broker_order_id: string | null;
+  opened_at: string | null;
+  closed_at?: string | null;
+  close_reason?: string;
+  close_metadata?: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  trade_date?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type TradesListResponse = {
+  trades: Trade[];
+  latest: Trade | null;
+};
+
+export type TradeReconciliationMatch = {
+  ledger_trade_id: string;
+  broker_trade_id: string;
+  pair: string;
+  direction: string;
+  match_type: "broker_order_id" | "pair_direction";
+};
+
+export type BrokerOpenTrade = {
+  id: string;
+  instrument: string;
+  pair: string;
+  units: number;
+  direction: string;
+  price: number;
+  unrealized_pl: number | null;
+  current_price: number | null;
+  open_time: string | null;
+};
+
+export type TradeLedgerMarket = {
+  current_price: number | null;
+  unrealized_pl: number | null;
+};
+
+export type TradeReconciliation = {
+  configured: boolean;
+  mongo_open_count: number;
+  broker_open_count: number;
+  status: "matched" | "mismatch" | "unconfigured";
+  matched: TradeReconciliationMatch[];
+  ledger_badges: Record<string, "matched" | "ledger_only">;
+  ledger_market: Record<string, TradeLedgerMarket>;
+  unmatched_ledger: Trade[];
+  unmatched_broker: BrokerOpenTrade[];
+  broker_trades: BrokerOpenTrade[];
+};
+
+// TODO(trades-suggestions): wire Suggested tab when backend is ready.
+// export type EntrySuggestion = { kind: string; run_id: string; ... };
+// export type ExitSuggestion = { trade_id: string; urgency: string; ... };
 
 export type AiModel = {
   id: string;
