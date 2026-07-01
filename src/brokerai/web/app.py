@@ -41,6 +41,29 @@ from brokerai.web.update_runner import (
 logger = logging.getLogger(__name__)
 
 
+async def _trade_sync_loop() -> None:
+    """Import OANDA open trades missing from the ledger on a fixed interval."""
+    from brokerai.trading.trade_sync import sync_oanda_trades_to_ledger
+
+    while True:
+        interval = max(60, get_settings().trade_sync_interval_seconds)
+        try:
+            result = await sync_oanda_trades_to_ledger()
+            if result.get("configured") and (
+                result.get("imported") or result.get("updated")
+            ):
+                logger.info(
+                    "Web trade sync — imported=%s updated=%s",
+                    result.get("imported"),
+                    result.get("updated"),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("OANDA trade sync loop failed", exc_info=True)
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
     validate_startup_settings()
@@ -56,7 +79,10 @@ async def _app_lifespan(_app: FastAPI):
         reconcile_stale_active_task()
     except Exception:
         logger.warning("Background task reconciliation failed", exc_info=True)
+    trade_sync_task = asyncio.create_task(_trade_sync_loop())
     yield
+    trade_sync_task.cancel()
+    await asyncio.gather(trade_sync_task, return_exceptions=True)
     from brokerai.db.client import close_db
 
     await close_db()

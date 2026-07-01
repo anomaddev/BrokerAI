@@ -2171,7 +2171,11 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.375rem;
+}
+
+.settings-panel--trades {
+  padding-top: 0;
 }
 
 .trades-toolbar .trades-tabs {
@@ -2179,6 +2183,7 @@
 }
 
 .trades-toolbar-filters {
+  --trades-filter-height: 2.375rem;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2190,12 +2195,65 @@
 .trades-toolbar-filters .research-select-wrap {
   flex: 0 1 14rem;
   min-width: 10rem;
+  display: flex;
+  align-items: stretch;
+  height: var(--trades-filter-height);
+}
+
+.trades-toolbar-filters .research-select-wrap .research-select {
+  height: 100%;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.875rem;
+  line-height: 1.25;
+}
+
+.trades-toolbar-filters .trades-status-select-wrap {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: fit-content;
+  height: var(--trades-filter-height);
+}
+
+.trades-toolbar-filters .trades-status-select-wrap .research-select {
+  width: auto;
+  min-width: 0;
+  field-sizing: content;
+  padding-left: 0.75rem;
+  padding-right: 1.75rem;
+}
+
+@supports not (field-sizing: content) {
+  .trades-toolbar-filters .trades-status-select-wrap .research-select {
+    width: 11ch;
+  }
 }
 
 .trades-toolbar-filters .research-search {
   flex: 1 1 12rem;
   min-width: 10rem;
   margin-bottom: 0;
+  height: var(--trades-filter-height);
+  box-sizing: border-box;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.875rem;
+  line-height: 1.25;
+}
+
+.trades-toolbar-filters .trades-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  margin-left: auto;
+  height: var(--trades-filter-height);
+  box-sizing: border-box;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.875rem;
+  line-height: 1.25;
 }
 
 .trades-tabs {
@@ -2272,6 +2330,99 @@
 
 .trades-row--section-start td {
   border-top: 2px solid color-mix(in srgb, var(--border) 80%, var(--muted));
+}
+
+/* Denser trades table — more columns fit without horizontal scroll */
+.trades-table {
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.trades-table th {
+  padding: 0.45rem 0.55rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+}
+
+.trades-table td {
+  padding: 0.42rem 0.55rem;
+}
+
+.trades-table .trades-status {
+  font-size: 0.65rem;
+  padding: 0.08rem 0.32rem;
+}
+
+.trades-table .analysis-direction {
+  font-size: 0.72rem;
+  padding: 0.06rem 0.35rem;
+}
+
+.trades-reason-cell {
+  max-width: 11rem;
+}
+
+.trades-reason-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  cursor: default;
+}
+
+.trades-reason-cell[title] .trades-reason-text {
+  cursor: help;
+}
+
+.trades-table .research-actions-col {
+  width: 2.75rem;
+  padding-left: 0.35rem !important;
+  padding-right: 0.45rem !important;
+}
+
+.trades-table .research-action-btn {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 6px;
+}
+
+.trades-table .research-action-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.trades-table-checkbox-col {
+  width: 2.15rem;
+  padding-left: 0.45rem !important;
+  padding-right: 0.2rem !important;
+}
+
+.trades-table-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.25rem;
+  cursor: pointer;
+}
+
+.trades-table .ui-checkbox-input {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 4px;
+}
+
+.trades-table .ui-checkbox-input:checked::after {
+  background-size: 0.55rem 0.55rem;
+}
+
+.trades-table-row--selected {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.trades-table-row--selected:hover {
+  background: rgba(59, 130, 246, 0.12);
 }
 
 .trades-row-actions {

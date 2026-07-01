@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -77,6 +78,41 @@ def instrument_to_pair(instrument: str) -> str:
     if len(parts) == 2:
         return f"{parts[0]}/{parts[1]}"
     return instrument.replace("_", "/")
+
+
+def _parse_broker_timestamp(raw: str | None) -> datetime | None:
+    """Parse OANDA ISO-8601 timestamps (nanosecond precision) into UTC."""
+    if not raw or not str(raw).strip():
+        return None
+    text = str(raw).strip().replace("Z", "+00:00")
+    if "." in text:
+        base, _, rest = text.partition(".")
+        tz = ""
+        if "+" in rest:
+            frac, _, tz = rest.partition("+")
+            tz = f"+{tz}"
+        elif rest.count("-") > 0:
+            frac, _, tz = rest.rpartition("-")
+            tz = f"-{tz}"
+        else:
+            frac = rest
+        text = f"{base}.{frac[:6]}{tz}"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _optional_float(raw: Any) -> float | None:
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_oanda_open_trade(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -187,6 +223,116 @@ def attach_current_prices_to_broker_trades(
         instrument = str(trade.get("instrument", "")).upper()
         trade["current_price"] = prices_by_instrument.get(instrument)
     return trades
+
+
+def parse_oanda_close_response(response: dict[str, Any]) -> dict[str, Any]:
+    """Extract normalized close fields from an OANDA trade-close response.
+
+    OANDA may populate ``orderFillTransaction`` (market close) with
+    ``tradeClosed`` or ``tradesClosed`` entries.
+    """
+    fill = response.get("orderFillTransaction") or {}
+    trade_closed = fill.get("tradeClosed") or {}
+    trades_closed = fill.get("tradesClosed") or []
+
+    exit_price = _optional_float(fill.get("price"))
+    realized_pl = _optional_float(fill.get("pl"))
+
+    if realized_pl is None and trades_closed:
+        total = 0.0
+        found = False
+        for entry in trades_closed:
+            if not isinstance(entry, dict):
+                continue
+            pl = _optional_float(entry.get("realizedPL"))
+            if pl is not None:
+                total += pl
+                found = True
+        if found:
+            realized_pl = total
+
+    if realized_pl is None:
+        realized_pl = _optional_float(trade_closed.get("realizedPL"))
+
+    closed_at = _parse_broker_timestamp(fill.get("time"))
+    broker_trade_id = trade_closed.get("tradeID")
+    if not broker_trade_id and trades_closed:
+        first = trades_closed[0]
+        if isinstance(first, dict):
+            broker_trade_id = first.get("tradeID")
+
+    return {
+        "exit_price": exit_price,
+        "realized_pl": realized_pl,
+        "closed_at": closed_at,
+        "broker_trade_id": str(broker_trade_id) if broker_trade_id else None,
+    }
+
+
+def _normalize_oanda_closed_trade(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize a CLOSED OANDA trade payload."""
+    trade_id = raw.get("id")
+    instrument = raw.get("instrument")
+    if not trade_id or not instrument:
+        return None
+
+    state = str(raw.get("state", "")).upper()
+    if state != "CLOSED":
+        return None
+
+    try:
+        initial_units = float(raw.get("initialUnits") or 0)
+    except (TypeError, ValueError):
+        initial_units = 0.0
+    if initial_units == 0:
+        return None
+
+    direction = "long" if initial_units > 0 else "short"
+    entry_price = _optional_float(raw.get("price")) or 0.0
+    exit_price = _optional_float(raw.get("averageClosePrice"))
+    realized_pl = _optional_float(raw.get("realizedPL"))
+
+    return {
+        "id": str(trade_id),
+        "instrument": str(instrument),
+        "pair": instrument_to_pair(str(instrument)),
+        "units": abs(initial_units),
+        "direction": direction,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "realized_pl": realized_pl,
+        "open_time": raw.get("openTime"),
+        "close_time": raw.get("closeTime"),
+        "closed_at": _parse_broker_timestamp(raw.get("closeTime")),
+    }
+
+
+async def get_broker_trade(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    trade_id: str,
+) -> dict[str, Any] | None:
+    """Fetch a single OANDA trade by id (open or closed)."""
+    if not access_token.strip() or not account_id.strip() or not trade_id.strip():
+        return None
+
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades/{trade_id}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token))
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        data = response.json()
+
+    raw = data.get("trade")
+    if not isinstance(raw, dict):
+        return None
+
+    state = str(raw.get("state", "")).upper()
+    if state == "CLOSED":
+        return _normalize_oanda_closed_trade(raw)
+    return _normalize_oanda_open_trade(raw)
 
 
 def extract_broker_trade_id(order_response: dict[str, Any]) -> str | None:
@@ -568,31 +714,6 @@ async def place_market_order(
             url,
             headers={**_auth_headers(access_token), "Content-Type": "application/json"},
             json={"order": order},
-        )
-        response.raise_for_status()
-        return response.json()
-
-
-async def close_broker_trade(
-    access_token: str,
-    environment: str,
-    account_id: str,
-    trade_id: str,
-) -> dict[str, Any]:
-    """Close an open OANDA trade by broker trade id."""
-    if not access_token.strip():
-        raise ValueError("OANDA access token is not configured")
-    if not account_id.strip():
-        raise ValueError("OANDA account id is not configured")
-    if not trade_id.strip():
-        raise ValueError("OANDA trade id is required")
-
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades/{trade_id}/close"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.put(
-            url,
-            headers={**_auth_headers(access_token), "Content-Type": "application/json"},
-            json={"units": "ALL"},
         )
         response.raise_for_status()
         return response.json()

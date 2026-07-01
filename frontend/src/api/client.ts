@@ -487,6 +487,11 @@ export const api = {
     }),
 
   getTradeReconciliation: () => request<TradeReconciliation>("/api/trades/reconciliation"),
+
+  syncTrades: () =>
+    request<BackgroundTaskAccepted>("/api/trades/sync", {
+      method: "POST",
+    }),
 };
 
 export type BotActivityEvent = {
@@ -562,7 +567,16 @@ export type Trade = {
   opened_at: string | null;
   closed_at?: string | null;
   close_reason?: string;
+  execution_reason?: string | null;
+  reason_display?: {
+    code: string | null;
+    label: string | null;
+    short: string | null;
+    category: "signal" | "import" | "exit" | "manual" | "broker" | "other" | null;
+  };
   close_metadata?: Record<string, unknown>;
+  exit_price?: number | null;
+  realized_pl?: number | null;
   metadata: Record<string, unknown>;
   trade_date?: string;
   created_at?: string | null;
@@ -923,6 +937,22 @@ export const RESEARCH_TASK_KINDS = {
   weeklyBrief: "research_weekly_brief",
   weeklyDebrief: "research_weekly_debrief",
 } as const;
+
+export const TRADE_SYNC_TASK_KIND = "trade_sync";
+
+export type TradeSyncResult = {
+  configured: boolean;
+  imported: number;
+  updated: number;
+  closed: number;
+  backfilled: number;
+  skipped: number;
+  imported_trade_ids: string[];
+  updated_trade_ids: string[];
+  closed_trade_ids: string[];
+  backfilled_trade_ids: string[];
+  error?: string;
+};
 
 export type ResearchRunDailyResult = {
   ok: boolean;

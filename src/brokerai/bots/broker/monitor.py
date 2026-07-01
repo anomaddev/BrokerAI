@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from brokerai.bots.data_analyzer.sub_analyzer import SubAnalyzer
 from brokerai.bots.data_manager.candle_requirements import strategy_params
 from brokerai.bots.data_manager.service import DataManagerService
+from brokerai.config.settings import get_settings
 from brokerai.db.repositories.trades import TradesRepository
 from brokerai.trading.candle_context import load_candles_for_unit
+from brokerai.trading.schedule import utc_now
+from brokerai.trading.trade_sync import sync_oanda_trades_to_ledger
 from brokerai.trading.indicator_cache import IndicatorCache
 from brokerai.trading.registries.exits import create_exit_monitor
 from brokerai.trading.types import WorkUnit
@@ -72,6 +76,7 @@ class BrokerMonitor:
         self._sub_analyzers: dict[str, _TradeExitAnalyzer] = {}
         self._indicator_cache = IndicatorCache()
         self._account_snapshots: dict[str, dict[str, Any]] = {}
+        self._last_trade_sync_at: datetime | None = None
 
     def set_account_snapshot(self, asset_class: str, snapshot: dict[str, Any]) -> None:
         self._account_snapshots[asset_class] = snapshot
@@ -135,10 +140,33 @@ class BrokerMonitor:
                 return_exceptions=True,
             )
 
-    async def sync_account_positions(self) -> None:
-        """Slow-tick housekeeping for account/position state.
+    async def _maybe_sync_oanda_trades(self) -> None:
+        settings = get_settings()
+        now = utc_now()
+        if self._last_trade_sync_at is not None:
+            elapsed = (now - self._last_trade_sync_at).total_seconds()
+            if elapsed < settings.trade_sync_interval_seconds:
+                return
 
-        TODO(loop): Pull live positions from broker APIs when available.
-        """
+        self._last_trade_sync_at = now
+        result = await sync_oanda_trades_to_ledger()
+        if not result.get("configured"):
+            return
+        imported = int(result.get("imported", 0))
+        updated = int(result.get("updated", 0))
+        closed = int(result.get("closed", 0))
+        backfilled = int(result.get("backfilled", 0))
+        if imported or updated or closed or backfilled:
+            logger.info(
+                "Broker monitor — OANDA trade sync imported=%d updated=%d closed=%d backfilled=%d",
+                imported,
+                updated,
+                closed,
+                backfilled,
+            )
+
+    async def sync_account_positions(self) -> None:
+        """Slow-tick housekeeping: import broker-only open trades into the ledger."""
+        await self._maybe_sync_oanda_trades()
         open_trades = await TradesRepository().list_open_trades()
         logger.debug("Broker monitor — %d open trade(s)", len(open_trades))

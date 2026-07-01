@@ -14,6 +14,7 @@ TaskKind = Literal[
     ResearchKind,
     "data_fetch",
     "trade_execute",
+    "trade_sync",
 ]
 
 TaskStatus = Literal["running", "success", "failed", "skipped", "cancelled"]
@@ -65,6 +66,11 @@ TASK_KINDS: dict[str, TaskKindSpec] = {
         label="Execute trade",
         cancellable=True,
         exclusive_kinds=frozenset({"trade_execute"}),
+    ),
+    "trade_sync": TaskKindSpec(
+        label="Sync OANDA trades",
+        cancellable=True,
+        exclusive_kinds=frozenset({"trade_sync"}),
     ),
 }
 

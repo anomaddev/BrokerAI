@@ -124,6 +124,9 @@ def test_close_trade_without_broker(mock_repo_cls, client: TestClient) -> None:
         "trade-1",
         reason="manual_close",
         metadata={},
+        exit_price=None,
+        realized_pl=None,
+        closed_at=None,
     )
 
 
@@ -136,6 +139,29 @@ def test_get_trade_returns_404(mock_repo_cls, client: TestClient) -> None:
     response = client.get("/api/trades/missing")
 
     assert response.status_code == 404
+
+
+@patch("brokerai.web.routes.trades.start_trade_sync_task")
+def test_sync_trades_starts_background_task(mock_start, client: TestClient) -> None:
+    mock_start.return_value = ("task-123", None)
+
+    response = client.post("/api/trades/sync")
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["task_id"] == "task-123"
+    assert body["status"] == "accepted"
+    mock_start.assert_awaited_once()
+
+
+@patch("brokerai.web.routes.trades.start_trade_sync_task")
+def test_sync_trades_conflict(mock_start, client: TestClient) -> None:
+    mock_start.return_value = (None, "A task is already running: Sync OANDA trades")
+
+    response = client.post("/api/trades/sync")
+
+    assert response.status_code == 409
+    assert response.json()["skipped_reason"] == "A task is already running: Sync OANDA trades"
 
 
 @patch("brokerai.web.routes.trades.get_broker_open_trades_snapshot")

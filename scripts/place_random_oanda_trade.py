@@ -215,6 +215,7 @@ async def _place_trade(args: argparse.Namespace) -> dict[str, Any]:
             "exit_mode": "manual",
             "risk_pct": 0.0,
             "units": units,
+            "execution_reason": "random_trade",
             "metadata": {"source": "scripts/place_random_oanda_trade.py"},
         }
         recorded = await TradesRepository().create_open_trade(

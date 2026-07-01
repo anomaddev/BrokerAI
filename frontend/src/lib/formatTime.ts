@@ -5,7 +5,7 @@ export type TimeFormatOptions = {
   timeZone: string;
 };
 
-export type AppInstantStyle = "full" | "short";
+export type AppInstantStyle = "full" | "short" | "compact";
 
 function parseInstant(value: string | number | Date): Date | null {
   if (value instanceof Date) {
@@ -69,6 +69,26 @@ export function formatAppInstant(
       minute: "2-digit",
     }).format(date);
     return `${formatted}${timezoneSuffix(options)}`;
+  }
+
+  if (style === "compact") {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      month: "2-digit",
+      day: "2-digit",
+      year: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+      timeZoneName: options.showUtc ? undefined : "short",
+    }).formatToParts(date);
+
+    const part = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((entry) => entry.type === type)?.value ?? "";
+
+    const tz = options.showUtc ? "UTC" : part("timeZoneName");
+    return `${part("month")}-${part("day")}-${part("year")} at ${part("hour")}:${part("minute")}:${part("second")} ${part("dayPeriod")}${tz ? ` ${tz}` : ""}`;
   }
 
   const formatted = new Intl.DateTimeFormat(undefined, {

@@ -5,12 +5,70 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from brokerai.integrations.oanda import (
+    _normalize_oanda_closed_trade,
     _normalize_oanda_open_trade,
     _pricing_mid_price,
     attach_current_prices_to_broker_trades,
     extract_broker_trade_id,
     get_broker_open_trades_snapshot,
+    parse_oanda_close_response,
 )
+
+
+def test_normalize_oanda_closed_trade_extracts_close_fields():
+    trade = _normalize_oanda_closed_trade(
+        {
+            "id": "88",
+            "instrument": "EUR_USD",
+            "initialUnits": "-1000",
+            "state": "CLOSED",
+            "price": "1.10000",
+            "averageClosePrice": "1.10500",
+            "realizedPL": "-5.00",
+            "openTime": "2026-06-30T12:00:00.000000000Z",
+            "closeTime": "2026-06-30T14:30:00.000000000Z",
+        }
+    )
+    assert trade is not None
+    assert trade["direction"] == "short"
+    assert trade["exit_price"] == 1.105
+    assert trade["realized_pl"] == -5.0
+    assert trade["closed_at"] is not None
+
+
+def test_parse_oanda_close_response_from_order_fill():
+    parsed = parse_oanda_close_response(
+        {
+            "orderFillTransaction": {
+                "price": "1.10500",
+                "pl": "12.34",
+                "time": "2026-06-30T14:30:00.000000000Z",
+                "tradeClosed": {
+                    "tradeID": "99",
+                    "realizedPL": "12.34",
+                },
+            }
+        }
+    )
+    assert parsed["exit_price"] == 1.105
+    assert parsed["realized_pl"] == 12.34
+    assert parsed["broker_trade_id"] == "99"
+    assert parsed["closed_at"] is not None
+
+
+def test_parse_oanda_close_response_sums_trades_closed_pl():
+    parsed = parse_oanda_close_response(
+        {
+            "orderFillTransaction": {
+                "price": "1.10500",
+                "tradesClosed": [
+                    {"realizedPL": "2.00", "tradeID": "1"},
+                    {"realizedPL": "-0.50", "tradeID": "1"},
+                ],
+            }
+        }
+    )
+    assert parsed["realized_pl"] == 1.5
 
 
 def test_normalize_oanda_open_trade_rejects_zero_units():
