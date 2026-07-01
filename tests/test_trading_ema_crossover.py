@@ -85,3 +85,23 @@ def test_filter_chain_can_block_signal():
     result = run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
     assert result.confidence == 0.0
     assert result.direction is None
+
+
+def test_run_strategy_analysis_rejects_insufficient_candles():
+    register_ema_crossover()
+    candles = generate_mock_candles(10)
+    strategy = {
+        "id": "short-cache",
+        "name": "Short Cache",
+        "timeframe": "M15",
+        "preset_id": "ema_crossover",
+        "params": _ema_strategy_params(),
+    }
+    cache = IndicatorCache().warm("EUR/USD", "M15", candles, [strategy["params"]])
+    result = run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
+
+    assert result.direction is None
+    assert result.confidence == 0.0
+    assert result.metadata.get("reason") == "insufficient_candles"
+    assert result.metadata.get("have") == 10
+    assert result.metadata.get("need", 0) >= 63

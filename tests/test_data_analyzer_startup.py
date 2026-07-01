@@ -126,8 +126,14 @@ async def test_tick_analyzes_when_latest_candle_changes():
     with (
         patch("brokerai.bots.data_analyzer.bot.get_asset_runtime", return_value=_mock_runtime(unit)),
         patch("brokerai.bots.data_analyzer.bot.run_strategy_analysis") as run_analysis,
+        patch(
+            "brokerai.bots.data_analyzer.bot.StrategyAnalysisRunsRepository",
+        ) as runs_repo_cls,
         patch.object(bot, "_sync_exit_monitors", new_callable=AsyncMock),
     ):
+        runs_repo = AsyncMock()
+        runs_repo.insert_from_result.return_value = {"id": "run-456"}
+        runs_repo_cls.return_value = runs_repo
         run_analysis.return_value = AnalysisResult(
             strategy_id="strategy-1",
             strategy_name="Test",

@@ -10,11 +10,12 @@ from brokerai.bots.data_manager.candle_requirements import CandleRequirement
 from brokerai.bots.data_manager.candles import requirement_needs_bootstrap
 
 
-def _mock_service(count: int) -> MagicMock:
+def _mock_service(count: int, *, complete: bool = True) -> MagicMock:
     repo = AsyncMock()
     repo.count_candles.return_value = count
     cache = MagicMock()
     cache._market_repo = repo
+    cache.is_cache_complete_up_to = AsyncMock(return_value=complete)
     service = MagicMock()
     service.cache = cache
     service.registered_demand.return_value = []

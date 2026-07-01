@@ -13,8 +13,8 @@ config.env
 /etc/brokerai/
 
 # Runtime data
-data/
-logs/
+/data/
+/logs/
 *.log
 
 # IDE

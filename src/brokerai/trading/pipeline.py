@@ -62,6 +62,7 @@ def run_strategy_analysis(
     strategy_id = str(strategy.get("id", ""))
     strategy_name = str(strategy.get("name") or strategy_id)
     tf = timeframe or str(strategy.get("timeframe") or params.get("timeframe") or "")
+    min_required = effective_min_candles(params)
 
     if evaluator is None:
         return AnalysisResult(
@@ -71,9 +72,27 @@ def run_strategy_analysis(
             timeframe=tf,
             confidence=0.0,
             direction=None,
-            min_candles=effective_min_candles(params),
+            min_candles=min_required,
             signal_type=signal_type,
             metadata={"error": "unknown_signal_type"},
+            analyzed_at=datetime.now(timezone.utc),
+        )
+
+    if len(candles) < min_required:
+        return AnalysisResult(
+            strategy_id=strategy_id,
+            strategy_name=strategy_name,
+            pair=pair,
+            timeframe=tf,
+            confidence=0.0,
+            direction=None,
+            min_candles=min_required,
+            signal_type=signal_type,
+            metadata={
+                "reason": "insufficient_candles",
+                "have": len(candles),
+                "need": min_required,
+            },
             analyzed_at=datetime.now(timezone.utc),
         )
 
