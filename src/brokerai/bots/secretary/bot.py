@@ -150,6 +150,22 @@ class SecretaryBot(Bot):
                         ResearchRequest(scheduled_kind="weekly_debrief"),
                     )
 
+    async def run_startup_pass(self) -> None:
+        """Bootstrap candle cache and run initial strategy analysis once at startup."""
+        if self._startup_done:
+            return
+
+        self._startup_done = True
+        startup_jobs = await self._timeline.build_startup_jobs(self._service)
+        if startup_jobs:
+            logger.info("Secretary startup — %d warm-up pipeline(s)", len(startup_jobs))
+            self._queued_jobs = len(startup_jobs)
+            self._active_pipelines = len(startup_jobs)
+            results = await self._pipeline.run_jobs(startup_jobs)
+            self._record_pipeline_batch(results)
+            return
+        logger.info("Secretary startup — cache warm, waiting for candle close")
+
     async def tick(self) -> None:
         settings = get_settings()
         await self._maybe_fetch_account_summary()
@@ -167,16 +183,8 @@ class SecretaryBot(Bot):
             return
 
         if not self._startup_done:
-            startup_jobs = await self._timeline.build_startup_jobs(self._service)
-            self._startup_done = True
-            if startup_jobs:
-                logger.info("Secretary startup — %d warm-up pipeline(s)", len(startup_jobs))
-                self._queued_jobs = len(startup_jobs)
-                self._active_pipelines = len(startup_jobs)
-                results = await self._pipeline.run_jobs(startup_jobs)
-                self._record_pipeline_batch(results)
-                return
-            logger.info("Secretary startup — cache warm, waiting for candle close")
+            await self.run_startup_pass()
+            return
 
         jobs, warnings = await self._timeline.build_due_jobs(self._service)
         for warning in warnings:

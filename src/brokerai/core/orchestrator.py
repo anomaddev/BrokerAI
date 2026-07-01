@@ -124,6 +124,13 @@ class Orchestrator:
 
     async def _run_startup_pass(self) -> None:
         if self.settings.use_secretary_pipeline:
+            secretary = self.bots.get("secretary")
+            if secretary is not None and hasattr(secretary, "run_startup_pass"):
+                logger.info("Orchestrator startup — secretary warm-up and analysis")
+                try:
+                    await secretary.run_startup_pass()
+                except Exception:
+                    logger.exception("Orchestrator startup — secretary pass failed")
             return
 
         data_manager = self.bots.get("data_manager")
