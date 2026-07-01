@@ -326,8 +326,84 @@ input {
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+  justify-content: flex-end;
   position: relative;
   z-index: 30;
+}
+
+.market-sessions-inactive-trigger {
+  width: 0.625rem;
+  height: 0.625rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.market-sessions-inactive-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.market-session-tooltip--inactive-list {
+  gap: 0.45rem;
+  min-width: 12rem;
+  max-width: 18rem;
+}
+
+.market-session-inactive-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.market-session-inactive-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.market-session-inactive-item + .market-session-inactive-item {
+  padding-top: 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.market-session-inactive-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.market-session-inactive-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.market-session-inactive-status {
+  font-size: 0.68rem;
+  line-height: 1.3;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.market-session-inactive-hours,
+.market-session-inactive-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.market-session-inactive-note {
+  font-size: 0.68rem;
 }
 
 .bot-status-bar {
@@ -664,6 +740,16 @@ input {
 }
 
 .market-session-pill--extended .market-session-state {
+  color: color-mix(in srgb, #f59e0b 80%, var(--text));
+}
+
+.market-session-pill--break {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.08);
+  color: #f59e0b;
+}
+
+.market-session-pill--break .market-session-state {
   color: color-mix(in srgb, #f59e0b 80%, var(--text));
 }
 

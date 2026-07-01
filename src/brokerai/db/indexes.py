@@ -94,6 +94,14 @@ async def ensure_indexes() -> None:
         name="trades_strategy_pair_date",
     )
     await db.trades.create_index([("status", 1)], name="trades_status")
+    await db.trades.create_index(
+        [("status", 1), ("opened_at", -1)],
+        name="trades_status_opened_at",
+    )
+    await db.trades.create_index(
+        [("status", 1), ("closed_at", -1)],
+        name="trades_status_closed_at",
+    )
     await db.strategy_analysis_runs.create_index(
         "id",
         unique=True,

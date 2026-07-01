@@ -71,6 +71,191 @@ async def get_account_summary(
     }
 
 
+def instrument_to_pair(instrument: str) -> str:
+    """Convert OANDA instrument id ``EUR_USD`` to ``EUR/USD``."""
+    parts = instrument.strip().upper().split("_")
+    if len(parts) == 2:
+        return f"{parts[0]}/{parts[1]}"
+    return instrument.replace("_", "/")
+
+
+def _normalize_oanda_open_trade(raw: dict[str, Any]) -> dict[str, Any] | None:
+    trade_id = raw.get("id")
+    instrument = raw.get("instrument")
+    if not trade_id or not instrument:
+        return None
+
+    state = str(raw.get("state", "OPEN")).upper()
+    if state != "OPEN":
+        return None
+
+    try:
+        units = float(raw.get("currentUnits") or raw.get("initialUnits") or 0)
+    except (TypeError, ValueError):
+        units = 0.0
+    if units == 0:
+        return None
+
+    direction = "long" if units > 0 else "short"
+    price_raw = raw.get("price")
+    try:
+        price = float(price_raw) if price_raw is not None else 0.0
+    except (TypeError, ValueError):
+        price = 0.0
+    pl_raw = raw.get("unrealizedPL")
+    try:
+        unrealized_pl = float(pl_raw) if pl_raw is not None else None
+    except (TypeError, ValueError):
+        unrealized_pl = None
+    return {
+        "id": str(trade_id),
+        "instrument": str(instrument),
+        "pair": instrument_to_pair(str(instrument)),
+        "units": abs(units),
+        "direction": direction,
+        "price": price,
+        "unrealized_pl": unrealized_pl,
+        "current_price": None,
+        "open_time": raw.get("openTime"),
+    }
+
+
+def _pricing_mid_price(raw: dict[str, Any]) -> float | None:
+    """Return mid price from an OANDA pricing payload row."""
+    bids = raw.get("bids") or []
+    asks = raw.get("asks") or []
+    try:
+        bid = float(bids[0]["price"]) if bids else None
+        ask = float(asks[0]["price"]) if asks else None
+    except (IndexError, KeyError, TypeError, ValueError):
+        bid = None
+        ask = None
+    if bid is not None and ask is not None:
+        return (bid + ask) / 2.0
+    if bid is not None:
+        return bid
+    if ask is not None:
+        return ask
+    closeout = raw.get("closeoutBid") or raw.get("closeoutAsk")
+    if closeout is not None:
+        try:
+            return float(closeout)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+async def fetch_account_pricing(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    instruments: list[str],
+) -> dict[str, float]:
+    """Fetch latest mid prices for OANDA instruments.
+
+    Returns a map of instrument id (e.g. ``EUR_USD``) to mid price. Unknown or
+    invalid instruments are omitted.
+    """
+    unique = sorted({inst.strip().upper() for inst in instruments if inst and inst.strip()})
+    if not unique:
+        return {}
+
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/pricing"
+    params = {"instruments": ",".join(unique)}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token), params=params)
+        response.raise_for_status()
+        data = response.json()
+
+    prices: dict[str, float] = {}
+    for raw in data.get("prices") or []:
+        if not isinstance(raw, dict):
+            continue
+        instrument = raw.get("instrument")
+        mid = _pricing_mid_price(raw)
+        if instrument and mid is not None:
+            prices[str(instrument).upper()] = mid
+    return prices
+
+
+def attach_current_prices_to_broker_trades(
+    trades: list[dict[str, Any]],
+    prices_by_instrument: dict[str, float],
+) -> list[dict[str, Any]]:
+    """Attach ``current_price`` to normalized broker open trades."""
+    for trade in trades:
+        instrument = str(trade.get("instrument", "")).upper()
+        trade["current_price"] = prices_by_instrument.get(instrument)
+    return trades
+
+
+def extract_broker_trade_id(order_response: dict[str, Any]) -> str | None:
+    """Return the OANDA trade ID from an order response, not the transaction ID."""
+    order_fill = order_response.get("orderFillTransaction") or {}
+    trade_opened = order_fill.get("tradeOpened") or {}
+    trade_id = trade_opened.get("tradeID")
+    if trade_id:
+        return str(trade_id)
+    return None
+
+
+async def get_broker_open_trades_snapshot(
+    access_token: str,
+    environment: str,
+    account_id: str,
+) -> dict[str, Any]:
+    """Fetch OANDA open-trade count and details.
+
+    Uses account summary ``openTradeCount`` as the authoritative count. When that
+    count is zero, returns an empty trade list even if ``/openTrades`` returns
+    stale or zero-unit legs.
+    """
+    summary = await get_account_summary(access_token, environment, account_id)
+    raw_count = summary.get("open_trade_count")
+    try:
+        open_trade_count = int(raw_count) if raw_count is not None else 0
+    except (TypeError, ValueError):
+        open_trade_count = 0
+
+    if open_trade_count <= 0:
+        return {
+            "open_trade_count": 0,
+            "trades": [],
+            "summary": summary,
+        }
+
+    trades = await list_open_trades(access_token, environment, account_id)
+    instruments = [str(t.get("instrument", "")) for t in trades if t.get("instrument")]
+    prices = await fetch_account_pricing(access_token, environment, account_id, instruments)
+    attach_current_prices_to_broker_trades(trades, prices)
+    return {
+        "open_trade_count": open_trade_count,
+        "trades": trades,
+        "summary": summary,
+    }
+
+
+async def list_open_trades(
+    access_token: str,
+    environment: str,
+    account_id: str,
+) -> list[dict[str, Any]]:
+    """Fetch open trades for a single OANDA account."""
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/openTrades"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token))
+        response.raise_for_status()
+        data = response.json()
+    trades: list[dict[str, Any]] = []
+    for raw in data.get("trades") or []:
+        if not isinstance(raw, dict):
+            continue
+        normalized = _normalize_oanda_open_trade(raw)
+        if normalized is not None:
+            trades.append(normalized)
+    return trades
+
+
 async def test_connection(
     access_token: str,
     environment: str,
@@ -383,6 +568,56 @@ async def place_market_order(
             url,
             headers={**_auth_headers(access_token), "Content-Type": "application/json"},
             json={"order": order},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def close_broker_trade(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    trade_id: str,
+) -> dict[str, Any]:
+    """Close an open OANDA trade by broker trade id."""
+    if not access_token.strip():
+        raise ValueError("OANDA access token is not configured")
+    if not account_id.strip():
+        raise ValueError("OANDA account id is not configured")
+    if not trade_id.strip():
+        raise ValueError("OANDA trade id is required")
+
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades/{trade_id}/close"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.put(
+            url,
+            headers={**_auth_headers(access_token), "Content-Type": "application/json"},
+            json={"units": "ALL"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def close_broker_trade(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    trade_id: str,
+) -> dict[str, Any]:
+    """Close an open OANDA trade by broker trade id."""
+    if not access_token.strip():
+        raise ValueError("OANDA access token is not configured")
+    if not account_id.strip():
+        raise ValueError("OANDA account id is not configured")
+    if not trade_id.strip():
+        raise ValueError("OANDA trade id is required")
+
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades/{trade_id}/close"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.put(
+            url,
+            headers={**_auth_headers(access_token), "Content-Type": "application/json"},
+            json={"units": "ALL"},
         )
         response.raise_for_status()
         return response.json()

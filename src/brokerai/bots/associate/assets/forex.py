@@ -7,7 +7,7 @@ from brokerai.bots.associate.assets.base import AssetAssociate
 from brokerai.db.repositories.asset_settings import AssetSettingsRepository
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
 from brokerai.db.repositories.trades import TradesRepository
-from brokerai.integrations.oanda import forex_pair_to_instrument, place_market_order
+from brokerai.integrations.oanda import extract_broker_trade_id, forex_pair_to_instrument, place_market_order
 from brokerai.trading.schedule import utc_now
 from brokerai.trading.session_gate import is_asset_trading_session_active
 from brokerai.trading.types import TradeIntent
@@ -71,14 +71,14 @@ class ForexAssociate(AssetAssociate):
             take_profit=intent.take_profit,
         )
         order_fill = response.get("orderFillTransaction") or response.get("orderCreateTransaction") or {}
-        broker_order_id = str(order_fill.get("id", ""))
+        broker_trade_id = extract_broker_trade_id(response) or str(order_fill.get("id", "")) or None
         trade_payload = asdict(intent)
         trade_payload["units"] = units
-        await TradesRepository().create_open_trade(trade_payload, broker_order_id=broker_order_id)
+        await TradesRepository().create_open_trade(trade_payload, broker_order_id=broker_trade_id)
         logger.info(
-            "Forex associate placed order %s %s units=%s order_id=%s",
+            "Forex associate placed order %s %s units=%s trade_id=%s",
             intent.pair,
             intent.direction,
             units,
-            broker_order_id,
+            broker_trade_id,
         )

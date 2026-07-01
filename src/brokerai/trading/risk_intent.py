@@ -79,5 +79,8 @@ def build_trade_intent(
         take_profit=take,
         exit_mode=exit_mode,
         risk_pct=float(risk.get("risk_per_trade_pct", 1.0)),
-        metadata={"analysis": result.metadata},
+        metadata={
+            "analysis": result.metadata,
+            **({"analysis_run_id": result.run_id} if result.run_id else {}),
+        },
     )

@@ -53,6 +53,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Trading",
     items: [
       { to: "/trading/strategies", label: "Strategies", icon: LineChart },
+      { to: "/trading/trades", label: "Trades", icon: TrendingUp },
       { to: "/trading/analysis", label: "Live Analysis", icon: Zap },
     ],
   },
