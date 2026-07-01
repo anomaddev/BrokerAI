@@ -5,12 +5,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from brokerai.integrations.oanda import (
+    OandaOrderError,
     _normalize_oanda_closed_trade,
     _normalize_oanda_open_trade,
     _pricing_mid_price,
+    _raise_for_oanda_order_response,
     attach_current_prices_to_broker_trades,
     extract_broker_trade_id,
+    format_oanda_price,
     get_broker_open_trades_snapshot,
+    oanda_price_precision,
     parse_oanda_close_response,
 )
 
@@ -141,6 +145,47 @@ def test_extract_broker_trade_id_prefers_trade_opened():
         }
     }
     assert extract_broker_trade_id(response) == "trade-99"
+
+
+def test_oanda_price_precision_for_jpy_and_majors():
+    assert oanda_price_precision("AUD_JPY") == 3
+    assert oanda_price_precision("EUR/USD") == 5
+
+
+def test_format_oanda_price_rounds_to_instrument_precision():
+    assert format_oanda_price(112.12932142857143, "AUD_JPY") == "112.129"
+    assert format_oanda_price(1.123456789, "EUR_USD") == "1.12346"
+
+
+def test_raise_for_oanda_order_response_rejects_precision_errors():
+    class FakeResponse:
+        is_success = True
+
+        @staticmethod
+        def json():
+            return {
+                "orderRejectTransaction": {
+                    "rejectReason": "TAKE_PROFIT_ON_FILL_PRICE_PRECISION_EXCEEDED",
+                }
+            }
+
+    with pytest.raises(OandaOrderError, match="TAKE_PROFIT_ON_FILL_PRICE_PRECISION_EXCEEDED"):
+        _raise_for_oanda_order_response(FakeResponse())
+
+
+def test_raise_for_oanda_order_response_rejects_immediate_stop_loss():
+    class FakeResponse:
+        is_success = True
+
+        @staticmethod
+        def json():
+            return {
+                "orderCreateTransaction": {"id": "1"},
+                "orderCancelTransaction": {"reason": "STOP_LOSS_ON_FILL_LOSS"},
+            }
+
+    with pytest.raises(OandaOrderError, match="STOP_LOSS_ON_FILL_LOSS"):
+        _raise_for_oanda_order_response(FakeResponse())
 
 
 @pytest.mark.asyncio

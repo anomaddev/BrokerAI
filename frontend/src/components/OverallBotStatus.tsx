@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import {
   api,
   type BotActivityEvent,
-  type MarketStatusResponse,
   type ResearchSettings,
 } from "../api/client";
 import {
@@ -26,6 +25,7 @@ import {
   type MarketIndicators,
 } from "../lib/displaySettings";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import { useMarketStatus } from "../hooks/useMarketStatus";
 import { anyEnabledMarketOpen } from "../lib/marketSessions";
 import {
   computeNextAction,
@@ -54,7 +54,7 @@ export default function OverallBotStatus() {
   const [loaded, setLoaded] = useState(false);
   const [orchestratorRunning, setOrchestratorRunning] = useState<boolean | null>(null);
   const [bots, setBots] = useState<BotStatusItem[]>([]);
-  const [marketStatus, setMarketStatus] = useState<MarketStatusResponse | null>(null);
+  const marketStatus = useMarketStatus();
   const [researchSettings, setResearchSettings] = useState<ResearchSettings | null>(null);
   const [activityEvents, setActivityEvents] = useState<BotActivityEvent[]>([]);
   const [indicators, setIndicators] = useState<MarketIndicators>(DEFAULT_MARKET_INDICATORS);
@@ -96,21 +96,15 @@ export default function OverallBotStatus() {
 
     async function load() {
       try {
-        const [health, botData, marketData, researchData, activityData] = await Promise.all([
+        const [health, botData, researchData, activityData] = await Promise.all([
           api.health(),
           api.bots(),
-          api.getMarketStatus().catch(() => ({
-            enabled: true,
-            available: false,
-            sessions: [],
-          })),
           api.getResearchSettings().catch(() => null),
           api.getBotActivity(TIMELINE_LIMIT).catch(() => ({ events: [], latest: null })),
         ]);
         if (cancelled) return;
         setOrchestratorRunning(Boolean(health.orchestrator_running));
         setBots(sortBots(botData.bots));
-        setMarketStatus(marketData);
         setResearchSettings(researchData);
         setActivityEvents(activityData.events);
         setLoaded(true);
@@ -118,7 +112,6 @@ export default function OverallBotStatus() {
         if (!cancelled) {
           setOrchestratorRunning(false);
           setBots([]);
-          setMarketStatus({ enabled: true, available: false, sessions: [] });
           setResearchSettings(null);
           setActivityEvents([]);
           setLoaded(true);

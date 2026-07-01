@@ -134,6 +134,8 @@ ensure_env_file() {
     echo "BROKERAI_DATA_DIR=data"
     echo "BROKERAI_LOG_DIR=logs"
     echo "BROKERAI_AUTO_UPDATE=false"
+    echo "BROKERAI_ENABLED_BOTS=secretary,broker,researcher"
+    echo "BROKERAI_USE_SECRETARY_PIPELINE=true"
     echo "BROKERAI_SECRET_KEY=$(openssl rand -hex 16)"
   } >>"${ENV_FILE}"
 }

@@ -76,11 +76,16 @@ class CandleTimeline:
 
         for requirement in all_requirements:
             needs_bootstrap = await requirement_needs_bootstrap(requirement, service)
+            if needs_bootstrap:
+                # Warm-up/backfill is handled once on Secretary startup — do not
+                # re-enter bootstrap on every tick while cache catches up.
+                continue
+
             next_at = self._next_fetch_at.get(requirement.timeframe)
             if next_at is None:
                 next_at = self._schedule_next_fetch(requirement.timeframe, now=when)
 
-            fetch_due = needs_bootstrap or is_candle_fetch_due(when, next_at)
+            fetch_due = is_candle_fetch_due(when, next_at)
             if not fetch_due:
                 continue
 
@@ -90,20 +95,26 @@ class CandleTimeline:
                         pair,
                         requirement.timeframe,
                         requirement.bar_count,
-                        needs_bootstrap,
-                        not needs_bootstrap,
+                        False,
+                        True,
                         True,
                     )
                 )
 
-            if fetch_due:
-                self._schedule_next_fetch(requirement.timeframe, now=when)
+            self._schedule_next_fetch(requirement.timeframe, now=when)
 
         if not due_units and result.strategies:
             runtime = get_asset_runtime("forex")
             if runtime is not None:
                 work_plan = runtime.build_work_plan(result.strategies)
                 for unit in work_plan.units:
+                    complete = await service.cache.is_cache_complete_up_to(
+                        unit.pair,
+                        unit.timeframe,
+                        source="oanda",
+                    )
+                    if not complete:
+                        continue
                     latest = await service.latest_candle_time(
                         unit.pair,
                         unit.timeframe,
@@ -185,8 +196,10 @@ class CandleTimeline:
         work_plan = runtime.build_work_plan(result.strategies)
         when = datetime.now(timezone.utc)
         jobs: list[CandleJob] = []
+        timeframes: set[str] = set()
 
         for unit in work_plan.units:
+            timeframes.add(unit.timeframe)
             req = CandleRequirement(
                 timeframe=unit.timeframe,
                 pairs=(unit.pair,),
@@ -209,9 +222,12 @@ class CandleTimeline:
                     bar_count=unit.bar_count,
                     trigger_time=when,
                     strategies=unit.strategies,
-                    incremental=not needs_bootstrap,
+                    incremental=False,
                     bootstrap=needs_bootstrap,
                 )
             )
+
+        for timeframe in timeframes:
+            self._schedule_next_fetch(timeframe, now=when)
 
         return jobs

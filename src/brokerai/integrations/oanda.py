@@ -444,6 +444,46 @@ def forex_pair_to_instrument(pair: str) -> str:
     return pair.replace("/", "_").strip().upper()
 
 
+def oanda_price_precision(instrument: str) -> int:
+    """Return decimal places for OANDA order prices on *instrument*.
+
+    JPY-quoted pairs (``*_JPY``) use 3 dp; most other majors use 5 dp.
+    """
+    normalized = instrument.strip().upper().replace("/", "_")
+    if normalized.endswith("_JPY"):
+        return 3
+    return 5
+
+
+def format_oanda_price(price: float, instrument: str) -> str:
+    """Format *price* for OANDA ``stopLossOnFill`` / ``takeProfitOnFill`` payloads."""
+    precision = oanda_price_precision(instrument)
+    return f"{price:.{precision}f}"
+
+
+class OandaOrderError(ValueError):
+    """Raised when OANDA rejects or cancels an order without a fill."""
+
+
+def _raise_for_oanda_order_response(response: httpx.Response) -> dict[str, Any]:
+    """Parse an OANDA order response and raise when no fill occurred."""
+    if not response.is_success:
+        response.raise_for_status()
+
+    payload = response.json()
+    reject = payload.get("orderRejectTransaction")
+    if reject:
+        reason = str(reject.get("rejectReason") or "ORDER_REJECTED")
+        raise OandaOrderError(f"OANDA rejected order: {reason}")
+
+    if payload.get("orderCancelTransaction") and not payload.get("orderFillTransaction"):
+        cancel = payload["orderCancelTransaction"]
+        reason = str(cancel.get("reason") or "ORDER_CANCELLED")
+        raise OandaOrderError(f"OANDA cancelled order: {reason}")
+
+    return payload
+
+
 OANDA_GRANULARITY_BY_TIMEFRAME: dict[str, str] = {
     "M1": "M1",
     "M2": "M2",
@@ -704,9 +744,9 @@ async def place_market_order(
         "positionFill": "DEFAULT",
     }
     if stop_loss is not None:
-        order["stopLossOnFill"] = {"price": f"{stop_loss:.5f}"}
+        order["stopLossOnFill"] = {"price": format_oanda_price(stop_loss, instrument)}
     if take_profit is not None:
-        order["takeProfitOnFill"] = {"price": f"{take_profit:.5f}"}
+        order["takeProfitOnFill"] = {"price": format_oanda_price(take_profit, instrument)}
 
     url = f"{base_url(environment)}/v3/accounts/{account_id}/orders"
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -715,8 +755,7 @@ async def place_market_order(
             headers={**_auth_headers(access_token), "Content-Type": "application/json"},
             json={"order": order},
         )
-        response.raise_for_status()
-        return response.json()
+        return _raise_for_oanda_order_response(response)
 
 
 async def close_broker_trade(

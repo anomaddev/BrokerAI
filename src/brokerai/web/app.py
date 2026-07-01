@@ -66,6 +66,7 @@ async def _trade_sync_loop() -> None:
 
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     validate_startup_settings()
     try:
         from brokerai.db.indexes import ensure_indexes

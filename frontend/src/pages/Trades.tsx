@@ -170,7 +170,7 @@ export default function Trades() {
           if (result.backfilled > 0) parts.push(`${result.backfilled} backfilled`);
           setSyncMessage(`Sync complete — ${parts.join(", ")}`);
         } else {
-          setSyncMessage("Ledger and OANDA are already in sync");
+          setSyncMessage(null);
         }
         return;
       }

@@ -1,5 +1,6 @@
 from tests.fixtures.mock_candles import generate_mock_candles
-from brokerai.trading.risk_intent import build_trade_intent, compute_sl_tp_prices
+import pytest
+from brokerai.trading.risk_intent import build_trade_intent, compute_sl_tp_prices, pip_size_for_pair
 from brokerai.trading.types import AnalysisResult
 
 
@@ -16,6 +17,25 @@ def test_compute_sl_tp_prices_long():
     assert stop is not None and stop < entry
     assert take is not None and take > entry
     assert mode == "rr_ratio"
+
+
+def test_pip_size_for_jpy_quote():
+    assert pip_size_for_pair("USD/JPY") == 0.01
+    assert pip_size_for_pair("EUR/USD") == 0.0001
+
+
+def test_compute_sl_tp_prices_jpy_fixed_pips():
+    candles = generate_mock_candles(60)
+    entry = 112.0
+    params = {
+        "exits": {
+            "stop_loss": {"mode": "fixed_pips", "fixed_pips": 15},
+            "take_profit": {"mode": "fixed_pips", "fixed_pips": 30},
+        }
+    }
+    stop, take, _ = compute_sl_tp_prices(params, candles, entry, "long", pair="AUD/JPY")
+    assert stop == pytest.approx(entry - 0.15)
+    assert take == pytest.approx(entry + 0.30)
 
 
 def test_build_trade_intent():

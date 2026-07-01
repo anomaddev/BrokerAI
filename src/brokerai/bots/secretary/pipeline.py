@@ -46,6 +46,7 @@ class PipelineRunner:
                 )
 
             context = fetch_result.data
+            candles_upserted = int((fetch_result.metadata or {}).get("candles_upserted", 0))
             await pipeline_activity.log_pipeline_fetch_completed(
                 context,
                 int((time.monotonic() - fetch_start) * 1000),
@@ -73,14 +74,18 @@ class PipelineRunner:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 return PipelineResult(job_id=job.job_id, ok=True, duration_ms=duration_ms)
 
-            if (
-                not context.bootstrap
-                and context.latest_candle_time
+            revision_unchanged = (
+                context.latest_candle_time
                 and not GLOBAL_CANDLE_REVISIONS.has_changed(
                     context.symbol,
                     context.timeframe,
                     context.latest_candle_time,
                 )
+            )
+            if (
+                not context.bootstrap
+                and revision_unchanged
+                and candles_upserted == 0
             ):
                 logger.info(
                     "Pipeline — skipping analysis for %s %s (candle %s already analyzed)",

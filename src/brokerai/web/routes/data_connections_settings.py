@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from brokerai.bots.researcher.news import test_newsapi
 from brokerai.integrations.massive import test_massive
+from brokerai.integrations.massive_cache import clear_market_status_cache
 from brokerai.provider_capabilities import supports_capability
 from brokerai.db.repositories.ai_models import AiModelsRepository, mask_api_key
 from brokerai.db.repositories.data_connections import DataConnectionsRepository
@@ -102,6 +103,7 @@ async def save_massive(body: MassiveBody, _username: str = Depends(require_auth)
     existing = await repo.get_massive()
     api_key = body.api_key.strip() if body.api_key.strip() else existing.get("api_key", "")
     doc = await repo.save_massive(api_key=api_key, enabled=body.enabled)
+    clear_market_status_cache()
     return JSONResponse(_public_massive(doc))
 
 
@@ -109,6 +111,7 @@ async def save_massive(body: MassiveBody, _username: str = Depends(require_auth)
 async def delete_massive(_username: str = Depends(require_auth)) -> JSONResponse:
     repo = DataConnectionsRepository()
     doc = await repo.delete_massive()
+    clear_market_status_cache()
     return JSONResponse(_public_massive(doc))
 
 

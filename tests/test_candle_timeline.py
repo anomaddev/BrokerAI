@@ -26,9 +26,12 @@ def _strategy(*, strategy_id: str = "strategy-1") -> dict:
 async def test_fetch_due_job_runs_before_new_candle_visible():
     """Scheduled fetches must not be skipped by a pre-fetch revision check."""
     timeline = CandleTimeline()
-    service = AsyncMock()
+    service = MagicMock()
+    service.registered_demand.return_value = []
+    service.cache = MagicMock()
+    service.cache.is_cache_complete_up_to = AsyncMock(return_value=True)
     latest = "2026-01-01T00:15:00.000000000Z"
-    service.latest_candle_time.return_value = latest
+    service.latest_candle_time = AsyncMock(return_value=latest)
     GLOBAL_CANDLE_REVISIONS.mark_updated("EUR/USD", "M15", latest)
 
     requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
@@ -90,9 +93,12 @@ async def test_fetch_due_job_runs_before_new_candle_visible():
 async def test_analysis_only_job_skips_when_revision_unchanged():
     """Catch-up analysis jobs should still honor revision gating."""
     timeline = CandleTimeline()
-    service = AsyncMock()
+    service = MagicMock()
+    service.registered_demand.return_value = []
+    service.cache = MagicMock()
+    service.cache.is_cache_complete_up_to = AsyncMock(return_value=True)
     latest = "2026-01-01T00:15:00.000000000Z"
-    service.latest_candle_time.return_value = latest
+    service.latest_candle_time = AsyncMock(return_value=latest)
     GLOBAL_CANDLE_REVISIONS.mark_updated("EUR/USD", "M15", latest)
 
     strategy = _strategy()
@@ -139,3 +145,193 @@ async def test_analysis_only_job_skips_when_revision_unchanged():
         jobs, _warnings = await timeline.build_due_jobs(service, now=when)
 
     assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_due_jobs_skip_bootstrap_requirements():
+    """Incomplete cache warm-up belongs to startup, not periodic ticks."""
+    timeline = CandleTimeline()
+    service = MagicMock()
+    service.registered_demand.return_value = []
+    service.cache = MagicMock()
+    service.cache.is_cache_complete_up_to = AsyncMock(return_value=False)
+    service.latest_candle_time = AsyncMock(return_value="2026-01-01T00:00:00.000000000Z")
+
+    requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
+    strategy = _strategy()
+    when = datetime(2026, 1, 1, 0, 15, 5, tzinfo=timezone.utc)
+    timeline._next_fetch_at["M15"] = datetime(2026, 1, 1, 0, 15, 3, tzinfo=timezone.utc)
+
+    load_result = MagicMock(
+        skip_reason=None,
+        strategies=[(strategy, ["EUR/USD"])],
+    )
+
+    with (
+        patch(
+            "brokerai.bots.secretary.candle_timeline.load_runnable_forex_strategies",
+            new_callable=AsyncMock,
+            return_value=load_result,
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.collect_watch_requirements",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.collect_candle_requirements",
+            return_value=([requirement], []),
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.requirement_needs_bootstrap",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        jobs, _warnings = await timeline.build_due_jobs(service, now=when)
+
+    assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_startup_jobs_bootstrap_stale_cache():
+    """Startup warm-up should full-sync stale cache, not incremental catch-up."""
+    timeline = CandleTimeline()
+    service = MagicMock()
+    service.latest_candle_time = AsyncMock(return_value="2026-01-01T00:00:00.000000000Z")
+
+    strategy = _strategy()
+    load_result = MagicMock(
+        skip_reason=None,
+        strategies=[(strategy, ["EUR/USD"])],
+    )
+    runtime = MagicMock()
+    runtime.build_work_plan.return_value = MagicMock(
+        units=[
+            MagicMock(
+                pair="EUR/USD",
+                timeframe="M15",
+                bar_count=63,
+                asset_class="forex",
+                strategies=(strategy,),
+            )
+        ]
+    )
+
+    with (
+        patch(
+            "brokerai.bots.secretary.candle_timeline.load_runnable_forex_strategies",
+            new_callable=AsyncMock,
+            return_value=load_result,
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.get_asset_runtime",
+            return_value=runtime,
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.requirement_needs_bootstrap",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        jobs = await timeline.build_startup_jobs(service)
+
+    assert len(jobs) == 1
+    assert jobs[0].bootstrap is True
+    assert jobs[0].incremental is False
+    assert "M15" in timeline._next_fetch_at
+
+
+@pytest.mark.asyncio
+async def test_due_jobs_skip_bootstrap_requirements():
+    """Incomplete cache warm-up belongs to startup, not periodic ticks."""
+    timeline = CandleTimeline()
+    service = MagicMock()
+    service.registered_demand.return_value = []
+    service.cache = MagicMock()
+    service.cache.is_cache_complete_up_to = AsyncMock(return_value=False)
+    service.latest_candle_time = AsyncMock(return_value="2026-01-01T00:00:00.000000000Z")
+
+    requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
+    strategy = _strategy()
+    when = datetime(2026, 1, 1, 0, 15, 5, tzinfo=timezone.utc)
+    timeline._next_fetch_at["M15"] = datetime(2026, 1, 1, 0, 15, 3, tzinfo=timezone.utc)
+
+    load_result = MagicMock(
+        skip_reason=None,
+        strategies=[(strategy, ["EUR/USD"])],
+    )
+
+    with (
+        patch(
+            "brokerai.bots.secretary.candle_timeline.load_runnable_forex_strategies",
+            new_callable=AsyncMock,
+            return_value=load_result,
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.collect_watch_requirements",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.collect_candle_requirements",
+            return_value=([requirement], []),
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.requirement_needs_bootstrap",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        jobs, _warnings = await timeline.build_due_jobs(service, now=when)
+
+    assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_startup_jobs_bootstrap_stale_cache():
+    """Startup warm-up should full-sync stale cache, not incremental catch-up."""
+    timeline = CandleTimeline()
+    service = MagicMock()
+    service.latest_candle_time = AsyncMock(return_value="2026-01-01T00:00:00.000000000Z")
+
+    strategy = _strategy()
+    load_result = MagicMock(
+        skip_reason=None,
+        strategies=[(strategy, ["EUR/USD"])],
+    )
+    runtime = MagicMock()
+    runtime.build_work_plan.return_value = MagicMock(
+        units=[
+            MagicMock(
+                pair="EUR/USD",
+                timeframe="M15",
+                bar_count=63,
+                asset_class="forex",
+                strategies=(strategy,),
+            )
+        ]
+    )
+
+    with (
+        patch(
+            "brokerai.bots.secretary.candle_timeline.load_runnable_forex_strategies",
+            new_callable=AsyncMock,
+            return_value=load_result,
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.get_asset_runtime",
+            return_value=runtime,
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_timeline.requirement_needs_bootstrap",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        jobs = await timeline.build_startup_jobs(service)
+
+    assert len(jobs) == 1
+    assert jobs[0].bootstrap is True
+    assert jobs[0].incremental is False
+    assert "M15" in timeline._next_fetch_at

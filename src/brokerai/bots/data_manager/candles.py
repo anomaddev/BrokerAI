@@ -24,6 +24,7 @@ async def requirement_needs_bootstrap(
     requirement: CandleRequirement,
     service: DataManagerService,
 ) -> bool:
+    """True when cache lacks bars or latest stored bar is behind the expected close."""
     for pair in requirement.pairs:
         count = await service.cache._market_repo.count_candles(
             pair,
@@ -31,6 +32,13 @@ async def requirement_needs_bootstrap(
             OANDA_SOURCE,
         )
         if count < requirement.bar_count:
+            return True
+        complete = await service.cache.is_cache_complete_up_to(
+            pair,
+            requirement.timeframe,
+            source=OANDA_SOURCE,
+        )
+        if not complete:
             return True
     return False
 

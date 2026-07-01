@@ -176,13 +176,17 @@ class SecretaryBot(Bot):
                 results = await self._pipeline.run_jobs(startup_jobs)
                 self._record_pipeline_batch(results)
                 return
+            logger.info("Secretary startup — cache warm, waiting for candle close")
 
         jobs, warnings = await self._timeline.build_due_jobs(self._service)
         for warning in warnings:
-            logger.debug("Secretary — %s", warning)
+            logger.info("Secretary — %s", warning)
 
         if not jobs:
             self._queued_jobs = 0
+            if warnings:
+                return
+            logger.debug("Secretary — no pipeline jobs due this tick")
             return
 
         self._queued_jobs = len(jobs)

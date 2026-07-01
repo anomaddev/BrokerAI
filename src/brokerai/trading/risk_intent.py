@@ -8,6 +8,15 @@ from brokerai.trading.types import AnalysisResult, TradeIntent
 PIP_SIZE = 0.0001
 
 
+def pip_size_for_pair(pair: str) -> float:
+    """Return pip size for *pair* (0.01 for JPY quote, 0.0001 otherwise)."""
+    if "/" in pair:
+        quote = pair.split("/")[-1].strip().upper()
+    else:
+        quote = pair.strip().upper()[-3:]
+    return 0.01 if quote == "JPY" else PIP_SIZE
+
+
 def _recent_swing_low(candles: list[dict[str, Any]], lookback: int) -> float:
     slice_candles = candles[-max(lookback, 2) :]
     return min(float(candle["low"]) for candle in slice_candles)
@@ -18,15 +27,18 @@ def compute_sl_tp_prices(
     candles: list[dict[str, Any]],
     entry: float,
     direction: str,
+    *,
+    pair: str = "",
 ) -> tuple[float | None, float | None, str]:
     exits = params.get("exits") or {}
     stop_loss = exits.get("stop_loss") or {}
     take_profit = exits.get("take_profit") or {}
     atr_val = compute_atr(candles, 14)
+    pip_size = pip_size_for_pair(pair) if pair else PIP_SIZE
 
     sl_mode = str(stop_loss.get("mode", "atr_based"))
     if sl_mode == "fixed_pips":
-        sl_distance = float(stop_loss.get("fixed_pips", 15)) * PIP_SIZE
+        sl_distance = float(stop_loss.get("fixed_pips", 15)) * pip_size
     elif sl_mode == "structure":
         swing_low = _recent_swing_low(candles, int(stop_loss.get("structure_lookback", 10)))
         sl_distance = max(entry - swing_low, atr_val * 0.5)
@@ -35,7 +47,7 @@ def compute_sl_tp_prices(
 
     tp_mode = str(take_profit.get("mode", "rr_ratio"))
     if tp_mode == "fixed_pips":
-        tp_distance = float(take_profit.get("fixed_pips", 30)) * PIP_SIZE
+        tp_distance = float(take_profit.get("fixed_pips", 30)) * pip_size
     elif tp_mode == "atr_based":
         tp_distance = atr_val * float(take_profit.get("atr_multiplier", 2.5))
     elif tp_mode in {"reverse_crossover", "trailing_stop"}:
@@ -64,7 +76,13 @@ def build_trade_intent(
         return None
 
     entry = float(candles[-1]["close"])
-    stop, take, exit_mode = compute_sl_tp_prices(params, candles, entry, result.direction)
+    stop, take, exit_mode = compute_sl_tp_prices(
+        params,
+        candles,
+        entry,
+        result.direction,
+        pair=result.pair,
+    )
     risk = params.get("risk") or {}
 
     return TradeIntent(

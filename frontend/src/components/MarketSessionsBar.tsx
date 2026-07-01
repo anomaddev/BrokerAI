@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, type MarketSessionStatus, type MarketStatusResponse } from "../api/client";
+import { api, type MarketSessionStatus } from "../api/client";
 import {
   DEFAULT_MARKET_INDICATORS,
   DISPLAY_SETTINGS_UPDATED,
@@ -9,6 +9,7 @@ import {
   type MarketIndicators,
 } from "../lib/displaySettings";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import { useMarketStatus } from "../hooks/useMarketStatus";
 import { resolveSessionTooltip } from "../lib/marketSessions";
 import {
   assetClassLabel,
@@ -19,21 +20,6 @@ import {
   type AssetClassMarketStatus,
 } from "../lib/assetClassMarket";
 import type { TimeFormatOptions } from "../lib/formatTime";
-
-const POLL_INTERVAL_MINUTES = 5;
-const POLL_MARK_SECOND = 1;
-
-function msUntilNextPoll(from = new Date()): number {
-  const next = new Date(from);
-  const blockStartMinute = Math.floor(from.getMinutes() / POLL_INTERVAL_MINUTES) * POLL_INTERVAL_MINUTES;
-  next.setMinutes(blockStartMinute, POLL_MARK_SECOND, 0);
-
-  if (next.getTime() <= from.getTime()) {
-    next.setMinutes(blockStartMinute + POLL_INTERVAL_MINUTES, POLL_MARK_SECOND, 0);
-  }
-
-  return next.getTime() - from.getTime();
-}
 
 function sessionLabel(session: MarketSessionStatus): string {
   if (session.status === "open") {
@@ -357,7 +343,7 @@ function AssetClassPill({ assetClass, serverTime, timeOptions }: AssetClassPillP
 
 export default function MarketSessionsBar() {
   const { timeOptions } = useGeneralSettings();
-  const [status, setStatus] = useState<MarketStatusResponse | null>(null);
+  const status = useMarketStatus();
   const [indicators, setIndicators] = useState<MarketIndicators>(DEFAULT_MARKET_INDICATORS);
 
   useEffect(() => {
@@ -387,38 +373,6 @@ export default function MarketSessionsBar() {
     return () => {
       cancelled = true;
       window.removeEventListener(DISPLAY_SETTINGS_UPDATED, handleSettingsUpdated);
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-
-    async function load() {
-      try {
-        const data = await api.getMarketStatus();
-        if (!cancelled) setStatus(data);
-      } catch {
-        if (!cancelled) {
-          setStatus({ enabled: true, available: false, sessions: [] });
-        }
-      }
-    }
-
-    function scheduleNext() {
-      timer = window.setTimeout(() => {
-        void load().finally(() => {
-          if (!cancelled) scheduleNext();
-        });
-      }, msUntilNextPoll());
-    }
-
-    void load();
-    scheduleNext();
-
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, []);
 

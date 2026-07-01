@@ -13,6 +13,7 @@ from brokerai.trading.data.models import SyncResult
 def _service_with_repo(repo: AsyncMock) -> DataManagerService:
     cache = MagicMock()
     cache._market_repo = repo
+    cache.is_cache_complete_up_to = AsyncMock(return_value=True)
     cache.sync = AsyncMock(return_value=SyncResult(symbol="EUR/USD", timeframe="M15", upserted=1))
     service = DataManagerService(cache=cache)
     return service
@@ -34,6 +35,16 @@ async def test_requirement_needs_bootstrap_when_cache_full():
     repo.count_candles.return_value = 100
     service = _service_with_repo(repo)
     assert await requirement_needs_bootstrap(requirement, service) is False
+
+
+@pytest.mark.asyncio
+async def test_requirement_needs_bootstrap_when_cache_stale():
+    requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
+    repo = AsyncMock()
+    repo.count_candles.return_value = 100
+    service = _service_with_repo(repo)
+    service.cache.is_cache_complete_up_to = AsyncMock(return_value=False)
+    assert await requirement_needs_bootstrap(requirement, service) is True
 
 
 @pytest.mark.asyncio

@@ -34,11 +34,26 @@ class Orchestrator:
         self._started_at: datetime | None = None
         self._tasks: dict[str, asyncio.Task] = {}
 
+    def _resolved_bot_names(self, use_secretary: bool) -> list[str]:
+        """Return bot names to load, auto-injecting Secretary pipeline bots when required."""
+        names = list(self.settings.enabled_bot_names)
+        if not use_secretary:
+            return names
+
+        for required in ("secretary", "broker"):
+            if required not in names:
+                names.append(required)
+                logger.info(
+                    "Auto-enabled '%s' — required when BROKERAI_USE_SECRETARY_PIPELINE=true",
+                    required,
+                )
+        return names
+
     def _load_bots(self) -> None:
         bot_registry = get_bot_registry()
         use_secretary = self.settings.use_secretary_pipeline
 
-        for name in self.settings.enabled_bot_names:
+        for name in self._resolved_bot_names(use_secretary):
             if use_secretary and name in _LEGACY_PIPELINE_BOTS:
                 logger.info(
                     "Skipping legacy bot '%s' — use_secretary_pipeline is enabled",

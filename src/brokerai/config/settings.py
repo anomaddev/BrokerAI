@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
     web_port: int = 1989
     log_level: str = "INFO"
-    enabled_bots: str = "researcher"
+    enabled_bots: str = "secretary,broker,researcher"
     auto_update: bool = True
     update_track: UpdateTrack = "branch"
     branch: str = "main"
