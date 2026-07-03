@@ -38,6 +38,8 @@ class ContributorModelBody(BaseModel):
 
 class DataSourcesBody(BaseModel):
     newsapi: bool = True
+    rss_enabled: bool = False
+    rss_categories: dict[str, bool] | None = None
     web_search_enabled: bool = False
     web_search_model_id: str | None = None
     x_search_enabled: bool = False

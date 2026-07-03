@@ -23,7 +23,7 @@ Use rigorous, step-by-step reasoning before stating conclusions:
 
 Be explicit about uncertainty, assumptions, and what would invalidate your view.
 Ground every claim in the supplied articles; do not invent events or data.
-Articles are tagged with the data source they came from (e.g. NewsAPI, web search,
+Articles are tagged with the data source they came from (e.g. NewsAPI, RSS, web search,
 X search). Weigh established financial newswires more heavily than social posts, and
 treat X/social items as sentiment signals that need corroboration.
 When pair-level and group-level views diverge, explain why."""

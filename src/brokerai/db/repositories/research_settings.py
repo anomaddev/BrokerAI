@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from brokerai.research_constants import DAILY_REPORT_REASONING_EFFORT, REASONING_EFFORT_OPTIONS
+from brokerai.bots.researcher.rss_feeds import normalize_rss_categories
 from brokerai.research_markets import (
     DEFAULT_DAILY_REPORT_MARKET_ID,
     DEFAULT_DAILY_REPORT_MARKET_OFFSET_HOURS,
@@ -46,6 +47,8 @@ def _normalize_data_sources(raw: Any) -> dict[str, Any]:
 
     return {
         "newsapi": bool(raw.get("newsapi", True)),
+        "rss_enabled": bool(raw.get("rss_enabled", False)),
+        "rss_categories": normalize_rss_categories(raw.get("rss_categories")),
         "web_search_enabled": bool(raw.get("web_search_enabled", False)),
         "web_search_model_id": _model_id("web_search_model_id"),
         "x_search_enabled": bool(raw.get("x_search_enabled", False)),

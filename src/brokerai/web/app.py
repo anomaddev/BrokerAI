@@ -24,6 +24,7 @@ from brokerai.web.routes.market_status import router as market_status_router
 from brokerai.web.routes.models_settings import router as models_settings_router
 from brokerai.web.routes.research import router as research_router
 from brokerai.web.routes.research_settings_route import router as research_settings_router
+from brokerai.web.routes.rss_feeds_settings import router as rss_feeds_router
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.strategy_analysis_runs import router as strategy_analysis_runs_router
@@ -140,6 +141,7 @@ app.include_router(market_status_router)
 app.include_router(market_data_router)
 app.include_router(exchange_connections_router)
 app.include_router(research_settings_router)
+app.include_router(rss_feeds_router)
 app.include_router(assets_settings_router)
 app.include_router(research_router)
 app.include_router(strategies_router)

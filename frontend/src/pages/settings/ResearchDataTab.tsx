@@ -7,6 +7,7 @@ import {
   type NewsApiConnection,
   type ResearchDataSources,
   type ResearchSettings,
+  type RssFeedCategory,
 } from "../../api/client";
 import ToggleSwitch from "../../components/ToggleSwitch";
 import SettingsPanelHeader from "../../components/SettingsPanelHeader";
@@ -15,11 +16,21 @@ import { getProvider, providerLabel } from "./modelProviders";
 
 const DEFAULT_DATA_SOURCES: ResearchDataSources = {
   newsapi: true,
+  rss_enabled: false,
+  rss_categories: {},
   web_search_enabled: false,
   web_search_model_id: null,
   x_search_enabled: false,
   x_search_model_id: null,
 };
+
+function normalizeDataSources(raw?: Partial<ResearchDataSources> | null): ResearchDataSources {
+  return {
+    ...DEFAULT_DATA_SOURCES,
+    ...(raw ?? {}),
+    rss_categories: { ...(raw?.rss_categories ?? {}) },
+  };
+}
 
 type DataSnapshot = {
   researchSettings: ResearchSettings | null;
@@ -27,6 +38,7 @@ type DataSnapshot = {
   modelConnections: ModelConnection[];
   dataSources: ResearchDataSources;
   newsApiAvailable: boolean;
+  rssCategories: RssFeedCategory[];
 };
 
 function capabilitiesFor(model: AiModel, connections: ModelConnection[]) {
@@ -59,6 +71,9 @@ export default function ResearchDataTab() {
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([]);
   const [newsApi, setNewsApi] = useState<NewsApiConnection | null>(null);
   const [dataSources, setDataSources] = useState<ResearchDataSources>(DEFAULT_DATA_SOURCES);
+  const [rssCategories, setRssCategories] = useState<RssFeedCategory[]>([]);
+  const [enabledFeedCount, setEnabledFeedCount] = useState(0);
+  const [totalFeedCount, setTotalFeedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +85,7 @@ export default function ResearchDataTab() {
     modelConnections: [],
     dataSources: DEFAULT_DATA_SOURCES,
     newsApiAvailable: false,
+    rssCategories: [],
   });
 
   snapshotRef.current = {
@@ -78,6 +94,7 @@ export default function ResearchDataTab() {
     modelConnections,
     dataSources,
     newsApiAvailable,
+    rssCategories,
   };
 
   const capabilityModels = useMemo(
@@ -108,6 +125,10 @@ export default function ResearchDataTab() {
 
     const derivedDataSources: ResearchDataSources = {
       newsapi: snapshot.dataSources.newsapi && snapshot.newsApiAvailable,
+      rss_enabled: snapshot.dataSources.rss_enabled,
+      rss_categories: Object.fromEntries(
+        snapshot.rssCategories.map((category) => [category.id, category.enabled]),
+      ),
       web_search_enabled: Boolean(webModel),
       web_search_model_id: webModel?.id ?? null,
       x_search_enabled: Boolean(xModel),
@@ -127,9 +148,9 @@ export default function ResearchDataTab() {
     snapshotRef.current = {
       ...snapshotRef.current,
       researchSettings: saved,
-      dataSources: { ...DEFAULT_DATA_SOURCES, ...(saved.data_sources ?? {}) },
+      dataSources: normalizeDataSources(saved.data_sources),
     };
-    setDataSources({ ...DEFAULT_DATA_SOURCES, ...(saved.data_sources ?? {}) });
+    setDataSources(normalizeDataSources(saved.data_sources));
   }, []);
 
   const { saveStatus, saveNow, scheduleSave, markReady, markNotReady, error: saveError } =
@@ -143,21 +164,27 @@ export default function ResearchDataTab() {
       markNotReady();
       setLoading(true);
       try {
-        const [modelsData, connectionsData, settings] = await Promise.all([
+        const [modelsData, connectionsData, settings, rssCatalog] = await Promise.all([
           api.listModels(),
           api.getDataConnections(),
           api.getResearchSettings(),
+          api.getRssFeeds(),
         ]);
         setModels(modelsData.models);
         setModelConnections(connectionsData.models ?? []);
         setNewsApi(connectionsData.newsapi ?? null);
-        setDataSources({ ...DEFAULT_DATA_SOURCES, ...(settings.data_sources ?? {}) });
+        const normalizedSources = normalizeDataSources(settings.data_sources);
+        setDataSources(normalizedSources);
+        setRssCategories(rssCatalog.categories);
+        setEnabledFeedCount(rssCatalog.enabled_feed_count);
+        setTotalFeedCount(rssCatalog.total_feeds);
         snapshotRef.current = {
           researchSettings: settings,
           models: modelsData.models,
           modelConnections: connectionsData.models ?? [],
-          dataSources: { ...DEFAULT_DATA_SOURCES, ...(settings.data_sources ?? {}) },
+          dataSources: normalizedSources,
           newsApiAvailable: Boolean(connectionsData.newsapi?.api_key_set),
+          rssCategories: rssCatalog.categories,
         };
         markReady();
       } catch (err) {
@@ -167,6 +194,31 @@ export default function ResearchDataTab() {
       }
     })();
   }, [markNotReady, markReady]);
+
+  function updateRssEnabled(checked: boolean) {
+    setDataSources((prev) => {
+      const next = { ...prev, rss_enabled: checked };
+      snapshotRef.current = { ...snapshotRef.current, dataSources: next };
+      return next;
+    });
+    saveNow();
+  }
+
+  function updateRssCategory(categoryId: string, checked: boolean) {
+    setRssCategories((prev) => {
+      const next = prev.map((category) =>
+        category.id === categoryId ? { ...category, enabled: checked } : category,
+      );
+      const enabledCount = next.filter((category) => category.enabled).reduce(
+        (sum, category) => sum + category.feed_count,
+        0,
+      );
+      setEnabledFeedCount(enabledCount);
+      snapshotRef.current = { ...snapshotRef.current, rssCategories: next };
+      return next;
+    });
+    scheduleSave(400);
+  }
 
   function updateNewsApi(checked: boolean) {
     setDataSources((prev) => {
@@ -241,6 +293,62 @@ export default function ResearchDataTab() {
                   />
                 </div>
               </div>
+            </section>
+
+            <section className="settings-card research-card">
+              <div className="settings-card-header">
+                <div className="settings-section-intro">
+                  <h3 className="research-card-title">RSS feeds</h3>
+                  <p className="settings-muted">
+                    Public financial and geopolitical RSS feeds for research runs. No API key
+                    required.{" "}
+                    <a href={api.getRssFeedsOpmlUrl()} download="brokerai-rss-feeds.opml">
+                      Download OPML
+                    </a>
+                  </p>
+                </div>
+              </div>
+
+              <div className="research-source-list">
+                <div className="research-source-row">
+                  <div className="research-source-main">
+                    <span className="research-source-name">RSS aggregation</span>
+                    <span className="settings-muted">
+                      {enabledFeedCount} of {totalFeedCount} feeds active across enabled
+                      categories
+                    </span>
+                  </div>
+                  <ToggleSwitch
+                    label="Use RSS feeds"
+                    checked={dataSources.rss_enabled}
+                    onChange={updateRssEnabled}
+                  />
+                </div>
+              </div>
+
+              {dataSources.rss_enabled && (
+                <ul className="research-rss-category-list">
+                  {rssCategories.map((category) => (
+                    <li key={category.id} className="research-rss-category-item">
+                      <label className="research-rss-category-label">
+                        <input
+                          type="checkbox"
+                          checked={category.enabled}
+                          onChange={(event) =>
+                            updateRssCategory(category.id, event.target.checked)
+                          }
+                        />
+                        <span className="research-rss-category-copy">
+                          <span className="research-source-name">{category.label}</span>
+                          <span className="settings-muted">
+                            {category.description} · {category.feed_count} feeds
+                          </span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
             <section className="settings-card research-card">
