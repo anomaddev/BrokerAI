@@ -20,6 +20,7 @@ import brokerai.trading.broker.adapters  # noqa: F401
 from brokerai.trading.broker.adapters.oanda import OandaAdapter, lot_from_oanda_trade
 from brokerai.trading.broker.reconciliation import reconcile_sync_drift, unconfigured_reconciliation
 from brokerai.trading.broker.state import BrokerStateService
+from brokerai.db.repositories.broker_lots import DEFAULT_TRADE_CHART_TIMEFRAME
 from brokerai.trading.data.candle_cache import OANDA_SOURCE
 from brokerai.web.routes.auth import require_auth
 from brokerai.web.routes.market_data_helpers import serialize_candle, validate_timeframe
@@ -29,7 +30,9 @@ logger = logging.getLogger(__name__)
 
 MANUAL_CLOSE_REASON = "manual_close"
 TRADE_CANDLE_PADDING = timedelta(hours=1)
-DEFAULT_TRADE_TIMEFRAME = "M15"
+# Single source of truth shared with the anchor computation in broker_lots so the
+# chart timeframe and the stored entry_candle_open anchor can never drift apart.
+DEFAULT_TRADE_TIMEFRAME = DEFAULT_TRADE_CHART_TIMEFRAME
 
 
 def _parse_trade_instant(value: Any) -> datetime | None:
@@ -84,6 +87,17 @@ async def _resolve_trade_timeframe(trade: dict[str, Any]) -> str:
 
 def _trade_is_open(trade: dict[str, Any]) -> bool:
     return str(trade.get("status") or trade.get("state") or "closed") == "open"
+
+
+def _entry_candle_price_side(trade: dict[str, Any]) -> str:
+    """OANDA candle price side matching the *entry* execution price.
+
+    A market buy fills at the ask, a market sell at the bid. Charting the trade
+    against mid candles makes the recorded fill float above the high (long) or
+    below the low (short) by the half-spread; fetching the execution-side candle
+    keeps the entry fill inside the candle range.
+    """
+    return "B" if str(trade.get("direction") or "").lower() == "short" else "A"
 
 
 def _accepted_task_response(task_id: str) -> JSONResponse:
@@ -300,8 +314,11 @@ async def get_trade_candles(
     until_dt = display_until_dt + bar_duration
 
     service = require_data_manager_service()
+    price_side = _entry_candle_price_side(trade)
     try:
-        candles = await service.fetch_candles_from_oanda(pair, timeframe, since_dt, until_dt)
+        candles = await service.fetch_candles_from_oanda(
+            pair, timeframe, since_dt, until_dt, price=price_side
+        )
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -321,6 +338,7 @@ async def get_trade_candles(
         {
             "symbol": pair,
             "timeframe": timeframe,
+            "price_side": price_side,
             "source": OANDA_SOURCE,
             "since": since_dt.isoformat(),
             "until": until_dt.isoformat(),

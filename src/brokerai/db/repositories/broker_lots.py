@@ -273,6 +273,7 @@ def _lot_to_doc(lot: PositionLot) -> dict[str, Any]:
         "current_qty": lot.current_qty,
         "units": lot.units,
         "entry_price": lot.entry_price,
+        "signal_entry_price": lot.signal_entry_price,
         "exit_price": lot.exit_price,
         "unrealized_pl": lot.unrealized_pl,
         "realized_pl": lot.realized_pl,
@@ -323,6 +324,7 @@ def _lot_from_doc(doc: dict[str, Any]) -> PositionLot:
         initial_qty=initial_qty,
         current_qty=current_qty,
         entry_price=float(doc.get("entry_price") or 0),
+        signal_entry_price=doc.get("signal_entry_price"),
         exit_price=doc.get("exit_price"),
         unrealized_pl=doc.get("unrealized_pl"),
         realized_pl=doc.get("realized_pl"),
@@ -431,11 +433,17 @@ class BrokerLotsRepository:
                     "exit_mode",
                     "stop_loss_price",
                     "take_profit_price",
-                    "timeframe",
-                    "entry_candle_open",
-                    "exit_candle_open",
+                    "signal_entry_price",
                 ):
                     if doc.get(field) is None and existing.get(field) is not None:
+                        doc[field] = existing[field]
+                # Candle anchors are strategy-derived and immutable once set. A sync
+                # never sees the signal candle, so it derives these from the *fill*
+                # time; letting that overwrite an existing anchor moves the trade
+                # marker from the signal bar to the fill bar (which excludes the
+                # bid/ask fill). Existing values always win when present.
+                for field in ("timeframe", "entry_candle_open", "exit_candle_open"):
+                    if existing.get(field) is not None:
                         doc[field] = existing[field]
         else:
             doc["created_at"] = now

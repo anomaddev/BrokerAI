@@ -74,6 +74,11 @@ class PositionLot:
     current_qty: float
     entry_price: float
     exit_price: float | None = None
+    # Intended entry from the strategy signal candle (its close). ``entry_price``
+    # is the actual broker fill (ask for longs, bid for shorts) and can differ by
+    # spread + slippage; keeping both lets charts/analytics show the in-range
+    # signal price and quantify real slippage.
+    signal_entry_price: float | None = None
     unrealized_pl: float | None = None
     realized_pl: float | None = None
     costs: dict[str, float] = field(default_factory=dict)
@@ -133,6 +138,7 @@ class PositionLot:
             "current_qty": self.current_qty,
             "units": self.units,
             "entry_price": self.entry_price,
+            "signal_entry_price": self.signal_entry_price,
             "exit_price": self.exit_price,
             "unrealized_pl": self.unrealized_pl,
             "realized_pl": self.realized_pl,

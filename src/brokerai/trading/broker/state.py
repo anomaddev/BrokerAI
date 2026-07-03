@@ -82,6 +82,7 @@ class BrokerStateService:
                 initial_qty=abs(intent.units or 1000),
                 current_qty=abs(intent.units or 1000),
                 entry_price=intent.entry_price,
+                signal_entry_price=intent.entry_price,
                 stop_loss_price=intent.stop_loss,
                 take_profit_price=intent.take_profit,
                 strategy_id=intent.strategy_id,
@@ -101,6 +102,7 @@ class BrokerStateService:
         adapter = get_adapter(exchange_id)
         lot, _response = await adapter.place_from_intent(credentials, account_id, intent)
         lot.id = uuid4().hex
+        lot.signal_entry_price = intent.entry_price
         lot.strategy_id = intent.strategy_id
         lot.strategy_name = intent.strategy_name
         lot.execution_reason = intent_meta.get("execution_reason")

@@ -416,11 +416,20 @@ class CandleCache:
         timeframe: str,
         start: str | datetime,
         end: str | datetime,
+        *,
+        price: str = "M",
     ) -> list[dict[str, Any]]:
         """Fetch closed candles from OANDA for ``[start, end]`` without touching MongoDB.
 
         Used for trade detail charts where the lifecycle window must come directly from
         the broker rather than the explore cache.
+
+        Args:
+            price: OANDA candle price component: ``"M"`` (mid, default), ``"B"`` (bid)
+                or ``"A"`` (ask). Trade charts pass the *execution* side (ask for longs,
+                bid for shorts) so the recorded fill sits inside the candle range instead
+                of poking above the high / below the low by the half-spread. Mid candles
+                are never the price a market order actually fills at.
 
         Raises:
             ValueError: OANDA credentials missing or timeframe unsupported.
@@ -448,6 +457,7 @@ class CandleCache:
                 cursor,
                 end_str,
                 max_chunk=chunk_size,
+                price=price,
             )
             if not batch:
                 break

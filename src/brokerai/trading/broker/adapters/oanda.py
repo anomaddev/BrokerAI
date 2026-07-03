@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -29,6 +30,8 @@ from brokerai.trading.types import TradeIntent
 
 OANDA_EXCHANGE_ID = "oanda"
 DEFAULT_ASSET_CLASS = "forex"
+
+logger = logging.getLogger(__name__)
 
 
 def _child_order_from_normalized(raw: dict[str, Any] | None) -> ChildOrder | None:
@@ -287,6 +290,35 @@ class OandaAdapter:
                 )
         return mismatches
 
+    @staticmethod
+    def _log_fill_slippage(intent: TradeIntent, lot: PositionLot) -> None:
+        """Log signal-vs-fill slippage so entry-outside-candle drift is diagnosable.
+
+        ``intent.entry_price`` is the signal candle close; ``lot.entry_price`` is the
+        actual broker fill (ask for longs / bid for shorts). The difference is spread +
+        latency slippage and is exactly what makes fills land outside a mid candle.
+        """
+        try:
+            from brokerai.trading.risk_intent import pip_size_for_pair
+
+            intended = float(intent.entry_price or 0)
+            fill = float(lot.entry_price or 0)
+            pip = pip_size_for_pair(intent.pair) or 0.0001
+            slip_pips = (fill - intended) / pip if intended else 0.0
+            logger.info(
+                "FILL slippage lot=%s pair=%s dir=%s intended=%.5f fill=%.5f "
+                "slip_pips=%.2f signal_candle=%s",
+                lot.broker_lot_id,
+                intent.pair,
+                intent.direction,
+                intended,
+                fill,
+                slip_pips,
+                (intent.metadata or {}).get("entry_candle_open"),
+            )
+        except Exception:  # never let diagnostics break order placement
+            logger.debug("Fill slippage logging failed", exc_info=True)
+
     async def place_from_intent(
         self,
         credentials: dict[str, Any],
@@ -327,6 +359,8 @@ class OandaAdapter:
                     asset_class=intent.asset_class,
                     overlay=overlay,
                 )
+                lot.signal_entry_price = intent.entry_price
+                self._log_fill_slippage(intent, lot)
                 return lot, response
 
         lot = PositionLot(

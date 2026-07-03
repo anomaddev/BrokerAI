@@ -179,9 +179,17 @@ class DataManagerService:
         timeframe: str,
         since: str | datetime,
         until: str | datetime,
+        *,
+        price: str = "M",
     ) -> list[dict[str, Any]]:
-        """Return lifecycle-window candles fetched directly from OANDA (no cache)."""
-        return await self._cache.fetch_range_from_oanda(symbol, timeframe, since, until)
+        """Return lifecycle-window candles fetched directly from OANDA (no cache).
+
+        ``price`` selects the OANDA candle component (``"M"`` mid, ``"B"`` bid, ``"A"``
+        ask). Trade charts pass the execution side so broker fills sit inside the bars.
+        """
+        return await self._cache.fetch_range_from_oanda(
+            symbol, timeframe, since, until, price=price
+        )
 
     async def verify(
         self,
