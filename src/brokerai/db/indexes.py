@@ -101,6 +101,15 @@ async def ensure_indexes() -> None:
         unique=True,
         name="broker_sync_state_exchange_account",
     )
+    await db.oanda_accounts_snapshots.create_index(
+        "exchange_id",
+        unique=True,
+        name="oanda_accounts_snapshots_exchange_id",
+    )
+    await db.oanda_account_summaries.create_index(
+        [("exchange_id", 1), ("account_id", 1), ("synced_at", -1)],
+        name="oanda_account_summaries_exchange_account_synced_at",
+    )
     await db.strategy_analysis_runs.create_index(
         "id",
         unique=True,

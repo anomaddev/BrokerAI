@@ -15,7 +15,6 @@ from brokerai.bots.researcher.weekly import (
 from brokerai.bots.secretary.activity import log_account_summary_updated
 from brokerai.bots.secretary.candle_timeline import CandleTimeline
 from brokerai.bots.secretary.pipeline import PipelineRunner
-from brokerai.bots.data_manager.worker import AccountSummaryRequest, fetch_account_summary
 from brokerai.config.settings import get_settings
 from brokerai.core.worker_pool import get_worker_pool
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
@@ -87,18 +86,31 @@ class SecretaryBot(Bot):
     async def _maybe_fetch_account_summary(self) -> None:
         settings = get_settings()
         now = datetime.now(timezone.utc)
-        interval = settings.broker_sync_interval_seconds
+        interval = settings.oanda_account_sync_interval_seconds
         if self._last_account_fetch_at is not None:
             elapsed = (now - self._last_account_fetch_at).total_seconds()
             if elapsed < interval:
                 return
 
         self._last_account_fetch_at = now
-        result = await fetch_account_summary(AccountSummaryRequest(asset_class="forex"))
-        if result.ok and result.data and self._broker is not None:
+        from brokerai.trading.oanda_account_sync import run_oanda_account_sync
+
+        result = await run_oanda_account_sync()
+        if not result.summary_synced or not result.account_id:
+            return
+
+        from brokerai.db.repositories.oanda_account_snapshots import OandaAccountSnapshotsRepository
+
+        doc = await OandaAccountSnapshotsRepository().get_latest_summary(
+            account_id=result.account_id,
+        )
+        if doc and self._broker is not None:
             monitor = getattr(self._broker, "_monitor", None)
             if monitor is not None:
-                monitor.set_account_snapshot("forex", result.data)
+                snapshot = OandaAccountSnapshotsRepository.public_summary(doc)
+                snapshot["asset_class"] = "forex"
+                snapshot["connected"] = True
+                monitor.set_account_snapshot("forex", snapshot)
             await log_account_summary_updated("forex")
 
     async def _maybe_run_scheduled_research(self) -> None:
