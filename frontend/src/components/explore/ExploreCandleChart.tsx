@@ -22,9 +22,8 @@ import {
 import { computeExploreOverlays } from "../../lib/chart/computeExploreOverlays";
 import { findMarketBoundariesForCandles } from "../../lib/chart/forexMarketClosures";
 import { useCandleCrosshairOhlc } from "../../lib/chart/useCandleCrosshairOhlc";
+import { applyChartTimeLocalization } from "../../lib/chart/chartTimeLocalization";
 import {
-  createChartDateFormatter,
-  createChartTimeFormatter,
   parseAppInstant,
 } from "../../lib/formatTime";
 import { isTailOnlyCandleChange, tailCandleUpdates } from "../../lib/mergeCandleDelta";
@@ -217,6 +216,11 @@ export default function ExploreCandleChart({
     if (adxContainerRef.current) resizeObserver.observe(adxContainerRef.current);
     if (rsiContainerRef.current) resizeObserver.observe(rsiContainerRef.current);
 
+    applyChartTimeLocalization(
+      [priceChart, adxChart, rsiChart].filter(Boolean) as IChartApi[],
+      timeOptions,
+    );
+
     return () => {
       resizeObserver.disconnect();
       priceChart.remove();
@@ -236,20 +240,13 @@ export default function ExploreCandleChart({
   }, [symbol]);
 
   useEffect(() => {
-    const charts = [priceChartRef.current, adxChartRef.current, rsiChartRef.current].filter(
-      Boolean,
-    ) as IChartApi[];
-    if (charts.length === 0) return;
-
-    const localization = {
-      timeFormatter: createChartTimeFormatter(timeOptions),
-      dateFormatter: createChartDateFormatter(timeOptions),
-    };
-
-    for (const chart of charts) {
-      chart.applyOptions({ localization });
-    }
-  }, [timeOptions]);
+    applyChartTimeLocalization(
+      [priceChartRef.current, adxChartRef.current, rsiChartRef.current].filter(
+        Boolean,
+      ) as IChartApi[],
+      timeOptions,
+    );
+  }, [timeOptions, symbol]);
 
   useEffect(() => {
     const priceChart = priceChartRef.current;

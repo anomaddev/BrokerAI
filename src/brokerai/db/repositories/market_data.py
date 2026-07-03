@@ -4,11 +4,40 @@ from datetime import datetime, timezone
 from typing import Any
 
 from brokerai.db.client import get_db
-from pymongo import UpdateOne
+from brokerai.db.market_data_timeseries import (
+    COLLECTION,
+    TIME_FIELD,
+    candle_open_time_from_document,
+    candle_open_time_to_datetime,
+    candle_to_timeseries_document,
+    meta_query_filter,
+    timeseries_document_to_candle,
+)
+
+
+def _dedupe_candle_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop duplicate open times while preserving ascending ``ts`` order (last row wins)."""
+    seen: set[int] = set()
+    deduped: list[dict[str, Any]] = []
+    for row in rows:
+        ts = row.get(TIME_FIELD)
+        if isinstance(ts, datetime):
+            key = int(ts.astimezone(timezone.utc).timestamp())
+        else:
+            open_time = candle_open_time_from_document(row)
+            parsed = candle_open_time_to_datetime(open_time) if open_time else None
+            if parsed is None:
+                continue
+            key = int(parsed.timestamp())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 class MarketDataRepository:
-    COLLECTION = "market_data"
+    COLLECTION = COLLECTION
 
     async def upsert_candles(
         self,
@@ -19,56 +48,39 @@ class MarketDataRepository:
         *,
         expires_at: datetime | None = None,
     ) -> int:
-        """Upsert individual OHLCV candles keyed by symbol/timeframe/source/time."""
+        """Insert OHLCV candles into the time-series cache (idempotent per open time).
+
+        Time-series collections do not support in-place updates. Existing rows for
+        the same ``(symbol, timeframe, source, ts)`` are deleted before insert.
+        """
         if not candles:
             return 0
 
         handle = await get_db()
         now = datetime.now(timezone.utc)
-        operations: list[UpdateOne] = []
+        documents: list[dict[str, Any]] = []
 
         for candle in candles:
-            candle_time = candle.get("time")
-            if not candle_time:
-                continue
-
-            document: dict[str, Any] = {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "source": source,
-                "time": candle_time,
-                "open": candle["open"],
-                "high": candle["high"],
-                "low": candle["low"],
-                "close": candle["close"],
-                "volume": candle.get("volume", 0),
-                "fetched_at": now,
-            }
-            if candle.get("sessions") is not None:
-                document["sessions"] = candle["sessions"]
-            if candle.get("trading_day_et") is not None:
-                document["trading_day_et"] = candle["trading_day_et"]
-            if expires_at is not None:
-                document["expires_at"] = expires_at
-
-            operations.append(
-                UpdateOne(
-                    {
-                        "symbol": symbol,
-                        "timeframe": timeframe,
-                        "source": source,
-                        "time": candle_time,
-                    },
-                    {"$set": document},
-                    upsert=True,
-                )
+            document = candle_to_timeseries_document(
+                symbol,
+                timeframe,
+                source,
+                candle,
+                fetched_at=now,
+                expires_at=expires_at,
             )
+            if document is not None:
+                documents.append(document)
 
-        if not operations:
+        if not documents:
             return 0
 
-        await handle.db[self.COLLECTION].bulk_write(operations, ordered=False)
-        return len(operations)
+        collection = handle.db[self.COLLECTION]
+        series_filter = meta_query_filter(symbol, timeframe, source)
+        timestamps = [document[TIME_FIELD] for document in documents]
+        await collection.delete_many({**series_filter, TIME_FIELD: {"$in": timestamps}})
+        await collection.insert_many(documents, ordered=False)
+        return len(documents)
 
     async def latest_candle_time(
         self,
@@ -78,14 +90,13 @@ class MarketDataRepository:
     ) -> str | None:
         handle = await get_db()
         doc = await handle.db[self.COLLECTION].find_one(
-            {"symbol": symbol, "timeframe": timeframe, "source": source},
-            {"_id": 0, "time": 1},
-            sort=[("time", -1)],
+            meta_query_filter(symbol, timeframe, source),
+            {"_id": 0, "time": 1, TIME_FIELD: 1},
+            sort=[(TIME_FIELD, -1)],
         )
         if not doc:
             return None
-        value = doc.get("time")
-        return str(value) if value else None
+        return candle_open_time_from_document(doc)
 
     async def earliest_candle_time(
         self,
@@ -95,14 +106,13 @@ class MarketDataRepository:
     ) -> str | None:
         handle = await get_db()
         doc = await handle.db[self.COLLECTION].find_one(
-            {"symbol": symbol, "timeframe": timeframe, "source": source},
-            {"_id": 0, "time": 1},
-            sort=[("time", 1)],
+            meta_query_filter(symbol, timeframe, source),
+            {"_id": 0, "time": 1, TIME_FIELD: 1},
+            sort=[(TIME_FIELD, 1)],
         )
         if not doc:
             return None
-        value = doc.get("time")
-        return str(value) if value else None
+        return candle_open_time_from_document(doc)
 
     async def find_candles(
         self,
@@ -118,29 +128,31 @@ class MarketDataRepository:
     ) -> list[dict[str, Any]]:
         """Return individual cached candles, optionally bounded by open time."""
         handle = await get_db()
-        query: dict[str, Any] = {
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "source": source,
-        }
+        query: dict[str, Any] = meta_query_filter(symbol, timeframe, source)
         time_filter: dict[str, Any] = {}
         if since is not None:
-            time_filter["$gte"] = since
+            since_dt = candle_open_time_to_datetime(since)
+            if since_dt is not None:
+                time_filter["$gte"] = since_dt
         if until is not None:
-            time_filter["$lte"] = until
+            until_dt = candle_open_time_to_datetime(until)
+            if until_dt is not None:
+                time_filter["$lte"] = until_dt
         if time_filter:
-            query["time"] = time_filter
+            query[TIME_FIELD] = time_filter
         if sessions:
             query["sessions"] = {"$in": sessions}
 
         cursor = handle.db[self.COLLECTION].find(query, {"_id": 0}).sort(
-            "time",
+            TIME_FIELD,
             1 if ascending else -1,
         )
         if limit is not None:
             cursor = cursor.limit(max(1, limit))
 
-        return await cursor.to_list(length=limit or 5000)
+        rows = await cursor.to_list(length=limit or 5000)
+        rows = _dedupe_candle_rows(rows)
+        return [timeseries_document_to_candle(row) for row in rows]
 
     async def find_candles_after(
         self,
@@ -153,21 +165,24 @@ class MarketDataRepository:
     ) -> list[dict[str, Any]]:
         """Return candles strictly after *after* in ascending time order."""
         handle = await get_db()
+        after_dt = candle_open_time_to_datetime(after)
+        if after_dt is None:
+            return []
+
         cursor = (
             handle.db[self.COLLECTION]
             .find(
                 {
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "source": source,
-                    "time": {"$gt": after},
+                    **meta_query_filter(symbol, timeframe, source),
+                    TIME_FIELD: {"$gt": after_dt},
                 },
                 {"_id": 0},
             )
-            .sort("time", 1)
+            .sort(TIME_FIELD, 1)
             .limit(max(1, limit))
         )
-        return await cursor.to_list(length=max(1, limit))
+        rows = await cursor.to_list(length=max(1, limit))
+        return [timeseries_document_to_candle(row) for row in rows]
 
     async def find_latest_candles(
         self,
@@ -205,22 +220,27 @@ class MarketDataRepository:
     ) -> set[str]:
         """Return stored candle open times (projection-only) for gap detection."""
         handle = await get_db()
-        query: dict[str, Any] = {
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "source": source,
-        }
+        query: dict[str, Any] = meta_query_filter(symbol, timeframe, source)
         time_filter: dict[str, Any] = {}
         if since is not None:
-            time_filter["$gte"] = since
+            since_dt = candle_open_time_to_datetime(since)
+            if since_dt is not None:
+                time_filter["$gte"] = since_dt
         if until is not None:
-            time_filter["$lte"] = until
+            until_dt = candle_open_time_to_datetime(until)
+            if until_dt is not None:
+                time_filter["$lte"] = until_dt
         if time_filter:
-            query["time"] = time_filter
+            query[TIME_FIELD] = time_filter
 
-        cursor = handle.db[self.COLLECTION].find(query, {"_id": 0, "time": 1})
+        cursor = handle.db[self.COLLECTION].find(query, {"_id": 0, "time": 1, TIME_FIELD: 1})
         docs = await cursor.to_list(length=None)
-        return {str(doc["time"]) for doc in docs if doc.get("time")}
+        times: set[str] = set()
+        for doc in docs:
+            time_value = candle_open_time_from_document(doc)
+            if time_value:
+                times.add(time_value)
+        return times
 
     async def count_candles(
         self,
@@ -230,5 +250,5 @@ class MarketDataRepository:
     ) -> int:
         handle = await get_db()
         return await handle.db[self.COLLECTION].count_documents(
-            {"symbol": symbol, "timeframe": timeframe, "source": source},
+            meta_query_filter(symbol, timeframe, source),
         )

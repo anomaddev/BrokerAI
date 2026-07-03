@@ -50,6 +50,9 @@ class BrokerBot(Bot):
     async def on_start(self) -> None:
         ensure_trading_registries()
         self._processed_analysis_at.clear()
+        from brokerai.trading.broker.sync import run_broker_sync
+
+        await run_broker_sync(exchange_id="oanda", mode="incremental", force=True)
         logger.info("Broker bot started")
 
     async def on_stop(self) -> None:

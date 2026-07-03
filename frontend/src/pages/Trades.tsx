@@ -8,25 +8,34 @@ import {
   type BackgroundTaskCompletedDetail,
   type Trade,
   type TradeReconciliation,
-  type TradeSyncResult,
 } from "../api/client";
 import { useBackgroundTasks } from "../context/BackgroundTasksContext";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import TradeDetailOverlay from "../components/trades/TradeDetailOverlay";
 import {
   directionClassName,
   directionLabel,
+  DEFAULT_TRADE_SORT_COLUMN,
+  DEFAULT_TRADE_SORT_DIRECTION,
+  defaultTradeSortDirection,
   exploreHrefForTrade,
   formatPrice,
   formatPnl,
   formatUnits,
+  orderPrice,
   pnlClassName,
+  sortTradesForTable,
   tradeDuration,
   tradeExitPrice,
+  tradeIsOpen,
   tradeLastModifiedAt,
   tradeRealizedPl,
   tradeReasonCell,
+  tradeStatusKey,
   tradeStatusClassName,
   tradeStatusLabel,
+  type TradeSortColumn,
+  type TradeSortDirection,
 } from "../lib/trades";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -34,9 +43,73 @@ const TRADE_LIMIT = 200;
 
 type StatusFilter = "all" | "open" | "closed";
 
+type TradeTableSort = {
+  column: TradeSortColumn;
+  direction: TradeSortDirection;
+};
+
+const INITIAL_TRADE_TABLE_SORT: TradeTableSort = {
+  column: DEFAULT_TRADE_SORT_COLUMN,
+  direction: DEFAULT_TRADE_SORT_DIRECTION,
+};
+
+const SORTABLE_COLUMNS: { key: TradeSortColumn; label: string }[] = [
+  { key: "status", label: "Status" },
+  { key: "last_modified", label: "Last modified" },
+  { key: "strategy", label: "Strategy" },
+  { key: "pair", label: "Pair" },
+  { key: "direction", label: "Direction" },
+  { key: "entry", label: "Entry" },
+  { key: "price", label: "Price" },
+  { key: "pnl", label: "P/L" },
+  { key: "stop_loss", label: "SL" },
+  { key: "take_profit", label: "TP" },
+  { key: "units", label: "Units" },
+  { key: "reason", label: "Reason" },
+  { key: "duration", label: "Duration" },
+];
+
+function SortableTradeHeader({
+  column,
+  label,
+  sortColumn,
+  sortDirection,
+  onSort,
+}: {
+  column: TradeSortColumn;
+  label: string;
+  sortColumn: TradeSortColumn;
+  sortDirection: TradeSortDirection;
+  onSort: (column: TradeSortColumn) => void;
+}) {
+  const isActive = sortColumn === column;
+  return (
+    <th scope="col">
+      <button
+        type="button"
+        className={[
+          "trades-table-sort-btn",
+          isActive ? "trades-table-sort-btn--active" : undefined,
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        onClick={() => onSort(column)}
+        aria-sort={
+          isActive ? (sortDirection === "asc" ? "ascending" : "descending") : "none"
+        }
+      >
+        <span>{label}</span>
+        <span className="trades-table-sort-indicator" aria-hidden="true">
+          {isActive ? (sortDirection === "asc" ? "↑" : "↓") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 export default function Trades() {
   const { formatInstant } = useGeneralSettings();
-  const { isTaskKindActive, watchBackgroundTasks } = useBackgroundTasks();
+  const { isTaskKindActive, watchBackgroundTasks, showFooterNotice } = useBackgroundTasks();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [reconciliation, setReconciliation] = useState<TradeReconciliation | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,13 +117,39 @@ export default function Trades() {
   const [strategyFilter, setStrategyFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [pairQuery, setPairQuery] = useState("");
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
+  const [tableSort, setTableSort] = useState<TradeTableSort>(INITIAL_TRADE_TABLE_SORT);
   const selectAllRef = useRef<HTMLInputElement>(null);
   const syncing = isTaskKindActive(TRADE_SYNC_TASK_KIND);
 
-  const tradeIds = useMemo(() => trades.map((trade) => trade.id), [trades]);
+  const handleSortColumn = useCallback((column: TradeSortColumn) => {
+    setTableSort((current) => {
+      if (current.column === column) {
+        return {
+          column,
+          direction: current.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return {
+        column,
+        direction: defaultTradeSortDirection(column),
+      };
+    });
+  }, []);
+
+  const sortedTrades = useMemo(
+    () =>
+      sortTradesForTable(trades, {
+        sortColumn: tableSort.column,
+        sortDirection: tableSort.direction,
+        statusFilter,
+        reconciliation,
+      }),
+    [trades, tableSort, statusFilter, reconciliation],
+  );
+
+  const tradeIds = useMemo(() => sortedTrades.map((trade) => trade.id), [sortedTrades]);
   const selectedVisibleCount = useMemo(
     () => tradeIds.filter((id) => selectedIds.has(id)).length,
     [tradeIds, selectedIds],
@@ -122,15 +221,17 @@ export default function Trades() {
   }, [allTradesSelected, tradeIds]);
 
   const handleSyncTrades = useCallback(async () => {
-    setSyncError(null);
-    setSyncMessage(null);
     try {
       await api.syncTrades();
       watchBackgroundTasks();
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : "Failed to start trade sync");
+      showFooterNotice({
+        label: "Sync broker state",
+        message: err instanceof Error ? err.message : "Failed to start trade sync",
+        status: "failed",
+      });
     }
-  }, [watchBackgroundTasks]);
+  }, [watchBackgroundTasks, showFooterNotice]);
 
   useEffect(() => {
     const checkbox = selectAllRef.current;
@@ -155,40 +256,6 @@ export default function Trades() {
       }
 
       void Promise.all([loadTrades(), loadReconciliation()]);
-
-      if (detail.status === "success") {
-        setSyncError(null);
-        const result = detail.result as TradeSyncResult | null | undefined;
-        if (
-          result &&
-          (result.imported > 0 || result.updated > 0 || result.closed > 0 || result.backfilled > 0)
-        ) {
-          const parts: string[] = [];
-          if (result.imported > 0) parts.push(`${result.imported} imported`);
-          if (result.updated > 0) parts.push(`${result.updated} updated`);
-          if (result.closed > 0) parts.push(`${result.closed} closed`);
-          if (result.backfilled > 0) parts.push(`${result.backfilled} backfilled`);
-          setSyncMessage(`Sync complete — ${parts.join(", ")}`);
-        } else {
-          setSyncMessage(null);
-        }
-        return;
-      }
-
-      if (detail.status === "skipped") {
-        setSyncMessage(null);
-        setSyncError(
-          typeof detail.result?.skipped_reason === "string"
-            ? detail.result.skipped_reason
-            : "Connect OANDA in Settings → Exchange Connections",
-        );
-        return;
-      }
-
-      if (detail.status === "failed") {
-        setSyncMessage(null);
-        setSyncError(detail.error ?? "Trade sync failed");
-      }
     }
 
     window.addEventListener(BACKGROUND_TASK_COMPLETED_EVENT, onTaskCompleted);
@@ -229,14 +296,32 @@ export default function Trades() {
   }, [loadTrades, loadReconciliation]);
 
   return (
-    <div>
-      <h1 className="page-title">Trades</h1>
-      <p className="settings-muted" style={{ marginBottom: "1rem" }}>
-        Open and closed trades from the BrokerAI ledger, with broker reconciliation.
-      </p>
+    <div className="trades-page">
+      <div
+        className={[
+          "trades-section",
+          selectedTrade ? "trades-section--detail-open" : undefined,
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        {selectedTrade && (
+          <TradeDetailOverlay
+            trade={selectedTrade}
+            reconciliation={reconciliation}
+            onClose={() => setSelectedTrade(null)}
+          />
+        )}
 
-      <div className="trades-toolbar">
-        <div className="trades-toolbar-filters">
+        {!selectedTrade && (
+          <>
+            <h1 className="page-title">Trades</h1>
+            <p className="settings-muted trades-page-lead">
+              Open and closed trades from the BrokerAI ledger, with broker reconciliation.
+            </p>
+
+            <div className="trades-toolbar">
+              <div className="trades-toolbar-filters">
           <div className="research-select-wrap trades-status-select-wrap">
             <select
               className="research-select"
@@ -281,23 +366,19 @@ export default function Trades() {
             <RefreshCw size={14} strokeWidth={1.75} aria-hidden="true" />
             {syncing ? "Syncing…" : "Sync from OANDA"}
           </button>
-        </div>
-      </div>
+              </div>
+            </div>
 
-      <div className="settings-panel settings-panel--trades">
-          {loading && <p className="settings-muted">Loading trades…</p>}
-          {error && !loading && <p className="settings-error">{error}</p>}
-          {syncError && !loading && <p className="settings-error">{syncError}</p>}
-          {syncMessage && !loading && !syncError && (
-            <p className="settings-muted">{syncMessage}</p>
-          )}
-          {!loading && !error && trades.length === 0 && (
-            <p className="settings-muted">No trades yet.</p>
-          )}
+            <div className="settings-panel settings-panel--trades">
+              {loading && <p className="settings-muted">Loading trades…</p>}
+              {error && !loading && <p className="settings-error">{error}</p>}
+              {!loading && !error && trades.length === 0 && (
+                <p className="settings-muted">No trades yet.</p>
+              )}
 
-          {!loading && !error && trades.length > 0 && (
-            <div className="research-table-wrap">
-              <table className="research-table trades-table">
+              {!loading && !error && trades.length > 0 && (
+                <div className="research-table-wrap">
+                  <table className="research-table trades-table">
                 <thead>
                   <tr>
                     <th className="trades-table-checkbox-col" scope="col">
@@ -312,39 +393,34 @@ export default function Trades() {
                         />
                       </label>
                     </th>
-                    <th>Status</th>
-                    <th>Last modified</th>
-                    <th>Strategy</th>
-                    <th>Pair</th>
-                    <th>Direction</th>
-                    <th>Entry</th>
-                    <th>Price</th>
-                    <th>P/L</th>
-                    <th>SL</th>
-                    <th>TP</th>
-                    <th>Units</th>
-                    <th>Reason</th>
-                    <th>Duration</th>
-                    <th className="research-actions-col" aria-hidden="true" />
+                    {SORTABLE_COLUMNS.map((column) => (
+                      <SortableTradeHeader
+                        key={column.key}
+                        column={column.key}
+                        label={column.label}
+                        sortColumn={tableSort.column}
+                        sortDirection={tableSort.direction}
+                        onSort={handleSortColumn}
+                      />
+                    ))}
+                    <th className="research-actions-col" scope="col" aria-hidden="true" />
                   </tr>
                 </thead>
                 <tbody>
-                  {trades.map((trade, index) => {
-                    const isOpen = trade.status === "open";
-                    const prevTrade = index > 0 ? trades[index - 1] : null;
+                  {sortedTrades.map((trade, index) => {
+                    const status = tradeStatusKey(trade);
+                    const isOpen = status === "open";
+                    const isCancelled = status === "cancelled";
+                    const prevTrade = index > 0 ? sortedTrades[index - 1] : null;
                     const isFirstClosed =
                       statusFilter === "all" &&
                       !isOpen &&
-                      (prevTrade == null || prevTrade.status === "open");
+                      (prevTrade == null || tradeIsOpen(prevTrade));
                     const market =
                       isOpen && reconciliation
                         ? reconciliation.ledger_market[trade.id]
                         : undefined;
-                    const lastModified = tradeLastModifiedAt(
-                      trade.status,
-                      trade.opened_at,
-                      trade.closed_at,
-                    );
+                    const lastModified = tradeLastModifiedAt(trade);
                     const exitPrice = tradeExitPrice(trade);
                     const realizedPl = tradeRealizedPl(trade);
                     const reason = tradeReasonCell(trade);
@@ -353,14 +429,19 @@ export default function Trades() {
                       <tr
                         key={trade.id}
                         className={[
+                          "trades-table-row--clickable",
                           isFirstClosed ? "trades-row--section-start" : undefined,
                           isSelected ? "trades-table-row--selected" : undefined,
                         ]
                           .filter(Boolean)
-                          .join(" ") || undefined}
+                          .join(" ")}
                         aria-selected={isSelected}
+                        onClick={() => setSelectedTrade(trade)}
                       >
-                        <td className="trades-table-checkbox-col">
+                        <td
+                          className="trades-table-checkbox-col"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <label className="trades-table-checkbox-label">
                             <input
                               type="checkbox"
@@ -372,8 +453,8 @@ export default function Trades() {
                           </label>
                         </td>
                         <td>
-                          <span className={tradeStatusClassName(trade.status)}>
-                            {tradeStatusLabel(trade.status)}
+                          <span className={tradeStatusClassName(status)}>
+                            {tradeStatusLabel(status)}
                           </span>
                         </td>
                         <td className="settings-muted">
@@ -399,8 +480,8 @@ export default function Trades() {
                         >
                           {isOpen ? formatPnl(market?.unrealized_pl) : formatPnl(realizedPl)}
                         </td>
-                        <td>{formatPrice(trade.stop_loss)}</td>
-                        <td>{formatPrice(trade.take_profit)}</td>
+                        <td>{formatPrice(orderPrice(trade.stop_loss, trade.stop_loss_price))}</td>
+                        <td>{formatPrice(orderPrice(trade.take_profit, trade.take_profit_price))}</td>
                         <td>{formatUnits(trade.units)}</td>
                         <td className="trades-reason-cell" title={reason.title}>
                           <span className="trades-reason-text">{reason.display}</span>
@@ -408,9 +489,14 @@ export default function Trades() {
                         <td>
                           {isOpen
                             ? "—"
-                            : tradeDuration(trade.opened_at, trade.closed_at ?? null)}
+                            : isCancelled
+                              ? "—"
+                              : tradeDuration(trade.opened_at, trade.closed_at ?? null)}
                         </td>
-                        <td className="research-actions-cell">
+                        <td
+                          className="research-actions-cell"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <div className="research-row-actions">
                             <Link
                               to={exploreHrefForTrade(trade)}
@@ -426,9 +512,12 @@ export default function Trades() {
                     );
                   })}
                 </tbody>
-              </table>
+                  </table>
+                </div>
+              )}
             </div>
-          )}
+          </>
+        )}
       </div>
     </div>
   );

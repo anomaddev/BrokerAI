@@ -100,6 +100,8 @@ def build_trade_intent(
         metadata={
             "analysis": result.metadata,
             "execution_reason": str(result.metadata.get("signal") or result.signal_type),
+            "timeframe": result.timeframe,
+            "entry_candle_open": candles[-1].get("time"),
             **({"analysis_run_id": result.run_id} if result.run_id else {}),
         },
     )

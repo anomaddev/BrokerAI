@@ -44,7 +44,7 @@ def is_forex_open(when: datetime) -> bool:
     return True
 
 
-def _align_bar_open(value: datetime, timeframe: str) -> datetime:
+def align_bar_open(value: datetime, timeframe: str) -> datetime:
     """Return the UTC open time of the bar containing *value*."""
     if value.tzinfo is None:
         when = value.replace(tzinfo=timezone.utc)
@@ -60,6 +60,32 @@ def _align_bar_open(value: datetime, timeframe: str) -> datetime:
     elapsed = int((when - epoch).total_seconds())
     aligned = elapsed - (elapsed % period_seconds)
     return epoch + timedelta(seconds=aligned)
+
+
+# Backward-compatible alias for internal callers.
+_align_bar_open = align_bar_open
+
+
+def bar_open_for_instant(instant: datetime | str | None, timeframe: str) -> datetime | None:
+    """Floor an instant to the UTC open of the bar containing it.
+
+    Accepts ``datetime`` or ISO/OANDA time strings (via ``candle_open_time_to_datetime``).
+    Returns ``None`` when *instant* cannot be parsed.
+    """
+    from brokerai.db.market_data_timeseries import candle_open_time_to_datetime
+
+    when = candle_open_time_to_datetime(instant)
+    if when is None:
+        return None
+    return align_bar_open(when, timeframe)
+
+
+def bar_open_string_for_instant(instant: datetime | str | None, timeframe: str) -> str | None:
+    """Return OANDA-formatted bar open time for *instant*, or ``None`` if unparseable."""
+    bar_open = bar_open_for_instant(instant, timeframe)
+    if bar_open is None:
+        return None
+    return format_oanda_time(bar_open)
 
 
 def _next_bar_open(bar_open: datetime, timeframe: str) -> datetime:

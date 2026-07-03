@@ -1,0 +1,1845 @@
+{
+    "trades": [
+        {
+            "id": "553",
+            "instrument": "EUR_JPY",
+            "price": "185.352",
+            "openTime": "2026-07-01T07:32:14.821946294Z",
+            "initialUnits": "-768",
+            "initialMarginRequired": "43.7545",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.7153",
+            "closingTransactionIDs": [
+                "555"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:57:16.870490095Z",
+            "averageClosePrice": "185.502",
+            "stopLossOrder": {
+                "id": "554",
+                "createTime": "2026-07-01T07:32:14.821946294Z",
+                "type": "STOP_LOSS",
+                "tradeID": "553",
+                "price": "185.501",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "FILLED",
+                "fillingTransactionID": "555",
+                "filledTime": "2026-07-01T07:57:16.870490095Z",
+                "tradeClosedIDs": [
+                    "553"
+                ]
+            }
+        },
+        {
+            "id": "550",
+            "instrument": "CAD_JPY",
+            "price": "114.380",
+            "openTime": "2026-07-01T07:32:14.814676452Z",
+            "initialUnits": "-1320",
+            "initialMarginRequired": "46.4084",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.8605",
+            "closingTransactionIDs": [
+                "557"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T10:58:05.355843338Z",
+            "averageClosePrice": "114.485",
+            "stopLossOrder": {
+                "id": "551",
+                "createTime": "2026-07-01T07:32:14.814676452Z",
+                "type": "STOP_LOSS",
+                "tradeID": "550",
+                "price": "114.485",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "FILLED",
+                "fillingTransactionID": "557",
+                "filledTime": "2026-07-01T10:58:05.355843338Z",
+                "tradeClosedIDs": [
+                    "550"
+                ]
+            }
+        },
+        {
+            "id": "547",
+            "instrument": "AUD_JPY",
+            "price": "112.044",
+            "openTime": "2026-07-01T07:32:14.810278268Z",
+            "initialUnits": "-924",
+            "initialMarginRequired": "31.8226",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.6597",
+            "closingTransactionIDs": [
+                "556"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:57:35.156952805Z",
+            "averageClosePrice": "112.159",
+            "stopLossOrder": {
+                "id": "548",
+                "createTime": "2026-07-01T07:32:14.810278268Z",
+                "type": "STOP_LOSS",
+                "tradeID": "547",
+                "price": "112.159",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "FILLED",
+                "fillingTransactionID": "556",
+                "filledTime": "2026-07-01T07:57:35.156952805Z",
+                "tradeClosedIDs": [
+                    "547"
+                ]
+            }
+        },
+        {
+            "id": "527",
+            "instrument": "CAD_JPY",
+            "price": "114.410",
+            "openTime": "2026-07-01T07:27:53.038157520Z",
+            "initialUnits": "-62",
+            "initialMarginRequired": "2.1799",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0089",
+            "closingTransactionIDs": [
+                "530"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:28:27.372327783Z",
+            "averageClosePrice": "114.433",
+            "stopLossOrder": {
+                "id": "528",
+                "createTime": "2026-07-01T07:27:53.038157520Z",
+                "type": "STOP_LOSS",
+                "tradeID": "527",
+                "price": "114.456",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "531",
+                "cancelledTime": "2026-07-01T07:28:27.372327783Z"
+            }
+        },
+        {
+            "id": "520",
+            "instrument": "AUD_JPY",
+            "price": "112.086",
+            "openTime": "2026-07-01T07:27:30.715890483Z",
+            "initialUnits": "-977",
+            "initialMarginRequired": "33.6537",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0059",
+            "closingTransactionIDs": [
+                "533"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:28:30.717970427Z",
+            "averageClosePrice": "112.085",
+            "stopLossOrder": {
+                "id": "521",
+                "createTime": "2026-07-01T07:27:30.715890483Z",
+                "type": "STOP_LOSS",
+                "tradeID": "520",
+                "price": "112.129",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "534",
+                "cancelledTime": "2026-07-01T07:28:30.717970427Z"
+            }
+        },
+        {
+            "id": "514",
+            "instrument": "AUD_JPY",
+            "price": "112.082",
+            "openTime": "2026-07-01T07:26:50.333724704Z",
+            "initialUnits": "-500",
+            "initialMarginRequired": "17.2218",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0152",
+            "closingTransactionIDs": [
+                "536"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:28:35.236197529Z",
+            "averageClosePrice": "112.077",
+            "takeProfitOrder": {
+                "id": "515",
+                "createTime": "2026-07-01T07:26:50.333724704Z",
+                "type": "TAKE_PROFIT",
+                "tradeID": "514",
+                "price": "111.822",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "537",
+                "cancelledTime": "2026-07-01T07:28:35.236197529Z"
+            },
+            "stopLossOrder": {
+                "id": "516",
+                "createTime": "2026-07-01T07:26:50.333724704Z",
+                "type": "STOP_LOSS",
+                "tradeID": "514",
+                "price": "112.129",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "538",
+                "cancelledTime": "2026-07-01T07:28:35.236197529Z"
+            }
+        },
+        {
+            "id": "510",
+            "instrument": "AUD_JPY",
+            "price": "112.074",
+            "openTime": "2026-07-01T07:26:31.543108332Z",
+            "initialUnits": "-1333",
+            "initialMarginRequired": "45.9099",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0083",
+            "closingTransactionIDs": [
+                "543"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:28:44.515981036Z",
+            "averageClosePrice": "112.075",
+            "takeProfitOrder": {
+                "id": "511",
+                "createTime": "2026-07-01T07:26:31.543108332Z",
+                "type": "TAKE_PROFIT",
+                "tradeID": "510",
+                "price": "111.823",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "544",
+                "cancelledTime": "2026-07-01T07:28:44.515981036Z"
+            },
+            "stopLossOrder": {
+                "id": "512",
+                "createTime": "2026-07-01T07:26:31.543108332Z",
+                "type": "STOP_LOSS",
+                "tradeID": "510",
+                "price": "112.129",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "545",
+                "cancelledTime": "2026-07-01T07:28:44.515981036Z"
+            }
+        },
+        {
+            "id": "508",
+            "instrument": "CAD_JPY",
+            "price": "114.465",
+            "openTime": "2026-07-01T07:26:25.853127517Z",
+            "initialUnits": "1333",
+            "initialMarginRequired": "46.8762",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.4551",
+            "closingTransactionIDs": [
+                "527"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:27:53.038157520Z",
+            "averageClosePrice": "114.410"
+        },
+        {
+            "id": "476",
+            "instrument": "USD_CAD",
+            "price": "1.42154",
+            "openTime": "2026-07-01T07:22:28.293388918Z",
+            "initialUnits": "-77584",
+            "initialMarginRequired": "1551.6800",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-38.5701",
+            "closingTransactionIDs": [
+                "525"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:27:37.504914492Z",
+            "averageClosePrice": "1.42224",
+            "stopLossOrder": {
+                "id": "477",
+                "createTime": "2026-07-01T07:22:28.293388918Z",
+                "type": "STOP_LOSS",
+                "tradeID": "476",
+                "price": "1.42223",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "FILLED",
+                "fillingTransactionID": "525",
+                "filledTime": "2026-07-01T07:27:37.504914492Z",
+                "tradeClosedIDs": [
+                    "476"
+                ]
+            }
+        },
+        {
+            "id": "439",
+            "instrument": "EUR_JPY",
+            "price": "185.364",
+            "openTime": "2026-07-01T07:19:45.174612171Z",
+            "initialUnits": "1075",
+            "initialMarginRequired": "61.2492",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.1908",
+            "closingTransactionIDs": [
+                "523",
+                "540"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:28:40.311454938Z",
+            "averageClosePrice": "185.393",
+            "stopLossOrder": {
+                "id": "440",
+                "createTime": "2026-07-01T07:19:45.174612171Z",
+                "type": "STOP_LOSS",
+                "tradeID": "439",
+                "price": "184.973",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "541",
+                "cancelledTime": "2026-07-01T07:28:40.311454938Z"
+            }
+        },
+        {
+            "id": "434",
+            "instrument": "EUR_JPY",
+            "price": "185.368",
+            "openTime": "2026-07-01T07:19:31.346844786Z",
+            "initialUnits": "595",
+            "initialMarginRequired": "33.9007",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.1467",
+            "closingTransactionIDs": [
+                "518",
+                "523"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:27:30.721136716Z",
+            "averageClosePrice": "185.409",
+            "stopLossOrder": {
+                "id": "435",
+                "createTime": "2026-07-01T07:19:31.346844786Z",
+                "type": "STOP_LOSS",
+                "tradeID": "434",
+                "price": "184.787",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "524",
+                "cancelledTime": "2026-07-01T07:27:30.721136716Z"
+            }
+        },
+        {
+            "id": "432",
+            "instrument": "USD_CHF",
+            "price": "0.80939",
+            "openTime": "2026-07-01T06:46:33.245451162Z",
+            "initialUnits": "-1000",
+            "initialMarginRequired": "30.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.7358",
+            "closingTransactionIDs": [
+                "503"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:26:11.021614404Z",
+            "averageClosePrice": "0.80998"
+        },
+        {
+            "id": "430",
+            "instrument": "NZD_USD",
+            "price": "0.56669",
+            "openTime": "2026-07-01T01:03:59.033913151Z",
+            "initialUnits": "-1000",
+            "initialMarginRequired": "17.0040",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.6800",
+            "closingTransactionIDs": [
+                "505"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T07:26:14.504323483Z",
+            "averageClosePrice": "0.56737"
+        },
+        {
+            "id": "417",
+            "instrument": "EUR_JPY",
+            "price": "184.514",
+            "openTime": "2026-06-29T11:45:16.850249798Z",
+            "initialUnits": "855",
+            "initialMarginRequired": "48.7333",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "5.6556",
+            "closingTransactionIDs": [
+                "427"
+            ],
+            "financing": "0.0204",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-07-01T00:55:41.149877370Z",
+            "averageClosePrice": "185.601",
+            "stopLossOrder": {
+                "id": "418",
+                "createTime": "2026-06-29T11:45:16.850249798Z",
+                "type": "STOP_LOSS",
+                "tradeID": "417",
+                "price": "184.385",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "428",
+                "cancelledTime": "2026-07-01T00:55:41.149877370Z"
+            }
+        },
+        {
+            "id": "376",
+            "instrument": "CHF_JPY",
+            "price": "202.273",
+            "openTime": "2026-02-06T15:29:27.865803703Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "12.8762",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.2597",
+            "closingTransactionIDs": [
+                "380"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-06T16:57:22.224232854Z",
+            "averageClosePrice": "202.478",
+            "takeProfitOrder": {
+                "id": "377",
+                "createTime": "2026-02-06T15:29:27.865803703Z",
+                "type": "TAKE_PROFIT",
+                "tradeID": "376",
+                "price": "203.500",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "381",
+                "cancelledTime": "2026-02-06T16:57:22.224232854Z"
+            },
+            "stopLossOrder": {
+                "id": "378",
+                "createTime": "2026-02-06T15:29:27.865803703Z",
+                "type": "STOP_LOSS",
+                "tradeID": "376",
+                "price": "201.900",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "382",
+                "cancelledTime": "2026-02-06T16:57:22.224232854Z"
+            }
+        },
+        {
+            "id": "374",
+            "instrument": "AUD_NZD",
+            "price": "1.16503",
+            "openTime": "2026-02-06T14:30:21.710415532Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.0983",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.2013",
+            "closingTransactionIDs": [
+                "387"
+            ],
+            "financing": "0.0007",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-09T08:10:10.362332370Z",
+            "averageClosePrice": "1.16839"
+        },
+        {
+            "id": "368",
+            "instrument": "GBP_USD",
+            "price": "1.35621",
+            "openTime": "2026-02-06T08:45:07.509214024Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.7814",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.2810",
+            "closingTransactionIDs": [
+                "370"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-06T11:30:01.562628210Z",
+            "averageClosePrice": "1.35902"
+        },
+        {
+            "id": "355",
+            "instrument": "EUR_JPY",
+            "price": "185.224",
+            "openTime": "2026-02-05T12:45:19.324723394Z",
+            "initialUnits": "4",
+            "initialMarginRequired": "0.2359",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0171",
+            "closingTransactionIDs": [
+                "361"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T15:35:01.454976295Z",
+            "averageClosePrice": "184.559"
+        },
+        {
+            "id": "353",
+            "instrument": "USD_JPY",
+            "price": "157.039",
+            "openTime": "2026-02-05T12:45:08.908333462Z",
+            "initialUnits": "4",
+            "initialMarginRequired": "0.2000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0416",
+            "closingTransactionIDs": [
+                "390"
+            ],
+            "financing": "0.0006",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-10T07:32:36.202286222Z",
+            "averageClosePrice": "155.430"
+        },
+        {
+            "id": "345",
+            "instrument": "USD_CAD",
+            "price": "1.36815",
+            "openTime": "2026-02-05T08:15:11.530330242Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.1692",
+            "closingTransactionIDs": [
+                "372"
+            ],
+            "financing": "0.0012",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-06T13:35:01.316045905Z",
+            "averageClosePrice": "1.36585"
+        },
+        {
+            "id": "343",
+            "instrument": "NZD_USD",
+            "price": "0.59909",
+            "openTime": "2026-02-05T07:53:23.913905323Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "3.5952",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.7200",
+            "closingTransactionIDs": [
+                "363"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T21:25:01.130067082Z",
+            "averageClosePrice": "0.59549"
+        },
+        {
+            "id": "341",
+            "instrument": "EUR_USD",
+            "price": "1.17958",
+            "openTime": "2026-02-05T07:15:07.852514873Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "2.3593",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.2590",
+            "closingTransactionIDs": [
+                "359"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T14:15:01.718939859Z",
+            "averageClosePrice": "1.18217"
+        },
+        {
+            "id": "339",
+            "instrument": "GBP_NZD",
+            "price": "2.27697",
+            "openTime": "2026-02-05T03:16:44.910553108Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.8116",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.3409",
+            "closingTransactionIDs": [
+                "349"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T09:00:01.293551932Z",
+            "averageClosePrice": "2.27125"
+        },
+        {
+            "id": "337",
+            "instrument": "CHF_JPY",
+            "price": "201.792",
+            "openTime": "2026-02-05T02:30:23.954688782Z",
+            "initialUnits": "3",
+            "initialMarginRequired": "0.1930",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0074",
+            "closingTransactionIDs": [
+                "366"
+            ],
+            "financing": "-0.0002",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-06T00:10:01.266281519Z",
+            "averageClosePrice": "201.409"
+        },
+        {
+            "id": "332",
+            "instrument": "EUR_GBP",
+            "price": "0.86430",
+            "openTime": "2026-02-04T18:32:03.223681438Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "11.7988",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.7684",
+            "closingTransactionIDs": [
+                "347"
+            ],
+            "financing": "0.0044",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T08:50:02.247571794Z",
+            "averageClosePrice": "0.86711"
+        },
+        {
+            "id": "330",
+            "instrument": "USD_CHF",
+            "price": "0.77698",
+            "openTime": "2026-02-04T18:29:34.338373209Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "6.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.6459",
+            "closingTransactionIDs": [
+                "357"
+            ],
+            "financing": "0.0150",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T13:30:01.927860135Z",
+            "averageClosePrice": "0.77449"
+        },
+        {
+            "id": "328",
+            "instrument": "GBP_NZD",
+            "price": "2.27744",
+            "openTime": "2026-02-04T18:09:47.561706664Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.8221",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.2402",
+            "closingTransactionIDs": [
+                "335"
+            ],
+            "financing": "-0.0095",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T00:30:01.669340493Z",
+            "averageClosePrice": "2.27342"
+        },
+        {
+            "id": "326",
+            "instrument": "GBP_CHF",
+            "price": "1.05955",
+            "openTime": "2026-02-04T18:08:55.938630245Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.8237",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.6582",
+            "closingTransactionIDs": [
+                "351"
+            ],
+            "financing": "-0.0185",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-05T12:10:01.611344217Z",
+            "averageClosePrice": "1.05441"
+        },
+        {
+            "id": "298",
+            "instrument": "AUD_CAD",
+            "price": "0.95880",
+            "openTime": "2026-02-04T14:45:26.757842769Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "4.2124",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.3557",
+            "closingTransactionIDs": [
+                "314"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:32:10.472190088Z",
+            "averageClosePrice": "0.95638"
+        },
+        {
+            "id": "296",
+            "instrument": "EUR_AUD",
+            "price": "1.68233",
+            "openTime": "2026-02-04T14:45:15.795884532Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "3.5447",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.3499",
+            "closingTransactionIDs": [
+                "308"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:10:14.164094075Z",
+            "averageClosePrice": "1.68731"
+        },
+        {
+            "id": "294",
+            "instrument": "AUD_JPY",
+            "price": "110.003",
+            "openTime": "2026-02-04T14:21:31.872881455Z",
+            "initialUnits": "5",
+            "initialMarginRequired": "0.1757",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0123",
+            "closingTransactionIDs": [
+                "322"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:32:53.047635208Z",
+            "averageClosePrice": "109.618"
+        },
+        {
+            "id": "292",
+            "instrument": "GBP_CHF",
+            "price": "1.06423",
+            "openTime": "2026-02-04T12:44:53.714114543Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "6.8610",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.4501",
+            "closingTransactionIDs": [
+                "318"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:32:31.722008493Z",
+            "averageClosePrice": "1.06075"
+        },
+        {
+            "id": "290",
+            "instrument": "AUD_CHF",
+            "price": "0.54519",
+            "openTime": "2026-02-04T12:07:54.242268888Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "4.2122",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.4372",
+            "closingTransactionIDs": [
+                "324"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:33:03.742995773Z",
+            "averageClosePrice": "0.54350"
+        },
+        {
+            "id": "288",
+            "instrument": "NZD_JPY",
+            "price": "94.374",
+            "openTime": "2026-02-04T12:07:45.611099033Z",
+            "initialUnits": "5",
+            "initialMarginRequired": "0.1505",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0145",
+            "closingTransactionIDs": [
+                "304"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:10:02.095081829Z",
+            "averageClosePrice": "93.923"
+        },
+        {
+            "id": "286",
+            "instrument": "AUD_USD",
+            "price": "0.70218",
+            "openTime": "2026-02-04T12:00:14.416489577Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "4.2127",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.6300",
+            "closingTransactionIDs": [
+                "306"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:10:03.587297759Z",
+            "averageClosePrice": "0.69903"
+        },
+        {
+            "id": "284",
+            "instrument": "GBP_USD",
+            "price": "1.37094",
+            "openTime": "2026-02-04T11:15:09.811890486Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "6.8542",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.4510",
+            "closingTransactionIDs": [
+                "300"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T15:35:02.159770682Z",
+            "averageClosePrice": "1.36643"
+        },
+        {
+            "id": "282",
+            "instrument": "USD_CAD",
+            "price": "1.36406",
+            "openTime": "2026-02-04T08:48:01.671014095Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "2.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.2426",
+            "closingTransactionIDs": [
+                "316"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:32:21.164563027Z",
+            "averageClosePrice": "1.36736"
+        },
+        {
+            "id": "280",
+            "instrument": "GBP_AUD",
+            "price": "1.95088",
+            "openTime": "2026-02-04T08:30:17.336125625Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.8640",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.1125",
+            "closingTransactionIDs": [
+                "310"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:31:47.294764718Z",
+            "averageClosePrice": "1.95248"
+        },
+        {
+            "id": "278",
+            "instrument": "GBP_AUD",
+            "price": "1.95106",
+            "openTime": "2026-02-04T08:30:11.666192806Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.8639",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0998",
+            "closingTransactionIDs": [
+                "310"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:31:47.294764718Z",
+            "averageClosePrice": "1.95248"
+        },
+        {
+            "id": "276",
+            "instrument": "NZD_USD",
+            "price": "0.60403",
+            "openTime": "2026-02-04T07:45:11.955097697Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "3.6234",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.7320",
+            "closingTransactionIDs": [
+                "302"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T15:35:04.614911980Z",
+            "averageClosePrice": "0.60037"
+        },
+        {
+            "id": "274",
+            "instrument": "USD_CHF",
+            "price": "0.77567",
+            "openTime": "2026-02-04T07:14:26.236360891Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "6.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.3622",
+            "closingTransactionIDs": [
+                "320"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:32:42.420162296Z",
+            "averageClosePrice": "0.77707"
+        },
+        {
+            "id": "272",
+            "instrument": "EUR_GBP",
+            "price": "0.86258",
+            "openTime": "2026-02-04T05:51:34.755952969Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "11.8344",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.4062",
+            "closingTransactionIDs": [
+                "312"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T16:31:59.875300944Z",
+            "averageClosePrice": "0.86406"
+        },
+        {
+            "id": "262",
+            "instrument": "EUR_CHF",
+            "price": "0.91689",
+            "openTime": "2026-02-04T03:03:26.312737378Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "7.0937",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0752",
+            "closingTransactionIDs": [
+                "270"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T05:15:30.138501983Z",
+            "averageClosePrice": "0.91718"
+        },
+        {
+            "id": "258",
+            "instrument": "AUD_USD",
+            "price": "0.70218",
+            "openTime": "2026-02-03T22:35:06.408120893Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "4.2119",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0180",
+            "closingTransactionIDs": [
+                "264"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T04:49:04.761782840Z",
+            "averageClosePrice": "0.70227",
+            "takeProfitOrder": {
+                "id": "259",
+                "createTime": "2026-02-03T22:35:06.408120893Z",
+                "type": "TAKE_PROFIT",
+                "tradeID": "258",
+                "price": "0.70921",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "265",
+                "cancelledTime": "2026-02-04T04:49:04.761782840Z"
+            },
+            "stopLossOrder": {
+                "id": "260",
+                "createTime": "2026-02-03T22:35:06.408120893Z",
+                "type": "STOP_LOSS",
+                "tradeID": "258",
+                "price": "0.70018",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "266",
+                "cancelledTime": "2026-02-04T04:49:04.761782840Z"
+            }
+        },
+        {
+            "id": "246",
+            "instrument": "AUD_USD",
+            "price": "0.70178",
+            "openTime": "2026-02-03T22:25:08.323799039Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "4.2116",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0640",
+            "closingTransactionIDs": [
+                "250"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T22:25:28.007401386Z",
+            "averageClosePrice": "0.70210",
+            "takeProfitOrder": {
+                "id": "247",
+                "createTime": "2026-02-03T22:25:08.323799039Z",
+                "type": "TAKE_PROFIT",
+                "tradeID": "246",
+                "price": "0.69724",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "251",
+                "cancelledTime": "2026-02-03T22:25:28.007401386Z"
+            },
+            "stopLossOrder": {
+                "id": "248",
+                "createTime": "2026-02-03T22:25:08.323799039Z",
+                "type": "STOP_LOSS",
+                "tradeID": "246",
+                "price": "0.70425",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "CANCELLED",
+                "cancellingTransactionID": "252",
+                "cancelledTime": "2026-02-03T22:25:28.007401386Z"
+            }
+        },
+        {
+            "id": "215",
+            "instrument": "EUR_GBP",
+            "price": "0.86271",
+            "openTime": "2026-02-03T16:55:57.869717284Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "11.8188",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.1652",
+            "closingTransactionIDs": [
+                "244"
+            ],
+            "financing": "0.0045",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T22:14:53.561714241Z",
+            "averageClosePrice": "0.86331"
+        },
+        {
+            "id": "213",
+            "instrument": "NZD_USD",
+            "price": "0.60463",
+            "openTime": "2026-02-03T16:33:25.493199637Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "3.6271",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.2480",
+            "closingTransactionIDs": [
+                "268"
+            ],
+            "financing": "-0.0079",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-04T04:55:52.031010674Z",
+            "averageClosePrice": "0.60339"
+        },
+        {
+            "id": "211",
+            "instrument": "EUR_NZD",
+            "price": "1.95238",
+            "openTime": "2026-02-03T16:20:32.525920100Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "3.5450",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.1666",
+            "closingTransactionIDs": [
+                "217"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:15:27.454075112Z",
+            "averageClosePrice": "1.95515"
+        },
+        {
+            "id": "209",
+            "instrument": "EUR_CAD",
+            "price": "1.61189",
+            "openTime": "2026-02-03T16:15:56.296954825Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.3624",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0751",
+            "closingTransactionIDs": [
+                "223"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:15:59.498801668Z",
+            "averageClosePrice": "1.61292"
+        },
+        {
+            "id": "207",
+            "instrument": "GBP_CHF",
+            "price": "1.06144",
+            "openTime": "2026-02-03T16:15:49.213565700Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "6.8495",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0805",
+            "closingTransactionIDs": [
+                "239"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:17:24.020090400Z",
+            "averageClosePrice": "1.06082"
+        },
+        {
+            "id": "205",
+            "instrument": "EUR_CHF",
+            "price": "0.91519",
+            "openTime": "2026-02-03T16:15:43.607713112Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "7.0870",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.1464",
+            "closingTransactionIDs": [
+                "221"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:15:48.459730542Z",
+            "averageClosePrice": "0.91576"
+        },
+        {
+            "id": "203",
+            "instrument": "CHF_JPY",
+            "price": "201.041",
+            "openTime": "2026-02-03T16:15:37.540906998Z",
+            "initialUnits": "-3",
+            "initialMarginRequired": "0.1936",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0019",
+            "closingTransactionIDs": [
+                "235"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:17:03.158082608Z",
+            "averageClosePrice": "200.943"
+        },
+        {
+            "id": "201",
+            "instrument": "CAD_JPY",
+            "price": "114.143",
+            "openTime": "2026-02-03T16:15:30.356479703Z",
+            "initialUnits": "-4",
+            "initialMarginRequired": "0.1466",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0020",
+            "closingTransactionIDs": [
+                "231"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:16:41.885881247Z",
+            "averageClosePrice": "114.064"
+        },
+        {
+            "id": "199",
+            "instrument": "AUD_CAD",
+            "price": "0.95707",
+            "openTime": "2026-02-03T16:15:25.765359758Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "4.2093",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0190",
+            "closingTransactionIDs": [
+                "227"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:16:20.601904041Z",
+            "averageClosePrice": "0.95694"
+        },
+        {
+            "id": "197",
+            "instrument": "GBP_JPY",
+            "price": "213.381",
+            "openTime": "2026-02-03T16:15:18.935017648Z",
+            "initialUnits": "-2",
+            "initialMarginRequired": "0.1370",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0024",
+            "closingTransactionIDs": [
+                "233"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:16:52.715566218Z",
+            "averageClosePrice": "213.197"
+        },
+        {
+            "id": "195",
+            "instrument": "EUR_JPY",
+            "price": "183.979",
+            "openTime": "2026-02-03T16:15:13.473574216Z",
+            "initialUnits": "-4",
+            "initialMarginRequired": "0.2362",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0012",
+            "closingTransactionIDs": [
+                "219"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:15:38.004357186Z",
+            "averageClosePrice": "184.027"
+        },
+        {
+            "id": "193",
+            "instrument": "USD_CAD",
+            "price": "1.36437",
+            "openTime": "2026-02-03T16:15:06.692615277Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0376",
+            "closingTransactionIDs": [
+                "229"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:16:31.238792887Z",
+            "averageClosePrice": "1.36386"
+        },
+        {
+            "id": "191",
+            "instrument": "USD_CHF",
+            "price": "0.77470",
+            "openTime": "2026-02-03T16:15:01.620766901Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "6.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.1792",
+            "closingTransactionIDs": [
+                "237"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:17:13.569371668Z",
+            "averageClosePrice": "0.77401"
+        },
+        {
+            "id": "189",
+            "instrument": "GBP_USD",
+            "price": "1.37015",
+            "openTime": "2026-02-03T16:14:54.915451864Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.8512",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0150",
+            "closingTransactionIDs": [
+                "225"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T17:16:09.994156772Z",
+            "averageClosePrice": "1.37030"
+        },
+        {
+            "id": "187",
+            "instrument": "EUR_USD",
+            "price": "1.18138",
+            "openTime": "2026-02-03T16:14:48.163194829Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "2.3629",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0770",
+            "closingTransactionIDs": [
+                "241"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T21:00:00.735069830Z",
+            "averageClosePrice": "1.18215"
+        },
+        {
+            "id": "165",
+            "instrument": "GBP_CHF",
+            "price": "1.06467",
+            "openTime": "2026-02-03T03:28:15.762862328Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "6.8366",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0396",
+            "closingTransactionIDs": [
+                "175"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:49:14.863908332Z",
+            "averageClosePrice": "1.06498"
+        },
+        {
+            "id": "155",
+            "instrument": "AUD_CHF",
+            "price": "0.54229",
+            "openTime": "2026-02-03T02:59:55.639785318Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.0884",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.3555",
+            "closingTransactionIDs": [
+                "181"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:49:28.414919010Z",
+            "averageClosePrice": "0.54507"
+        },
+        {
+            "id": "153",
+            "instrument": "NZD_CAD",
+            "price": "0.82226",
+            "openTime": "2026-02-03T02:59:39.653985289Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "1.8030",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.1449",
+            "closingTransactionIDs": [
+                "185"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:49:38.161495595Z",
+            "averageClosePrice": "0.82425"
+        },
+        {
+            "id": "151",
+            "instrument": "EUR_CHF",
+            "price": "0.91905",
+            "openTime": "2026-02-03T02:58:47.561510849Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "3.5403",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0065",
+            "closingTransactionIDs": [
+                "171"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:42:46.705612790Z",
+            "averageClosePrice": "0.91910"
+        },
+        {
+            "id": "149",
+            "instrument": "AUD_CAD",
+            "price": "0.95233",
+            "openTime": "2026-02-03T02:58:01.576461964Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.0886",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.3416",
+            "closingTransactionIDs": [
+                "179"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:49:22.771229680Z",
+            "averageClosePrice": "0.95702"
+        },
+        {
+            "id": "147",
+            "instrument": "EUR_GBP",
+            "price": "0.86309",
+            "openTime": "2026-02-03T02:56:11.315776799Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "5.9009",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0313",
+            "closingTransactionIDs": [
+                "173"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:49:10.677580494Z",
+            "averageClosePrice": "0.86286"
+        },
+        {
+            "id": "145",
+            "instrument": "NZD_USD",
+            "price": "0.60117",
+            "openTime": "2026-02-03T02:55:56.614984240Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "1.8032",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.2230",
+            "closingTransactionIDs": [
+                "183"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:49:33.651003594Z",
+            "averageClosePrice": "0.60340"
+        },
+        {
+            "id": "143",
+            "instrument": "AUD_USD",
+            "price": "0.69612",
+            "openTime": "2026-02-03T02:55:41.699725322Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.0882",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.4440",
+            "closingTransactionIDs": [
+                "177"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-03T05:49:19.668396648Z",
+            "averageClosePrice": "0.70056"
+        },
+        {
+            "id": "116",
+            "instrument": "EUR_AUD",
+            "price": "1.69612",
+            "openTime": "2026-02-02T16:22:24.230384093Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "3.5416",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0077",
+            "closingTransactionIDs": [
+                "120"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:31.386471621Z",
+            "averageClosePrice": "1.69601"
+        },
+        {
+            "id": "114",
+            "instrument": "AUD_CHF",
+            "price": "0.54209",
+            "openTime": "2026-02-02T14:46:23.448769143Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "4.1785",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0306",
+            "closingTransactionIDs": [
+                "137"
+            ],
+            "financing": "-0.0191",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T23:27:31.857664163Z",
+            "averageClosePrice": "0.54197"
+        },
+        {
+            "id": "110",
+            "instrument": "EUR_CAD",
+            "price": "1.61675",
+            "openTime": "2026-02-02T08:44:46.208443141Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.3713",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.3123",
+            "closingTransactionIDs": [
+                "122"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:34.943776691Z",
+            "averageClosePrice": "1.61250"
+        },
+        {
+            "id": "108",
+            "instrument": "GBP_JPY",
+            "price": "212.238",
+            "openTime": "2026-02-02T08:44:42.559573941Z",
+            "initialUnits": "2",
+            "initialMarginRequired": "0.1369",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0048",
+            "closingTransactionIDs": [
+                "134"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:24:02.515932282Z",
+            "averageClosePrice": "212.615"
+        },
+        {
+            "id": "106",
+            "instrument": "AUD_CHF",
+            "price": "0.53790",
+            "openTime": "2026-02-02T08:32:14.562870206Z",
+            "initialUnits": "200",
+            "initialMarginRequired": "4.1723",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "1.0248",
+            "closingTransactionIDs": [
+                "112"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T14:38:04.108072397Z",
+            "averageClosePrice": "0.54191"
+        },
+        {
+            "id": "104",
+            "instrument": "NZD_JPY",
+            "price": "93.270",
+            "openTime": "2026-02-02T08:32:07.508156515Z",
+            "initialUnits": "2",
+            "initialMarginRequired": "0.0602",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0018",
+            "closingTransactionIDs": [
+                "141"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T23:27:37.840752521Z",
+            "averageClosePrice": "93.413"
+        },
+        {
+            "id": "102",
+            "instrument": "GBP_CHF",
+            "price": "1.05872",
+            "openTime": "2026-02-02T08:32:02.238969293Z",
+            "initialUnits": "-100",
+            "initialMarginRequired": "6.8459",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.8677",
+            "closingTransactionIDs": [
+                "130"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:51.553819300Z",
+            "averageClosePrice": "1.06545"
+        },
+        {
+            "id": "100",
+            "instrument": "CHF_JPY",
+            "price": "200.409",
+            "openTime": "2026-02-02T08:31:56.544347406Z",
+            "initialUnits": "2",
+            "initialMarginRequired": "0.1293",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0106",
+            "closingTransactionIDs": [
+                "132"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:54.925153221Z",
+            "averageClosePrice": "199.586"
+        },
+        {
+            "id": "98",
+            "instrument": "AUD_JPY",
+            "price": "107.786",
+            "openTime": "2026-02-02T08:31:43.195757568Z",
+            "initialUnits": "2",
+            "initialMarginRequired": "0.0695",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0045",
+            "closingTransactionIDs": [
+                "139"
+            ],
+            "financing": "0.0001",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T23:27:34.732189139Z",
+            "averageClosePrice": "108.137"
+        },
+        {
+            "id": "96",
+            "instrument": "USD_CHF",
+            "price": "0.77321",
+            "openTime": "2026-02-02T08:31:29.400065878Z",
+            "initialUnits": "-200",
+            "initialMarginRequired": "6.0000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-1.6272",
+            "closingTransactionIDs": [
+                "124"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:38.171683199Z",
+            "averageClosePrice": "0.77952"
+        },
+        {
+            "id": "94",
+            "instrument": "GBP_USD",
+            "price": "1.36931",
+            "openTime": "2026-02-02T08:31:23.586857597Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "6.8460",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.2750",
+            "closingTransactionIDs": [
+                "128"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:47.268558857Z",
+            "averageClosePrice": "1.36656"
+        },
+        {
+            "id": "92",
+            "instrument": "USD_JPY",
+            "price": "155.011",
+            "openTime": "2026-02-02T08:31:17.828098291Z",
+            "initialUnits": "-2",
+            "initialMarginRequired": "0.1000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0076",
+            "closingTransactionIDs": [
+                "126"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:42.535006453Z",
+            "averageClosePrice": "155.596"
+        },
+        {
+            "id": "90",
+            "instrument": "EUR_USD",
+            "price": "1.18598",
+            "openTime": "2026-02-02T08:31:10.939307934Z",
+            "initialUnits": "100",
+            "initialMarginRequired": "2.3718",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.6720",
+            "closingTransactionIDs": [
+                "118"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T21:23:27.529948098Z",
+            "averageClosePrice": "1.17926"
+        },
+        {
+            "id": "73",
+            "instrument": "USD_CHF",
+            "price": "0.77259",
+            "openTime": "2026-02-02T07:06:19.176793037Z",
+            "initialUnits": "-1",
+            "initialMarginRequired": "0.0300",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0009",
+            "closingTransactionIDs": [
+                "79"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T07:56:52.404185775Z",
+            "averageClosePrice": "0.77329"
+        },
+        {
+            "id": "71",
+            "instrument": "NZD_USD",
+            "price": "0.60047",
+            "openTime": "2026-02-02T07:06:17.413932721Z",
+            "initialUnits": "1",
+            "initialMarginRequired": "0.0180",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0001",
+            "closingTransactionIDs": [
+                "88"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T07:57:50.469799890Z",
+            "averageClosePrice": "0.60057"
+        },
+        {
+            "id": "69",
+            "instrument": "USD_CAD",
+            "price": "1.36514",
+            "openTime": "2026-02-02T07:06:15.381286892Z",
+            "initialUnits": "-1",
+            "initialMarginRequired": "0.0200",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0000",
+            "closingTransactionIDs": [
+                "77"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T07:56:05.518505741Z",
+            "averageClosePrice": "1.36514"
+        },
+        {
+            "id": "67",
+            "instrument": "AUD_USD",
+            "price": "0.69324",
+            "openTime": "2026-02-02T07:06:13.782352564Z",
+            "initialUnits": "1",
+            "initialMarginRequired": "0.0208",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0010",
+            "closingTransactionIDs": [
+                "86"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T07:57:47.479135617Z",
+            "averageClosePrice": "0.69422"
+        },
+        {
+            "id": "65",
+            "instrument": "USD_JPY",
+            "price": "154.667",
+            "openTime": "2026-02-02T07:06:12.208619978Z",
+            "initialUnits": "-2",
+            "initialMarginRequired": "0.1000",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0025",
+            "closingTransactionIDs": [
+                "82"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T07:56:57.361482576Z",
+            "averageClosePrice": "154.858"
+        },
+        {
+            "id": "63",
+            "instrument": "GBP_USD",
+            "price": "1.36827",
+            "openTime": "2026-02-02T07:06:10.107179681Z",
+            "initialUnits": "1",
+            "initialMarginRequired": "0.0684",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "0.0001",
+            "closingTransactionIDs": [
+                "84"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T07:57:02.804699357Z",
+            "averageClosePrice": "1.36837"
+        },
+        {
+            "id": "61",
+            "instrument": "EUR_USD",
+            "price": "1.18597",
+            "openTime": "2026-02-02T07:06:08.609537883Z",
+            "initialUnits": "2",
+            "initialMarginRequired": "0.0474",
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "realizedPL": "-0.0003",
+            "closingTransactionIDs": [
+                "75"
+            ],
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "closeTime": "2026-02-02T07:56:02.424623216Z",
+            "averageClosePrice": "1.18584"
+        }
+    ],
+    "lastTransactionID": "566"
+}

@@ -118,6 +118,11 @@ export function decomposeStrategyToLayers(strategy: Strategy): ChartOverlayItem[
   return items;
 }
 
+/** Strategy indicator lines only (EMA, ADX, RSI, etc.) — no crossover signal flags. */
+export function decomposeStrategyToIndicatorLayers(strategy: Strategy): IndicatorOverlayItem[] {
+  return decomposeStrategyToLayers(strategy).filter(isIndicatorOverlay);
+}
+
 export function strategyAlreadyOnChart(items: ChartOverlayItem[], strategyId: string): boolean {
   return items.some(
     (item) =>

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
-
-logger = logging.getLogger(__name__)
 
 OANDA_ENVIRONMENTS = ("practice", "live")
 
@@ -150,9 +148,133 @@ def _normalize_oanda_open_trade(raw: dict[str, Any]) -> dict[str, Any] | None:
         "units": abs(units),
         "direction": direction,
         "price": price,
+        "entry_price": price,
         "unrealized_pl": unrealized_pl,
         "current_price": None,
         "open_time": raw.get("openTime"),
+        "initial_units": abs(float(raw.get("initialUnits") or units)),
+        "current_units": abs(units),
+        "financing": _optional_float(raw.get("financing")),
+        "margin_used": _optional_float(raw.get("marginUsed")),
+        "realized_pl": _optional_float(raw.get("realizedPL")),
+        "stop_loss": _normalize_oanda_child_order(raw.get("stopLossOrder")),
+        "take_profit": _normalize_oanda_child_order(raw.get("takeProfitOrder")),
+        "state": "OPEN",
+        "raw": raw,
+    }
+
+
+def _normalize_oanda_child_order(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict) or not raw.get("id"):
+        return None
+    return {
+        "broker_order_id": str(raw.get("id")),
+        "order_type": str(raw.get("type", "")),
+        "state": str(raw.get("state", "")),
+        "price": _optional_float(raw.get("price")),
+        "trade_id": str(raw.get("tradeID")) if raw.get("tradeID") else None,
+        "create_time": raw.get("createTime"),
+        "filled_time": raw.get("filledTime"),
+        "filling_event_id": str(raw.get("fillingTransactionID"))
+        if raw.get("fillingTransactionID")
+        else None,
+        "cancelling_event_id": str(raw.get("cancellingTransactionID"))
+        if raw.get("cancellingTransactionID")
+        else None,
+    }
+
+
+def _normalize_oanda_trade_raw(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize any OANDA trade payload (open or closed)."""
+    trade_id = raw.get("id")
+    instrument = raw.get("instrument")
+    if not trade_id or not instrument:
+        return None
+
+    state = str(raw.get("state", "")).upper()
+    try:
+        initial_units = float(raw.get("initialUnits") or 0)
+    except (TypeError, ValueError):
+        initial_units = 0.0
+    if initial_units == 0:
+        return None
+
+    try:
+        current_units = float(raw.get("currentUnits") or initial_units)
+    except (TypeError, ValueError):
+        current_units = initial_units
+
+    direction = "long" if initial_units > 0 else "short"
+    entry_price = _optional_float(raw.get("price")) or 0.0
+
+    return {
+        "id": str(trade_id),
+        "instrument": str(instrument),
+        "pair": instrument_to_pair(str(instrument)),
+        "direction": direction,
+        "initial_units": abs(initial_units),
+        "current_units": abs(current_units),
+        "entry_price": entry_price,
+        "exit_price": _optional_float(raw.get("averageClosePrice")),
+        "realized_pl": _optional_float(raw.get("realizedPL")),
+        "unrealized_pl": _optional_float(raw.get("unrealizedPL")),
+        "financing": _optional_float(raw.get("financing")),
+        "margin_used": _optional_float(raw.get("marginUsed")),
+        "open_time": raw.get("openTime"),
+        "close_time": raw.get("closeTime"),
+        "closed_at": _parse_broker_timestamp(raw.get("closeTime")),
+        "closing_event_ids": [str(x) for x in (raw.get("closingTransactionIDs") or [])],
+        "stop_loss": _normalize_oanda_child_order(raw.get("stopLossOrder")),
+        "take_profit": _normalize_oanda_child_order(raw.get("takeProfitOrder")),
+        "state": state,
+        "raw": raw,
+    }
+
+
+def normalize_oanda_transaction(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize a single OANDA transaction payload."""
+    payload = raw.get("transaction") if isinstance(raw.get("transaction"), dict) else raw
+    if not isinstance(payload, dict):
+        return None
+    txn_id = payload.get("id")
+    if not txn_id:
+        return None
+
+    trade_id = payload.get("tradeID")
+    if not trade_id:
+        trade_closed = payload.get("tradeClosed") or {}
+        if isinstance(trade_closed, dict):
+            trade_id = trade_closed.get("tradeID")
+        trades_closed = payload.get("tradesClosed") or []
+        if not trade_id and trades_closed:
+            first = trades_closed[0]
+            if isinstance(first, dict):
+                trade_id = first.get("tradeID")
+
+    order_id = payload.get("orderID")
+    if not order_id and isinstance(payload.get("orderFillTransaction"), dict):
+        order_id = payload["orderFillTransaction"].get("id")
+
+    units_raw = payload.get("units")
+    if units_raw is None:
+        trade_opened = payload.get("tradeOpened") or {}
+        if isinstance(trade_opened, dict):
+            units_raw = trade_opened.get("units")
+
+    return {
+        "id": str(txn_id),
+        "type": str(payload.get("type", "")),
+        "time": payload.get("time"),
+        "batch_id": str(payload.get("batchID")) if payload.get("batchID") else None,
+        "request_id": payload.get("requestID"),
+        "trade_id": str(trade_id) if trade_id else None,
+        "order_id": str(order_id) if order_id else None,
+        "instrument": payload.get("instrument"),
+        "units": _optional_float(units_raw),
+        "price": _optional_float(payload.get("price")),
+        "pl": _optional_float(payload.get("pl")),
+        "reason": payload.get("reason"),
+        "raw": payload,
     }
 
 
@@ -304,7 +426,189 @@ def _normalize_oanda_closed_trade(raw: dict[str, Any]) -> dict[str, Any] | None:
         "open_time": raw.get("openTime"),
         "close_time": raw.get("closeTime"),
         "closed_at": _parse_broker_timestamp(raw.get("closeTime")),
+        "closing_event_ids": [str(x) for x in (raw.get("closingTransactionIDs") or [])],
+        "stop_loss": _normalize_oanda_child_order(raw.get("stopLossOrder")),
+        "take_profit": _normalize_oanda_child_order(raw.get("takeProfitOrder")),
+        "financing": _optional_float(raw.get("financing")),
+        "state": "CLOSED",
+        "raw": raw,
     }
+
+
+async def list_trades(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    *,
+    state: str | None = None,
+    count: int = 500,
+    before_id: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch OANDA trades with optional state filter and pagination.
+
+    Returns ``(normalized_trades, last_transaction_id)``.
+    """
+    if not access_token.strip() or not account_id.strip():
+        return [], None
+
+    params: dict[str, Any] = {"count": max(1, min(count, 1000))}
+    if state:
+        params["state"] = state.upper()
+    if before_id:
+        params["beforeID"] = before_id
+
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token), params=params)
+        response.raise_for_status()
+        data = response.json()
+
+    trades: list[dict[str, Any]] = []
+    for raw in data.get("trades") or []:
+        if not isinstance(raw, dict):
+            continue
+        normalized = _normalize_oanda_trade_raw(raw)
+        if normalized is not None:
+            trades.append(normalized)
+
+    last_txn = data.get("lastTransactionID")
+    return trades, str(last_txn) if last_txn else None
+
+
+async def list_all_trades(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    *,
+    state: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Paginate through all OANDA trades."""
+    all_trades: list[dict[str, Any]] = []
+    before_id: str | None = None
+    last_txn: str | None = None
+
+    while True:
+        batch, last_txn = await list_trades(
+            access_token,
+            environment,
+            account_id,
+            state=state,
+            before_id=before_id,
+        )
+        if not batch:
+            break
+        all_trades.extend(batch)
+        if len(batch) < 500:
+            break
+        before_id = batch[-1]["id"]
+
+    return all_trades, last_txn
+
+
+async def list_transactions_idrange(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    *,
+    from_id: str,
+    to_id: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch OANDA transactions in an inclusive ID range."""
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/transactions/idrange"
+    params = {"from": from_id, "to": to_id}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token), params=params)
+        response.raise_for_status()
+        data = response.json()
+
+    events: list[dict[str, Any]] = []
+    for raw in data.get("transactions") or []:
+        if not isinstance(raw, dict):
+            continue
+        normalized = normalize_oanda_transaction(raw)
+        if normalized is not None:
+            events.append(normalized)
+
+    last_txn = data.get("lastTransactionID")
+    return events, str(last_txn) if last_txn else None
+
+
+async def list_transactions_since(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    *,
+    since_id: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch OANDA transactions since *since_id* (exclusive)."""
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/transactions/sinceid"
+    params = {"id": since_id}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token), params=params)
+        response.raise_for_status()
+        data = response.json()
+
+    events: list[dict[str, Any]] = []
+    for raw in data.get("transactions") or []:
+        if not isinstance(raw, dict):
+            continue
+        normalized = normalize_oanda_transaction(raw)
+        if normalized is not None:
+            events.append(normalized)
+
+    last_txn = data.get("lastTransactionID")
+    return events, str(last_txn) if last_txn else None
+
+
+async def get_transaction(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    transaction_id: str,
+) -> dict[str, Any] | None:
+    """Fetch a single OANDA transaction by id."""
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/transactions/{transaction_id}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token))
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        data = response.json()
+
+    raw = data.get("transaction")
+    if not isinstance(raw, dict):
+        return None
+    return normalize_oanda_transaction(raw)
+
+
+async def list_pending_orders(
+    access_token: str,
+    environment: str,
+    account_id: str,
+) -> list[dict[str, Any]]:
+    """Fetch pending OANDA orders for an account."""
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/pendingOrders"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token))
+        response.raise_for_status()
+        data = response.json()
+    return [o for o in (data.get("orders") or []) if isinstance(o, dict)]
+
+
+async def list_positions(
+    access_token: str,
+    environment: str,
+    account_id: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch OANDA open positions for validation."""
+    url = f"{base_url(environment)}/v3/accounts/{account_id}/positions"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=_auth_headers(access_token))
+        response.raise_for_status()
+        data = response.json()
+    positions = [p for p in (data.get("positions") or []) if isinstance(p, dict)]
+    last_txn = data.get("lastTransactionID")
+    return positions, str(last_txn) if last_txn else None
 
 
 async def get_broker_trade(
@@ -503,6 +807,16 @@ OANDA_GRANULARITY_BY_TIMEFRAME: dict[str, str] = {
     "W1": "W",
     "MN": "M",
 }
+
+
+def granularity_to_duration(granularity: str) -> timedelta:
+    """Map an OANDA granularity code to a bar duration."""
+    for timeframe, mapped in OANDA_GRANULARITY_BY_TIMEFRAME.items():
+        if mapped == granularity:
+            from brokerai.bots.data_manager.candle_schedule import timeframe_to_duration
+
+            return timeframe_to_duration(timeframe)
+    raise ValueError(f"Unsupported OANDA granularity: {granularity}")
 
 
 def timeframe_to_granularity(timeframe: str) -> str | None:
@@ -715,7 +1029,10 @@ async def fetch_candles_range(
         last_time = str(batch[-1]["time"])
         if last_time >= to_time or len(batch) < chunk:
             break
-        cursor = last_time
+        from brokerai.trading.data.time_utils import format_oanda_time, parse_oanda_time
+
+        last_dt = parse_oanda_time(last_time)
+        cursor = format_oanda_time(last_dt + granularity_to_duration(granularity))
 
     return collected
 

@@ -6,8 +6,7 @@ from dataclasses import asdict
 from brokerai.bots.associate.assets.base import AssetAssociate
 from brokerai.db.repositories.asset_settings import AssetSettingsRepository
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
-from brokerai.db.repositories.trades import TradesRepository
-from brokerai.integrations.oanda import extract_broker_trade_id, forex_pair_to_instrument, place_market_order
+from brokerai.trading.broker.state import BrokerStateService
 from brokerai.trading.schedule import utc_now
 from brokerai.trading.session_gate import is_asset_trading_session_active
 from brokerai.trading.types import TradeIntent
@@ -52,33 +51,21 @@ class ForexAssociate(AssetAssociate):
 
         oanda = await ExchangeConnectionsRepository().get_oanda()
         access_token = oanda.get("access_token") or ""
-        environment = oanda.get("environment") or "practice"
         account_id = oanda.get("account_id") or ""
         if not access_token.strip() or not account_id.strip():
             logger.warning("OANDA not configured — logging intent only for %s", intent.pair)
-            await TradesRepository().create_open_trade(asdict(intent))
+            await BrokerStateService().place_from_intent("oanda", intent)
             return
 
-        units = self._estimate_units(intent)
-        instrument = forex_pair_to_instrument(intent.pair)
-        response = await place_market_order(
-            access_token,
-            environment,
-            account_id,
-            instrument,
-            units=units,
-            stop_loss=intent.stop_loss,
-            take_profit=intent.take_profit,
-        )
-        order_fill = response.get("orderFillTransaction") or response.get("orderCreateTransaction") or {}
-        broker_trade_id = extract_broker_trade_id(response) or str(order_fill.get("id", "")) or None
-        trade_payload = asdict(intent)
-        trade_payload["units"] = units
-        await TradesRepository().create_open_trade(trade_payload, broker_order_id=broker_trade_id)
+        intent_payload = asdict(intent)
+        intent_payload["units"] = self._estimate_units(intent)
+        intent_with_units = TradeIntent(**intent_payload)
+        saved = await BrokerStateService().place_from_intent("oanda", intent_with_units)
         logger.info(
-            "Forex associate placed order %s %s units=%s trade_id=%s",
+            "Forex associate placed order %s %s units=%s lot_id=%s broker_lot_id=%s",
             intent.pair,
             intent.direction,
-            units,
-            broker_trade_id,
+            intent_payload["units"],
+            saved.get("id"),
+            saved.get("broker_lot_id"),
         )

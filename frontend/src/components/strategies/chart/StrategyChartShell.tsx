@@ -24,10 +24,7 @@ import {
   generateMockCandles,
 } from "../../../pages/strategies/presets/emaCrossover/mockData";
 import { useGeneralSettings } from "../../../hooks/useGeneralSettings";
-import {
-  createChartDateFormatter,
-  createChartTimeFormatter,
-} from "../../../lib/formatTime";
+import { applyChartTimeLocalization } from "../../../lib/chart/chartTimeLocalization";
 
 type StrategyChartShellProps = {
   params: EmaCrossoverParams;
@@ -174,6 +171,8 @@ export default function StrategyChartShell({
     resizeObserver.observe(priceContainerRef.current);
     resizeObserver.observe(adxContainerRef.current);
 
+    applyChartTimeLocalization([priceChart, adxChart], timeOptions);
+
     return () => {
       resizeObserver.disconnect();
       priceChart.remove();
@@ -190,20 +189,11 @@ export default function StrategyChartShell({
   }, [locked]);
 
   useEffect(() => {
-    const priceChart = priceChartRef.current;
-    const adxChart = adxChartRef.current;
-    if (!priceChart || !adxChart) return;
-
-    const timeFormatter = createChartTimeFormatter(timeOptions);
-    const dateFormatter = createChartDateFormatter(timeOptions);
-    const localization = {
-      timeFormatter,
-      dateFormatter,
-    };
-
-    priceChart.applyOptions({ localization });
-    adxChart.applyOptions({ localization });
-  }, [timeOptions]);
+    applyChartTimeLocalization(
+      [priceChartRef.current, adxChartRef.current].filter(Boolean) as IChartApi[],
+      timeOptions,
+    );
+  }, [timeOptions, locked]);
 
   function clearPriceLines(
     series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">,

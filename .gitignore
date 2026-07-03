@@ -23,7 +23,7 @@ config.env
 *.swp
 .DS_Store
 
-# Prompts
+# Prompts & API examples
 .prompts/
 
 # Frontend

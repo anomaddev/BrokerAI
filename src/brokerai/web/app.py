@@ -41,21 +41,34 @@ from brokerai.web.update_runner import (
 logger = logging.getLogger(__name__)
 
 
+def _configure_app_logging() -> None:
+    """Emit ``brokerai.*`` INFO logs to stderr alongside uvicorn access lines."""
+    app_logger = logging.getLogger("brokerai")
+    if app_logger.handlers:
+        return
+    app_logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+    app_logger.addHandler(handler)
+    app_logger.propagate = False
+
+
 async def _trade_sync_loop() -> None:
-    """Import OANDA open trades missing from the ledger on a fixed interval."""
-    from brokerai.trading.trade_sync import sync_oanda_trades_to_ledger
+    """Sync broker state on a fixed interval."""
+    from brokerai.trading.broker.sync import run_broker_sync
 
     while True:
         interval = max(60, get_settings().trade_sync_interval_seconds)
         try:
-            result = await sync_oanda_trades_to_ledger()
-            if result.get("configured") and (
-                result.get("imported") or result.get("updated")
+            result = await run_broker_sync(exchange_id="oanda", mode="incremental")
+            if result.configured and (
+                result.lots_upserted or result.enriched or result.lots_closed
             ):
                 logger.info(
-                    "Web trade sync — imported=%s updated=%s",
-                    result.get("imported"),
-                    result.get("updated"),
+                    "Web broker sync — lots=%s enriched=%s closed=%s",
+                    result.lots_upserted,
+                    result.enriched,
+                    result.lots_closed,
                 )
         except asyncio.CancelledError:
             raise
@@ -66,6 +79,7 @@ async def _trade_sync_loop() -> None:
 
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
+    _configure_app_logging()
     logging.getLogger("httpx").setLevel(logging.WARNING)
     validate_startup_settings()
     try:

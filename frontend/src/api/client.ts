@@ -64,6 +64,14 @@ export type CandlesResponse = {
   candles: CandleBar[];
 };
 
+export type TradeCandlesResponse = CandlesResponse & {
+  since: string;
+  until: string;
+  display_since: string;
+  display_until: string;
+  warmup_bars: number;
+};
+
 export const PROFILE_PHOTO_PATH = "/api/auth/profile-photo";
 
 export function profilePhotoUrl(cacheBust?: number): string {
@@ -347,10 +355,22 @@ export const api = {
       enabled_sessions: Record<string, boolean>;
       sessions: { id: string; name: string; hours: string }[];
     }>("/api/settings/assets/forex/pairs"),
-  getCandles: (params: { symbol: string; timeframe: string; limit?: number }) =>
-    request<CandlesResponse>(
-      `/api/market-data/candles?symbol=${encodeURIComponent(params.symbol)}&timeframe=${encodeURIComponent(params.timeframe)}&limit=${params.limit ?? 200}`,
-    ),
+  getCandles: (params: {
+    symbol: string;
+    timeframe: string;
+    limit?: number;
+    since?: string;
+    until?: string;
+  }) => {
+    const search = new URLSearchParams({
+      symbol: params.symbol,
+      timeframe: params.timeframe,
+      limit: String(params.limit ?? 200),
+    });
+    if (params.since) search.set("since", params.since);
+    if (params.until) search.set("until", params.until);
+    return request<CandlesResponse>(`/api/market-data/candles?${search.toString()}`);
+  },
   getCandleDelta: (params: { symbol: string; timeframe: string; after: string }) =>
     request<CandlesResponse & { latest_time: string }>(
       `/api/market-data/candles/delta?symbol=${encodeURIComponent(params.symbol)}&timeframe=${encodeURIComponent(params.timeframe)}&after=${encodeURIComponent(params.after)}`,
@@ -481,10 +501,19 @@ export const api = {
   getTrade: (tradeId: string) =>
     request<Trade>(`/api/trades/${encodeURIComponent(tradeId)}`),
 
+  getTradeCandles: (tradeId: string) =>
+    request<TradeCandlesResponse>(`/api/trades/${encodeURIComponent(tradeId)}/candles`),
+
   closeTrade: (tradeId: string) =>
     request<Trade>(`/api/trades/${encodeURIComponent(tradeId)}/close`, {
       method: "POST",
     }),
+
+  debugTradeRow: (tradeId: string) =>
+    request<{ ok: boolean; trade_id: string; broker_lot_id: string; live_on_broker: boolean | null }>(
+      `/api/trades/${encodeURIComponent(tradeId)}/debug`,
+      { method: "POST" },
+    ),
 
   getTradeReconciliation: () => request<TradeReconciliation>("/api/trades/reconciliation"),
 
@@ -548,22 +577,40 @@ export type StrategyAnalysisRunsResponse = {
   latest: StrategyAnalysisRun | null;
 };
 
+export type ChildOrder = {
+  broker_order_id: string;
+  order_type: string;
+  state: string;
+  price: number | null;
+  trade_id?: string | null;
+  create_time?: string | null;
+  filled_time?: string | null;
+};
+
 export type Trade = {
   id: string;
+  exchange_id?: string;
   strategy_id: string;
   strategy_name: string;
   pair: string;
+  symbol?: string;
   asset_class: string;
   direction: string;
   entry_price: number;
-  stop_loss: number | null;
-  take_profit: number | null;
+  stop_loss: number | ChildOrder | null;
+  take_profit: number | ChildOrder | null;
+  stop_loss_price?: number | null;
+  take_profit_price?: number | null;
+  stop_loss_order?: ChildOrder | null;
+  take_profit_order?: ChildOrder | null;
   exit_mode: string;
   risk_pct: number;
   units: number | null;
   confidence: number;
-  status: "open" | "closed";
+  status: "open" | "closed" | "cancelled";
+  state?: "open" | "closed" | "cancelled";
   broker_order_id: string | null;
+  broker_lot_id?: string | null;
   opened_at: string | null;
   closed_at?: string | null;
   close_reason?: string;
@@ -577,6 +624,12 @@ export type Trade = {
   close_metadata?: Record<string, unknown>;
   exit_price?: number | null;
   realized_pl?: number | null;
+  unrealized_pl?: number | null;
+  open_time?: string | null;
+  close_time?: string | null;
+  timeframe?: string | null;
+  entry_candle_open?: string | null;
+  exit_candle_open?: string | null;
   metadata: Record<string, unknown>;
   trade_date?: string;
   created_at?: string | null;
@@ -589,23 +642,29 @@ export type TradesListResponse = {
 };
 
 export type TradeReconciliationMatch = {
-  ledger_trade_id: string;
+  ledger_trade_id?: string;
+  local_lot_id?: string;
   broker_trade_id: string;
+  broker_lot_id?: string;
   pair: string;
   direction: string;
-  match_type: "broker_order_id" | "pair_direction";
+  match_type: "broker_order_id" | "broker_lot_id" | "pair_direction";
 };
 
 export type BrokerOpenTrade = {
   id: string;
+  broker_lot_id?: string;
   instrument: string;
   pair: string;
   units: number;
   direction: string;
   price: number;
+  entry_price?: number;
   unrealized_pl: number | null;
   current_price: number | null;
   open_time: string | null;
+  stop_loss?: ChildOrder | null;
+  take_profit?: ChildOrder | null;
 };
 
 export type TradeLedgerMarket = {
@@ -616,14 +675,19 @@ export type TradeLedgerMarket = {
 export type TradeReconciliation = {
   configured: boolean;
   mongo_open_count: number;
+  local_open_count?: number;
   broker_open_count: number;
   status: "matched" | "mismatch" | "unconfigured";
   matched: TradeReconciliationMatch[];
-  ledger_badges: Record<string, "matched" | "ledger_only">;
+  ledger_badges: Record<string, "matched" | "ledger_only" | "local_only">;
+  lot_badges?: Record<string, "matched" | "ledger_only" | "local_only">;
   ledger_market: Record<string, TradeLedgerMarket>;
+  lot_market?: Record<string, TradeLedgerMarket>;
   unmatched_ledger: Trade[];
+  unmatched_local?: Trade[];
   unmatched_broker: BrokerOpenTrade[];
   broker_trades: BrokerOpenTrade[];
+  broker_lots?: BrokerOpenTrade[];
 };
 
 // TODO(trades-suggestions): wire Suggested tab when backend is ready.
@@ -947,11 +1011,15 @@ export type TradeSyncResult = {
   closed: number;
   backfilled: number;
   skipped: number;
+  lots_upserted?: number;
+  events_upserted?: number;
+  enriched?: number;
   imported_trade_ids: string[];
   updated_trade_ids: string[];
   closed_trade_ids: string[];
   backfilled_trade_ids: string[];
   error?: string;
+  mode?: string;
 };
 
 export type ResearchRunDailyResult = {

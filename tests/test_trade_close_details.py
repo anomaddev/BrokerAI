@@ -62,16 +62,24 @@ def test_serialize_trade_test_script_open_reason():
     assert serialized["reason_display"]["label"] == "Random Trade"
 
 
-def test_serialize_trade_reason_display_for_closed_trade():
-    doc = {
-        "id": "trade-2",
-        "status": "closed",
-        "close_reason": "manual_close",
-    }
-    serialized = serialize_trade(doc)
-    assert serialized["reason_display"]["short"] == "Manual"
-    assert serialized["reason_display"]["category"] == "manual"
-    assert serialized["reason_display"]["label"] == "Manual close"
+def test_serialize_legacy_trade_uses_units_field():
+    from brokerai.db.migrations.legacy_trades_to_lots import legacy_trade_to_lot_doc
+    from brokerai.db.repositories.broker_lots import serialize_lot
+
+    serialized = serialize_lot(
+        legacy_trade_to_lot_doc(
+            {
+                "id": "legacy-1",
+                "status": "closed",
+                "pair": "EUR/USD",
+                "direction": "long",
+                "units": -1000,
+                "entry_price": 1.1,
+            }
+        )
+    )
+    assert serialized["units"] == 1000
+    assert serialized["initial_qty"] == 1000
 
 
 def test_serialize_trade_enriches_closed_trade_from_metadata():

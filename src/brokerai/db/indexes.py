@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from brokerai.db.client import get_db
+from brokerai.db.market_data_timeseries import ensure_market_data_timeseries
 
 logger = logging.getLogger(__name__)
 
@@ -11,24 +12,7 @@ async def ensure_indexes() -> None:
     handle = await get_db()
     db = handle.db
 
-    try:
-        await db.market_data.drop_index("market_data_symbol_timeframe_source")
-    except Exception:
-        pass
-    await db.market_data.create_index(
-        [("symbol", 1), ("timeframe", 1), ("source", 1), ("time", 1)],
-        unique=True,
-        name="market_data_symbol_timeframe_source_time",
-    )
-    await db.market_data.create_index(
-        [("symbol", 1), ("timeframe", 1), ("source", 1), ("time", -1)],
-        name="market_data_symbol_timeframe_source_time_desc",
-    )
-    await db.market_data.create_index(
-        "expires_at",
-        expireAfterSeconds=0,
-        name="market_data_expires_at_ttl",
-    )
+    await ensure_market_data_timeseries(db)
     await db.candle_sync_state.create_index(
         [("symbol", 1), ("timeframe", 1), ("source", 1)],
         unique=True,
@@ -88,19 +72,34 @@ async def ensure_indexes() -> None:
     )
     await db.strategies.create_index("preset_id", name="strategies_preset_id")
     await db.bot_activity.create_index([("occurred_at", -1)], name="bot_activity_occurred_at")
-    await db.trades.create_index("id", unique=True, name="trades_id")
-    await db.trades.create_index(
-        [("strategy_id", 1), ("pair", 1), "trade_date"],
-        name="trades_strategy_pair_date",
+    await db.broker_lots.create_index("id", unique=True, name="broker_lots_id")
+    await db.broker_lots.create_index(
+        [("exchange_id", 1), ("account_id", 1), ("broker_lot_id", 1)],
+        unique=True,
+        name="broker_lots_exchange_account_lot",
     )
-    await db.trades.create_index([("status", 1)], name="trades_status")
-    await db.trades.create_index(
-        [("status", 1), ("opened_at", -1)],
-        name="trades_status_opened_at",
+    await db.broker_lots.create_index(
+        [("exchange_id", 1), ("strategy_id", 1), ("state", 1), ("open_time", -1)],
+        name="broker_lots_exchange_strategy_state_open",
     )
-    await db.trades.create_index(
-        [("status", 1), ("closed_at", -1)],
-        name="trades_status_closed_at",
+    await db.broker_lots.create_index(
+        [("exchange_id", 1), ("symbol", 1), ("state", 1)],
+        name="broker_lots_exchange_symbol_state",
+    )
+    await db.broker_lots.create_index([("state", 1)], name="broker_lots_state")
+    await db.broker_events.create_index(
+        [("exchange_id", 1), ("account_id", 1), ("broker_event_id", 1)],
+        unique=True,
+        name="broker_events_exchange_account_event",
+    )
+    await db.broker_events.create_index(
+        [("exchange_id", 1), ("broker_lot_id", 1), ("time", -1)],
+        name="broker_events_exchange_lot_time",
+    )
+    await db.broker_sync_state.create_index(
+        [("exchange_id", 1), ("account_id", 1)],
+        unique=True,
+        name="broker_sync_state_exchange_account",
     )
     await db.strategy_analysis_runs.create_index(
         "id",

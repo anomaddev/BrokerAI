@@ -15,6 +15,7 @@ TaskKind = Literal[
     "data_fetch",
     "trade_execute",
     "trade_sync",
+    "broker_sync",
 ]
 
 TaskStatus = Literal["running", "success", "failed", "skipped", "cancelled"]
@@ -68,9 +69,14 @@ TASK_KINDS: dict[str, TaskKindSpec] = {
         exclusive_kinds=frozenset({"trade_execute"}),
     ),
     "trade_sync": TaskKindSpec(
-        label="Sync OANDA trades",
+        label="Sync broker state",
         cancellable=True,
-        exclusive_kinds=frozenset({"trade_sync"}),
+        exclusive_kinds=frozenset({"trade_sync", "broker_sync"}),
+    ),
+    "broker_sync": TaskKindSpec(
+        label="Sync broker state",
+        cancellable=True,
+        exclusive_kinds=frozenset({"trade_sync", "broker_sync"}),
     ),
 }
 

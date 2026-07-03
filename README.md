@@ -1,5 +1,13 @@
 # BrokerAI
 
+> ## ⚠️ Disclaimer — Not for live trading
+>
+> **BrokerAI is experimental software and is still in active development.** It is incomplete, untested for production use, and may contain bugs that cause incorrect orders, missed exits, data loss, or other failures.
+>
+> **Do not connect BrokerAI to live brokerage accounts or trade with real money.** Use practice/demo accounts only, and assume you may lose any funds you expose to this software.
+>
+> By using BrokerAI, you accept all risk. The authors and contributors provide no warranty and are not liable for trading losses, account damage, or any other financial harm.
+
 Multi-bot trading platform for Proxmox LXC. BrokerAI orchestrates sub-bots, caches analysis data in local MongoDB, exposes an auth-gated React dashboard, and is managed via the `brokerai` CLI.
 
 **Alpha 0.0.1** — structural scaffold. See [`.prompts/BrokerAI-Memory.md`](.prompts/BrokerAI-Memory.md) for current project context.

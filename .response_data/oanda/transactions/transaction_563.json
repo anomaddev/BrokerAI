@@ -1,0 +1,18 @@
+{
+    "transaction": {
+        "id": "563",
+        "accountID": "101-001-38405929-001",
+        "userID": 38405929,
+        "batchID": "561",
+        "requestID": "79536138915652987",
+        "time": "2026-07-02T20:27:23.880732298Z",
+        "type": "STOP_LOSS_ORDER",
+        "tradeID": "562",
+        "timeInForce": "GTC",
+        "triggerCondition": "DEFAULT",
+        "triggerMode": "TOP_OF_BOOK",
+        "price": "114.460",
+        "reason": "ON_FILL"
+    },
+    "lastTransactionID": "567"
+}

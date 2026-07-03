@@ -27,6 +27,18 @@ REASON_REGISTRY: dict[str, TradeReasonInfo] = {
     "trail_atr": TradeReasonInfo("Trail stop (ATR)", "Trail ATR", "exit"),
     "manual_close": TradeReasonInfo("Manual close", "Manual", "manual"),
     "broker_closed": TradeReasonInfo("Closed on OANDA", "Broker close", "broker"),
+    "order_cancelled": TradeReasonInfo("Order cancelled", "Cancelled", "broker"),
+    "ORDER_CANCELLED": TradeReasonInfo("Order cancelled", "Cancelled", "broker"),
+    "STOP_LOSS_ON_FILL_LOSS": TradeReasonInfo(
+        "Stop loss on fill rejected",
+        "SL on fill",
+        "broker",
+    ),
+    "STOP_LOSS_ON_FILL_PRICE_PRECISION_EXCEEDED": TradeReasonInfo(
+        "Stop loss precision rejected",
+        "SL precision",
+        "broker",
+    ),
 }
 
 

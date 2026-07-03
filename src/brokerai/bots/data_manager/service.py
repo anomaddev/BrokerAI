@@ -73,6 +73,18 @@ class DataManagerService:
     ) -> list[dict[str, Any]]:
         """Ensure cache satisfies the request, then return candles."""
         self._record_demand(symbol, timeframe, bar_count=bar_count, source=source, requester=requester)
+        if since is not None and until is not None:
+            await self._cache.backfill(symbol, timeframe, since, until, source=source)
+            return await self._cache.read_candles(
+                symbol,
+                timeframe,
+                source=source,
+                bar_count=bar_count,
+                since=since,
+                until=until,
+                sessions=sessions,
+            )
+
         await self.ensure_coverage(
             symbol,
             timeframe,
@@ -160,6 +172,16 @@ class DataManagerService:
         source: str = OANDA_SOURCE,
     ) -> BackfillResult:
         return await self._cache.backfill(symbol, timeframe, start, end, source=source)
+
+    async def fetch_candles_from_oanda(
+        self,
+        symbol: str,
+        timeframe: str,
+        since: str | datetime,
+        until: str | datetime,
+    ) -> list[dict[str, Any]]:
+        """Return lifecycle-window candles fetched directly from OANDA (no cache)."""
+        return await self._cache.fetch_range_from_oanda(symbol, timeframe, since, until)
 
     async def verify(
         self,

@@ -22,6 +22,7 @@ type BrokerChartOptionsInput = {
   fontSize?: number;
   signalScaleMargin?: number;
   fixTimeScaleEdges?: boolean;
+  secondsVisible?: boolean;
 };
 
 export function createBrokerChartOptions({
@@ -29,6 +30,7 @@ export function createBrokerChartOptions({
   fontSize = 11,
   signalScaleMargin = 0.08,
   fixTimeScaleEdges = false,
+  secondsVisible = false,
 }: BrokerChartOptionsInput = {}): DeepPartial<ChartOptions> {
   return {
     layout: {
@@ -65,7 +67,7 @@ export function createBrokerChartOptions({
     timeScale: {
       borderColor: "#2d3a4f",
       timeVisible: true,
-      secondsVisible: false,
+      secondsVisible,
       rightOffset: 0,
       fixLeftEdge: fixTimeScaleEdges,
       fixRightEdge: fixTimeScaleEdges,

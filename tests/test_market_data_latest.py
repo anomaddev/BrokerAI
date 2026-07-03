@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,11 +32,14 @@ async def test_find_candles_after_uses_gt_filter():
     repo = MarketDataRepository()
     rows = [
         {
+            "meta": {"symbol": "EUR/USD", "timeframe": "M15", "source": "oanda"},
+            "ts": datetime(2026, 1, 7, 15, 15, tzinfo=timezone.utc),
             "time": "2026-01-07T15:15:00.000000000Z",
             "open": 1.1,
             "high": 1.2,
             "low": 1.0,
             "close": 1.15,
+            "volume": 0,
         }
     ]
 
@@ -60,11 +64,23 @@ async def test_find_candles_after_uses_gt_filter():
 
     collection.find.assert_called_once_with(
         {
-            "symbol": "EUR/USD",
-            "timeframe": "M15",
-            "source": "oanda",
-            "time": {"$gt": "2026-01-07T15:00:00.000000000Z"},
+            "meta.symbol": "EUR/USD",
+            "meta.timeframe": "M15",
+            "meta.source": "oanda",
+            "ts": {"$gt": datetime(2026, 1, 7, 15, 0, tzinfo=timezone.utc)},
         },
         {"_id": 0},
     )
-    assert result == rows
+    assert result == [
+        {
+            "symbol": "EUR/USD",
+            "timeframe": "M15",
+            "source": "oanda",
+            "time": "2026-01-07T15:15:00.000000000Z",
+            "open": 1.1,
+            "high": 1.2,
+            "low": 1.0,
+            "close": 1.15,
+            "volume": 0,
+        }
+    ]

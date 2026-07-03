@@ -20,8 +20,15 @@ type BackgroundTasksContextValue = {
   recentTask: BackgroundTask | null;
   dismissRecentTask: () => void;
   watchBackgroundTasks: () => void;
+  showFooterNotice: (notice: FooterNoticeInput) => void;
   isTaskKindActive: (kind: string) => boolean;
   isResearchTaskActive: () => boolean;
+};
+
+type FooterNoticeInput = {
+  label: string;
+  message: string;
+  status: Exclude<BackgroundTask["status"], "running">;
 };
 
 const BackgroundTasksContext = createContext<BackgroundTasksContextValue | null>(null);
@@ -34,6 +41,7 @@ const RESEARCH_KINDS = new Set([
 ]);
 
 const SUCCESS_DISMISS_MS = 5000;
+const TERMINAL_DISMISS_MS = 8000;
 const POLL_INTERVAL_MS = 2500;
 
 function tasksEqual(a: BackgroundTask | null, b: BackgroundTask | null): boolean {
@@ -93,14 +101,34 @@ export function BackgroundTasksProvider({ children }: { children: ReactNode }) {
     (task: BackgroundTask) => {
       clearDismissTimer();
       setRecentTask(task);
-      if (task.status === "success") {
+      if (task.status !== "running") {
+        const dismissMs = task.status === "success" ? SUCCESS_DISMISS_MS : TERMINAL_DISMISS_MS;
         dismissTimerRef.current = window.setTimeout(() => {
           setRecentTask(null);
           dismissTimerRef.current = null;
-        }, SUCCESS_DISMISS_MS);
+        }, dismissMs);
       }
     },
     [clearDismissTimer],
+  );
+
+  const showFooterNotice = useCallback(
+    (notice: FooterNoticeInput) => {
+      const now = new Date().toISOString();
+      showRecentTask({
+        id: `notice-${Date.now()}`,
+        kind: "notice",
+        label: notice.label,
+        message: notice.message,
+        status: notice.status,
+        step: "done",
+        progress: 100,
+        started_at: now,
+        finished_at: now,
+        cancellable: false,
+      });
+    },
+    [showRecentTask],
   );
 
   const applyRecentTask = useCallback(
@@ -110,7 +138,12 @@ export function BackgroundTasksProvider({ children }: { children: ReactNode }) {
       }
       seenTaskIdsRef.current.add(task.id);
       showRecentTask(task);
-      if (task.status === "success" || task.status === "failed" || task.status === "cancelled") {
+      if (
+        task.status === "success" ||
+        task.status === "failed" ||
+        task.status === "skipped" ||
+        task.status === "cancelled"
+      ) {
         dispatchCompleted(task);
       }
     },
@@ -204,12 +237,13 @@ export function BackgroundTasksProvider({ children }: { children: ReactNode }) {
       recentTask,
       dismissRecentTask,
       watchBackgroundTasks,
+      showFooterNotice,
       isTaskKindActive: (kind: string) =>
         activeTask?.status === "running" && activeTask.kind === kind,
       isResearchTaskActive: () =>
         activeTask?.status === "running" && RESEARCH_KINDS.has(activeTask.kind),
     }),
-    [activeTask, recentTask, dismissRecentTask, watchBackgroundTasks],
+    [activeTask, recentTask, dismissRecentTask, watchBackgroundTasks, showFooterNotice],
   );
 
   return (

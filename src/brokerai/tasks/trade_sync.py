@@ -17,6 +17,10 @@ from brokerai.trading.trade_sync import sync_oanda_trades_to_ledger
 
 
 def _sync_success_message(result: dict) -> str:
+    skipped_reason = result.get("skipped_reason")
+    if skipped_reason == "recent_sync":
+        return "Sync skipped — broker state was refreshed recently; try again in a few minutes"
+
     imported = int(result.get("imported", 0))
     updated = int(result.get("updated", 0))
     closed = int(result.get("closed", 0))
@@ -32,18 +36,18 @@ def _sync_success_message(result: dict) -> str:
         parts.append(f"{closed} closed")
     if backfilled:
         parts.append(f"{backfilled} backfilled")
-    return f"Sync complete — {', '.join(parts)}"
+        return f"Sync complete — {', '.join(parts)}" if parts else "Broker state is already in sync"
 
 
-async def start_trade_sync_task(*, label: str = "Sync OANDA trades") -> tuple[str | None, str | None]:
+async def start_trade_sync_task(*, label: str = "Sync broker state") -> tuple[str | None, str | None]:
     spec = task_kind_spec("trade_sync")
     if spec is None:
         return None, "trade_sync kind is not registered"
 
     async def work(token: CancellationToken) -> None:
         token.check()
-        update_task("fetch", "Fetching OANDA open trades…", 25)
-        result = await sync_oanda_trades_to_ledger()
+        update_task("fetch", "Fetching broker state…", 25)
+        result = await sync_oanda_trades_to_ledger(force=True)
         token.check()
 
         if not result.get("configured"):
@@ -58,7 +62,7 @@ async def start_trade_sync_task(*, label: str = "Sync OANDA trades") -> tuple[st
             await finish_task_failed(str(result["error"]))
             return
 
-        update_task("reconcile", "Reconciling ledger…", 75)
+        update_task("reconcile", "Reconciling broker lots…", 75)
         token.check()
         await finish_task_success(result, message=_sync_success_message(result))
 

@@ -24,11 +24,11 @@ def test_list_trades_requires_auth() -> None:
     assert response.status_code == 401
 
 
-@patch("brokerai.web.routes.trades.TradesRepository")
-def test_list_trades_returns_payload(mock_repo_cls, client: TestClient) -> None:
-    repo = AsyncMock()
-    mock_repo_cls.return_value = repo
-    repo.list_trades.return_value = [
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_list_trades_returns_payload(mock_service_cls, client: TestClient) -> None:
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.list_lots.return_value = [
         {
             "id": "trade-1",
             "strategy_id": "s1",
@@ -57,14 +57,14 @@ def test_list_trades_returns_payload(mock_repo_cls, client: TestClient) -> None:
     body = response.json()
     assert body["latest"]["id"] == "trade-1"
     assert len(body["trades"]) == 1
-    repo.list_trades.assert_awaited_once()
+    service.list_lots.assert_awaited_once()
 
 
-@patch("brokerai.web.routes.trades.TradesRepository")
-def test_list_trades_all_status(mock_repo_cls, client: TestClient) -> None:
-    repo = AsyncMock()
-    mock_repo_cls.return_value = repo
-    repo.list_trades.return_value = [
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_list_trades_all_status(mock_service_cls, client: TestClient) -> None:
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.list_lots.return_value = [
         {"id": "open-1", "status": "open"},
         {"id": "closed-1", "status": "closed"},
     ]
@@ -74,67 +74,137 @@ def test_list_trades_all_status(mock_repo_cls, client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert len(body["trades"]) == 2
-    repo.list_trades.assert_awaited_once_with(
-        status="all",
+    service.list_lots.assert_awaited_once_with(
+        state="all",
         strategy_id=None,
         pair=None,
         limit=50,
         before=None,
+        exchange_id="oanda",
     )
 
 
-@patch("brokerai.web.routes.trades.TradesRepository")
-def test_close_trade_returns_404(mock_repo_cls, client: TestClient) -> None:
-    repo = AsyncMock()
-    mock_repo_cls.return_value = repo
-    repo.get_by_id.return_value = None
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_close_trade_returns_404(mock_service_cls, client: TestClient) -> None:
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.get_lot_by_id.return_value = None
 
     response = client.post("/api/trades/missing/close")
 
     assert response.status_code == 404
 
 
-@patch("brokerai.web.routes.trades.TradesRepository")
-def test_close_trade_rejects_closed(mock_repo_cls, client: TestClient) -> None:
-    repo = AsyncMock()
-    mock_repo_cls.return_value = repo
-    repo.get_by_id.return_value = {"id": "trade-1", "status": "closed"}
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_close_trade_rejects_closed(mock_service_cls, client: TestClient) -> None:
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.get_lot_by_id.return_value = {"id": "trade-1", "status": "closed", "state": "closed"}
 
     response = client.post("/api/trades/trade-1/close")
 
     assert response.status_code == 400
-    repo.close_trade.assert_not_awaited()
+    service.close_lot.assert_not_awaited()
 
 
-@patch("brokerai.web.routes.trades.TradesRepository")
-def test_close_trade_without_broker(mock_repo_cls, client: TestClient) -> None:
-    repo = AsyncMock()
-    mock_repo_cls.return_value = repo
-    repo.get_by_id.side_effect = [
-        {"id": "trade-1", "status": "open", "broker_order_id": None},
-        {"id": "trade-1", "status": "closed", "close_reason": "manual_close"},
-    ]
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_close_trade_without_broker(mock_service_cls, client: TestClient) -> None:
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.get_lot_by_id.return_value = {
+        "id": "trade-1",
+        "status": "open",
+        "state": "open",
+        "exchange_id": "oanda",
+        "broker_lot_id": None,
+    }
+    service.close_lot.return_value = {
+        "id": "trade-1",
+        "status": "closed",
+        "state": "closed",
+        "close_reason": "manual_close",
+    }
 
     response = client.post("/api/trades/trade-1/close")
 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "closed"
-    repo.close_trade.assert_awaited_once_with(
-        "trade-1",
-        reason="manual_close",
-        metadata={},
-        exit_price=None,
-        realized_pl=None,
-        closed_at=None,
-    )
+    service.close_lot.assert_awaited_once_with("oanda", "trade-1", reason="manual_close")
 
 
-@patch("brokerai.web.routes.trades.TradesRepository")
-def test_get_trade_returns_404(mock_repo_cls, client: TestClient) -> None:
-    repo = AsyncMock()
-    mock_repo_cls.return_value = repo
-    repo.get_by_id.return_value = None
+@patch("brokerai.web.routes.trades.ExchangeConnectionsRepository")
+@patch("brokerai.web.routes.trades.OandaAdapter")
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_debug_trade_row_logs_to_server(
+    mock_service_cls,
+    mock_adapter_cls,
+    mock_exchange_cls,
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    caplog.set_level(logging.INFO)
+
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.get_lot_by_id.return_value = {
+        "id": "trade-1",
+        "status": "open",
+        "state": "open",
+        "broker_lot_id": "565",
+        "pair": "EUR/JPY",
+        "direction": "short",
+    }
+
+    exchange_repo = AsyncMock()
+    mock_exchange_cls.return_value = exchange_repo
+    exchange_repo.get_oanda.return_value = {
+        "access_token": "token",
+        "account_id": "acct",
+        "environment": "practice",
+    }
+
+    adapter = AsyncMock()
+    mock_adapter_cls.return_value = adapter
+    adapter.fetch_open_lots_with_prices.return_value = [
+        type("Lot", (), {"broker_lot_id": "565"})(),
+    ]
+
+    response = client.post("/api/trades/trade-1/debug")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["broker_lot_id"] == "565"
+    assert body["live_on_broker"] is True
+    assert any("Trade row click" in record.message for record in caplog.records)
+
+
+@patch("brokerai.web.routes.trades.ExchangeConnectionsRepository")
+@patch("brokerai.web.routes.trades.OandaAdapter")
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_debug_trade_row_returns_404_when_missing(
+    mock_service_cls,
+    mock_adapter_cls,
+    mock_exchange_cls,
+    client: TestClient,
+) -> None:
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.get_lot_by_id.return_value = None
+
+    response = client.post("/api/trades/missing-id/debug")
+
+    assert response.status_code == 404
+
+
+@patch("brokerai.web.routes.trades.BrokerStateService")
+def test_get_trade_returns_404(mock_service_cls, client: TestClient) -> None:
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.get_lot_by_id.return_value = None
 
     response = client.get("/api/trades/missing")
 
@@ -164,18 +234,18 @@ def test_sync_trades_conflict(mock_start, client: TestClient) -> None:
     assert response.json()["skipped_reason"] == "A task is already running: Sync OANDA trades"
 
 
-@patch("brokerai.web.routes.trades.get_broker_open_trades_snapshot")
-@patch("brokerai.web.routes.trades.TradesRepository")
+@patch("brokerai.web.routes.trades.OandaAdapter")
+@patch("brokerai.web.routes.trades.BrokerStateService")
 @patch("brokerai.web.routes.trades.ExchangeConnectionsRepository")
 def test_reconciliation_unconfigured(
     mock_exchange_cls,
-    mock_repo_cls,
-    mock_snapshot,
+    mock_service_cls,
+    mock_adapter_cls,
     client: TestClient,
 ) -> None:
-    trades_repo = AsyncMock()
-    mock_repo_cls.return_value = trades_repo
-    trades_repo.list_trades.return_value = []
+    service = AsyncMock()
+    mock_service_cls.return_value = service
+    service.list_lots.return_value = []
 
     exchange_repo = AsyncMock()
     mock_exchange_cls.return_value = exchange_repo

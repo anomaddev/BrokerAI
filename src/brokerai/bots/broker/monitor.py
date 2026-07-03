@@ -12,7 +12,7 @@ from brokerai.config.settings import get_settings
 from brokerai.db.repositories.trades import TradesRepository
 from brokerai.trading.candle_context import load_candles_for_unit
 from brokerai.trading.schedule import utc_now
-from brokerai.trading.trade_sync import sync_oanda_trades_to_ledger
+from brokerai.trading.broker.sync import run_broker_sync
 from brokerai.trading.indicator_cache import IndicatorCache
 from brokerai.trading.registries.exits import create_exit_monitor
 from brokerai.trading.types import WorkUnit
@@ -62,10 +62,15 @@ class _TradeExitAnalyzer(SubAnalyzer):
             exit_intent.pair,
             exit_intent.reason,
         )
+        close_metadata = dict(exit_intent.metadata or {})
+        if candles:
+            candle_time = candles[-1].get("time")
+            if candle_time:
+                close_metadata["exit_candle_open"] = candle_time
         await TradesRepository().close_trade(
             exit_intent.trade_id,
             reason=exit_intent.reason,
-            metadata=exit_intent.metadata,
+            metadata=close_metadata,
         )
 
 
@@ -149,20 +154,19 @@ class BrokerMonitor:
                 return
 
         self._last_trade_sync_at = now
-        result = await sync_oanda_trades_to_ledger()
-        if not result.get("configured"):
+        result = await run_broker_sync(exchange_id="oanda", mode="incremental")
+        if not result.configured:
             return
-        imported = int(result.get("imported", 0))
-        updated = int(result.get("updated", 0))
-        closed = int(result.get("closed", 0))
-        backfilled = int(result.get("backfilled", 0))
+        imported = int(result.lots_upserted)
+        updated = int(result.enriched)
+        closed = int(result.lots_closed)
+        backfilled = 0
         if imported or updated or closed or backfilled:
             logger.info(
-                "Broker monitor — OANDA trade sync imported=%d updated=%d closed=%d backfilled=%d",
+                "Broker monitor — broker sync lots=%d enriched=%d closed=%d",
                 imported,
                 updated,
                 closed,
-                backfilled,
             )
 
     async def sync_account_positions(self) -> None:

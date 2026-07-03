@@ -1,0 +1,86 @@
+{
+    "trades": [
+        {
+            "id": "565",
+            "instrument": "EUR_JPY",
+            "price": "184.196",
+            "openTime": "2026-07-02T20:27:24.111844157Z",
+            "initialUnits": "-683",
+            "initialMarginRequired": "39.0526",
+            "state": "OPEN",
+            "currentUnits": "-683",
+            "realizedPL": "0.0000",
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "trueUnrealizedPL": "-0.1798",
+            "unrealizedPL": "-0.1798",
+            "marginUsed": "39.0474",
+            "stopLossOrder": {
+                "id": "566",
+                "createTime": "2026-07-02T20:27:24.111844157Z",
+                "type": "STOP_LOSS",
+                "tradeID": "565",
+                "price": "185.530",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "PENDING"
+            }
+        },
+        {
+            "id": "562",
+            "instrument": "CAD_JPY",
+            "price": "113.572",
+            "openTime": "2026-07-02T20:27:23.880732298Z",
+            "initialUnits": "-1474",
+            "initialMarginRequired": "51.9636",
+            "state": "OPEN",
+            "currentUnits": "-1474",
+            "realizedPL": "0.0000",
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "trueUnrealizedPL": "-0.6099",
+            "unrealizedPL": "-0.6099",
+            "marginUsed": "51.9651",
+            "stopLossOrder": {
+                "id": "563",
+                "createTime": "2026-07-02T20:27:23.880732298Z",
+                "type": "STOP_LOSS",
+                "tradeID": "562",
+                "price": "114.460",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "PENDING"
+            }
+        },
+        {
+            "id": "559",
+            "instrument": "AUD_JPY",
+            "price": "111.501",
+            "openTime": "2026-07-02T20:27:23.878789935Z",
+            "initialUnits": "-931",
+            "initialMarginRequired": "32.2247",
+            "state": "OPEN",
+            "currentUnits": "-931",
+            "realizedPL": "0.0000",
+            "financing": "0.0000",
+            "dividendAdjustment": "0.0000",
+            "trueUnrealizedPL": "-0.2451",
+            "unrealizedPL": "-0.2451",
+            "marginUsed": "32.2238",
+            "stopLossOrder": {
+                "id": "560",
+                "createTime": "2026-07-02T20:27:23.878789935Z",
+                "type": "STOP_LOSS",
+                "tradeID": "559",
+                "price": "112.235",
+                "timeInForce": "GTC",
+                "triggerCondition": "DEFAULT",
+                "triggerMode": "TOP_OF_BOOK",
+                "state": "PENDING"
+            }
+        }
+    ],
+    "lastTransactionID": "566"
+}

@@ -1,0 +1,10 @@
+{
+    "from": "2026-06-25T21:00:14.234092664Z",
+    "to": "2026-07-02T21:00:14.234092664Z",
+    "pageSize": 500,
+    "count": 177,
+    "pages": [
+        "https://api-fxpractice.oanda.com/v3/accounts/101-001-38405929-001/transactions/idrange?from=391&to=567"
+    ],
+    "lastTransactionID": "567"
+}

@@ -38,6 +38,8 @@ async def get_candles(
     symbol: str = Query(..., min_length=3),
     timeframe: str = Query("M15"),
     limit: int = Query(CANDLE_LIMIT_DEFAULT, ge=CANDLE_LIMIT_MIN, le=CANDLE_LIMIT_MAX),
+    since: str | None = Query(default=None, min_length=10),
+    until: str | None = Query(default=None, min_length=10),
     _username: str = Depends(require_auth),
 ) -> JSONResponse:
     pair = resolve_forex_pair(symbol)
@@ -50,6 +52,8 @@ async def get_candles(
         timeframe,
         bar_count=limit,
         source=OANDA_SOURCE,
+        since=since,
+        until=until,
         requester=WEB_EXPLORE_REQUESTER,
     )
 

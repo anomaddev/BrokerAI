@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,7 +24,10 @@ def test_serialize_trade_formats_datetimes():
         "units": 1000,
         "confidence": 0.8,
         "status": "open",
+        "state": "open",
         "broker_order_id": "123",
+        "broker_lot_id": "123",
+        "symbol": "EUR_USD",
         "metadata": {},
         "trade_date": "2026-06-30",
         "opened_at": datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc),
@@ -39,111 +42,147 @@ def test_serialize_trade_formats_datetimes():
 
 @pytest.mark.asyncio
 async def test_trades_repository_list_and_get():
-    stored: dict[str, dict] = {}
-
-    async def insert_one(doc):
-        stored[doc["id"]] = doc
-
-    async def update_one(filter_doc, update_doc):
-        trade_id = filter_doc["id"]
-        if trade_id not in stored:
-            return MagicMock(matched_count=0)
-        stored[trade_id] = {**stored[trade_id], **update_doc["$set"]}
-        return MagicMock(matched_count=1)
-
-    cursor = MagicMock()
-
-    async def to_list(length=200):
-        rows = [row for row in stored.values() if row.get("status") == "open"]
-        return rows[:length]
-
-    cursor.to_list = AsyncMock(side_effect=to_list)
-    cursor.sort.return_value = cursor
-    cursor.limit.return_value = cursor
-
-    closed_cursor = MagicMock()
-
-    async def closed_to_list(length=200):
-        rows = [row for row in stored.values() if row.get("status") == "closed"]
-        return rows[:length]
-
-    closed_cursor.to_list = AsyncMock(side_effect=closed_to_list)
-    closed_cursor.sort.return_value = closed_cursor
-    closed_cursor.limit.return_value = closed_cursor
-
-    def find(query, projection):
-        if query.get("status") == "closed":
-            return closed_cursor
-        return cursor
-
-    collection = MagicMock()
-    collection.insert_one = AsyncMock(side_effect=insert_one)
-    collection.update_one = AsyncMock(side_effect=update_one)
-    collection.find_one = AsyncMock(
-        side_effect=lambda query, projection: stored.get(query["id"])
-    )
-    collection.find = MagicMock(side_effect=find)
-    db = MagicMock()
-    db.__getitem__.return_value = collection
-    handle = MagicMock()
-    handle.db = db
-
+    lots_repo = AsyncMock()
     repo = TradesRepository()
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("brokerai.db.repositories.trades.get_db", AsyncMock(return_value=handle))
+    repo._lots = lots_repo
 
-        open_doc = await repo.create_open_trade(
-            {
-                "strategy_id": "s1",
-                "strategy_name": "EMA",
-                "pair": "EUR/USD",
-                "direction": "long",
-                "entry_price": 1.1,
-                "stop_loss": 1.09,
-                "take_profit": 1.12,
-                "exit_mode": "rr_ratio",
-                "risk_pct": 1.0,
-                "confidence": 0.8,
-                "metadata": {"analysis_run_id": "run-1"},
-            },
-            broker_order_id="broker-1",
-        )
-        assert open_doc["status"] == "open"
-        assert open_doc["metadata"]["analysis_run_id"] == "run-1"
+    open_doc = {
+        "id": "trade-1",
+        "status": "open",
+        "state": "open",
+        "metadata": {"analysis_run_id": "run-1"},
+        "broker_lot_id": "broker-1",
+    }
+    closed_doc = {
+        **open_doc,
+        "status": "closed",
+        "state": "closed",
+        "close_reason": "reverse_crossover",
+    }
 
-        trade_id = open_doc["id"]
-        await repo.close_trade(trade_id, reason="reverse_crossover")
+    lots_repo.upsert_lot = AsyncMock(return_value=open_doc)
+    lots_repo.list_lots = AsyncMock(side_effect=lambda **kwargs: (
+        [open_doc] if kwargs.get("state") == "open" else [closed_doc] if kwargs.get("state") == "closed" else []
+    ))
+    lots_repo.get_by_id = AsyncMock(side_effect=[open_doc, closed_doc])
+    lots_repo.close_lot = AsyncMock()
 
-        open_rows = await repo.list_trades(status="open", limit=10)
-        assert open_rows == []
+    created = await repo.create_open_trade(
+        {
+            "strategy_id": "s1",
+            "strategy_name": "EMA",
+            "pair": "EUR/USD",
+            "asset_class": "forex",
+            "direction": "long",
+            "entry_price": 1.1,
+            "stop_loss": 1.09,
+            "take_profit": 1.12,
+            "exit_mode": "rr_ratio",
+            "risk_pct": 1.0,
+            "confidence": 0.8,
+            "metadata": {"analysis_run_id": "run-1"},
+        },
+        broker_order_id="broker-1",
+    )
+    assert created["status"] == "open"
 
-        closed_rows = await repo.list_trades(status="closed", limit=10)
-        assert len(closed_rows) == 1
-        assert closed_rows[0]["close_reason"] == "reverse_crossover"
+    with patch("brokerai.trading.broker.state.BrokerStateService") as mock_state_cls:
+        mock_state = AsyncMock()
+        mock_state_cls.return_value = mock_state
+        mock_state.close_lot = AsyncMock(return_value=closed_doc)
+        await repo.close_trade("trade-1", reason="reverse_crossover")
 
-        fetched = await repo.get_by_id(trade_id)
-        assert fetched is not None
-        assert fetched["status"] == "closed"
+    open_rows = await repo.list_trades(status="open", limit=10)
+    assert open_rows == [open_doc]
+
+    closed_rows = await repo.list_trades(status="closed", limit=10)
+    assert closed_rows == [closed_doc]
+
+    fetched = await repo.get_by_id("trade-1")
+    assert fetched is not None
+    assert fetched["status"] == "closed"
 
 
 @pytest.mark.asyncio
-async def test_list_trades_combined_orders_open_before_closed():
+async def test_list_trades_all_sorted_open_first_then_last_modified():
+    rows = [
+        {
+            "id": "open-old",
+            "status": "open",
+            "opened_at": datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc),
+        },
+        {
+            "id": "open-new",
+            "status": "open",
+            "opened_at": datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc),
+        },
+        {
+            "id": "closed-newest",
+            "status": "closed",
+            "closed_at": datetime(2026, 7, 2, 8, 0, tzinfo=timezone.utc),
+        },
+    ]
+
+    from brokerai.db.repositories.broker_lots import _sort_lots_for_display
+
+    sorted_rows = _sort_lots_for_display(
+        [serialize_trade(row) for row in rows],
+        open_first=True,
+    )
+    assert [row["id"] for row in sorted_rows] == ["open-new", "open-old", "closed-newest"]
+
+
+@pytest.mark.asyncio
+async def test_list_trades_combined_delegates_to_list_lots():
     open_rows = [
         {
             "id": "open-1",
+            "exchange_id": "oanda",
+            "account_id": "a",
+            "broker_lot_id": "1",
+            "asset_class": "forex",
+            "state": "open",
             "status": "open",
+            "instrument": "EUR_USD",
+            "symbol": "EUR_USD",
+            "direction": "long",
+            "initial_qty": 1,
+            "current_qty": 1,
+            "entry_price": 1.1,
             "opened_at": datetime(2026, 6, 30, 14, 0, tzinfo=timezone.utc),
         },
         {
             "id": "open-2",
+            "exchange_id": "oanda",
+            "account_id": "a",
+            "broker_lot_id": "2",
+            "asset_class": "forex",
+            "state": "open",
             "status": "open",
+            "instrument": "EUR_USD",
+            "symbol": "EUR_USD",
+            "direction": "long",
+            "initial_qty": 1,
+            "current_qty": 1,
+            "entry_price": 1.1,
             "opened_at": datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc),
         },
     ]
     closed_rows = [
         {
             "id": "closed-1",
+            "exchange_id": "oanda",
+            "account_id": "a",
+            "broker_lot_id": "3",
+            "asset_class": "forex",
+            "state": "closed",
             "status": "closed",
+            "instrument": "EUR_USD",
+            "symbol": "EUR_USD",
+            "direction": "long",
+            "initial_qty": 1,
+            "current_qty": 0,
+            "entry_price": 1.1,
             "closed_at": datetime(2026, 6, 29, 16, 0, tzinfo=timezone.utc),
         }
     ]
@@ -151,17 +190,20 @@ async def test_list_trades_combined_orders_open_before_closed():
     repo = TradesRepository()
     calls: list[dict] = []
 
-    async def fake_list_trades(**kwargs):
+    async def fake_list_lots(**kwargs):
         calls.append(kwargs)
-        if kwargs.get("status") == "open":
+        state = kwargs.get("state")
+        if state == "all":
+            return [serialize_trade(row) for row in open_rows] + [
+                serialize_trade(row) for row in closed_rows
+            ]
+        if state == "open":
             return [serialize_trade(row) for row in open_rows]
         return [serialize_trade(row) for row in closed_rows]
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(repo, "list_trades", fake_list_trades)
-        combined = await repo._list_trades_combined(limit=10)
+        mp.setattr(repo._lots, "list_lots", fake_list_lots)
+        combined = await repo.list_trades(status="all", limit=10)
 
     assert [trade["id"] for trade in combined] == ["open-1", "open-2", "closed-1"]
-    assert calls[0]["status"] == "open"
-    assert calls[1]["status"] == "closed"
-    assert calls[1]["limit"] == 8
+    assert calls[0]["state"] == "all"

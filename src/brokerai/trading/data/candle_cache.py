@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from brokerai.bots.data_manager.candle_schedule import timeframe_to_duration
 from brokerai.config.settings import get_settings
 from brokerai.db.repositories.candle_sync_state import CandleSyncStateRepository
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
@@ -82,6 +83,17 @@ class CandleCache:
         until: str | None = None,
         sessions: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        if bar_count is not None and since is not None and until is not None:
+            return await self._market_repo.find_candles(
+                symbol,
+                timeframe,
+                source,
+                since=since,
+                until=until,
+                limit=max(1, bar_count),
+                ascending=True,
+                sessions=sessions,
+            )
         if bar_count is not None:
             return await self._market_repo.find_latest_candles(
                 symbol,
@@ -372,6 +384,82 @@ class CandleCache:
             complete=complete,
         )
 
+    def _normalize_range_bounds(
+        self,
+        start: str | datetime,
+        end: str | datetime,
+    ) -> tuple[str, str]:
+        """Return OANDA-formatted ``(start_str, end_str)`` for a candle range."""
+        if isinstance(start, datetime):
+            start_dt = start.astimezone(timezone.utc) if start.tzinfo else start.replace(tzinfo=timezone.utc)
+            start_str = format_oanda_time(start_dt)
+        else:
+            start_str = str(start)
+            if "T" not in start_str:
+                start_dt = datetime.fromisoformat(start_str).replace(tzinfo=timezone.utc)
+                start_str = format_oanda_time(start_dt)
+
+        if isinstance(end, datetime):
+            end_dt = end.astimezone(timezone.utc) if end.tzinfo else end.replace(tzinfo=timezone.utc)
+            end_str = format_oanda_time(end_dt)
+        else:
+            end_str = str(end)
+            if "T" not in end_str:
+                end_dt = datetime.fromisoformat(end_str).replace(tzinfo=timezone.utc)
+                end_str = format_oanda_time(end_dt)
+
+        return start_str, end_str
+
+    async def fetch_range_from_oanda(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: str | datetime,
+        end: str | datetime,
+    ) -> list[dict[str, Any]]:
+        """Fetch closed candles from OANDA for ``[start, end]`` without touching MongoDB.
+
+        Used for trade detail charts where the lifecycle window must come directly from
+        the broker rather than the explore cache.
+
+        Raises:
+            ValueError: OANDA credentials missing or timeframe unsupported.
+        """
+        granularity = timeframe_to_granularity(timeframe)
+        if granularity is None:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+        start_str, end_str = self._normalize_range_bounds(start, end)
+        if start_str > end_str:
+            return []
+
+        token, environment = await self._oanda_credentials()
+        instrument = forex_pair_to_instrument(symbol)
+        chunk_size = get_settings().candle_sync_chunk_size
+        collected: list[dict[str, Any]] = []
+        cursor = start_str
+
+        while cursor <= end_str:
+            batch = await fetch_candles_range(
+                token,
+                environment,
+                instrument,
+                granularity,
+                cursor,
+                end_str,
+                max_chunk=chunk_size,
+            )
+            if not batch:
+                break
+            collected.extend(enrich_candles(batch))
+            last_time = str(batch[-1]["time"])
+            if last_time >= end_str or len(batch) < chunk_size:
+                break
+            last_dt = parse_oanda_time(last_time)
+            cursor = format_oanda_time(last_dt + timeframe_to_duration(timeframe))
+
+        return collected
+
     async def backfill(
         self,
         symbol: str,
@@ -396,23 +484,7 @@ class CandleCache:
                 error=f"Unsupported timeframe: {timeframe}",
             )
 
-        if isinstance(start, datetime):
-            start_dt = start.astimezone(timezone.utc) if start.tzinfo else start.replace(tzinfo=timezone.utc)
-            start_str = format_oanda_time(start_dt)
-        else:
-            start_str = str(start)
-            start_dt = parse_oanda_time(start_str) if "T" in start_str else datetime.fromisoformat(start_str).replace(tzinfo=timezone.utc)
-
-        if isinstance(end, datetime):
-            end_dt = end.astimezone(timezone.utc) if end.tzinfo else end.replace(tzinfo=timezone.utc)
-            end_str = format_oanda_time(end_dt)
-        else:
-            end_str = str(end)
-            if "T" in end_str:
-                end_dt = parse_oanda_time(end_str)
-            else:
-                end_dt = datetime.fromisoformat(end_str).replace(tzinfo=timezone.utc)
-                end_str = format_oanda_time(end_dt)
+        start_str, end_str = self._normalize_range_bounds(start, end)
 
         try:
             token, environment = await self._oanda_credentials()
