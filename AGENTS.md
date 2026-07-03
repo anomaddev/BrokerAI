@@ -26,13 +26,11 @@ Fresh install shows a Setup wizard at `http://localhost:5173`. Create an admin (
 
 Run pytest **as a module** so the repo root is importable (tests do `from tests.fixtures...` and there is no root `conftest.py`/`__init__.py`): `./venv/bin/python -m pytest`. Plain `pytest` fails collection with `ModuleNotFoundError: No module named 'tests'`.
 
-### Known pre-existing breakage (NOT an environment problem)
+### Test suite state (NOT an environment problem)
 
-At the current commit, `src/brokerai/bots/data_manager/service.py` imports `brokerai.trading.data.candle_cache`, a module that does not exist in the repo. This breaks:
-- The `brokerai` CLI entirely (`brokerai run orchestrator`, `brokerai run data-manager`, etc.) — `brokerai.cli.candles` imports it at load time.
-- 6 test files (`test_candle_market_calendar`, `test_data_analyzer_startup`, `test_data_manager_bot_schedule`, `test_data_manager_candles`, `test_data_manager_service`, `test_executor_bot`).
+The full suite (`./venv/bin/python -m pytest`) collects 181 tests: 180 pass and 1 fails. The single failure — `tests/test_data_analyzer_startup.py::test_first_tick_analyzes_when_no_prior_revision` — is a **test-isolation flake**: it passes when run alone or with only its own file (`... -m pytest tests/test_data_analyzer_startup.py`), and only fails when the whole suite runs before it (state pollution / ordering, not the environment). Do not try to "fix the environment" for this.
 
-The web API (`brokerai.web.app`) does NOT import that module and runs fine; the remaining 61 tests pass. Do not try to "fix the environment" for these — it is a code defect.
+(The `brokerai.trading.data.candle_cache` module referenced by older notes now exists; the `brokerai` CLI imports and runs fine.)
 
 ### Build / typecheck
 
