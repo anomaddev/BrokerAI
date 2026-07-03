@@ -332,6 +332,18 @@ export const api = {
     request<OandaTestResult>("/api/settings/exchanges/oanda/test", { method: "POST" }),
   getOandaAccountSummary: () =>
     request<OandaAccountSummary>("/api/settings/exchanges/oanda/account-summary"),
+  getOandaAccounts: () =>
+    request<OandaAccountsSnapshot>("/api/settings/exchanges/oanda/accounts"),
+  getOandaAccountSummaryHistory: (params?: { since?: string; until?: string; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.since) search.set("since", params.since);
+    if (params?.until) search.set("until", params.until);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return request<OandaAccountSummaryHistory>(
+      `/api/settings/exchanges/oanda/account-summary/history${query ? `?${query}` : ""}`,
+    );
+  },
 
   getResearchSettings: () => request<ResearchSettings>("/api/settings/research"),
   saveResearchSettings: (data: Partial<ResearchSettings>) =>
@@ -822,6 +834,20 @@ export type OandaAccountSummary = {
   open_trade_count: number | null;
   open_position_count: number | null;
   pending_order_count: number | null;
+  account_id?: string | null;
+  environment?: string | null;
+  synced_at?: string | null;
+};
+
+export type OandaAccountsSnapshot = {
+  accounts: Array<{ id: string; tags: string[] }>;
+  environment: string | null;
+  synced_at: string | null;
+};
+
+export type OandaAccountSummaryHistory = {
+  account_id: string;
+  points: OandaAccountSummary[];
 };
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high";

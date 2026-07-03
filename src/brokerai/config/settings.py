@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     secretary_tick_interval_seconds: int = 5
     broker_sync_interval_seconds: int = 30
     trade_sync_interval_seconds: int = 300
+    oanda_account_sync_interval_seconds: int = 300
     pipeline_candle_cache_ttl_seconds: int = 60
 
     @property

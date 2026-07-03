@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
-from brokerai.integrations.oanda import get_account_summary as oanda_get_account_summary
+from brokerai.db.repositories.oanda_account_snapshots import OandaAccountSnapshotsRepository
 from brokerai.integrations.oanda import test_connection as oanda_test_connection
+from brokerai.trading.oanda_account_sync import get_cached_oanda_account_summary, run_oanda_account_sync
 from brokerai.web.routes.auth import require_auth
 
 router = APIRouter(prefix="/api/settings/exchanges", tags=["settings-exchanges"])
@@ -84,33 +86,93 @@ async def test_oanda_connection(
     return JSONResponse({"ok": ok, "message": message, "accounts": accounts})
 
 
+@router.get("/oanda/accounts")
+async def get_oanda_accounts(_username: str = Depends(require_auth)) -> JSONResponse:
+    """Return the most recently synced OANDA account list from MongoDB."""
+    repo = ExchangeConnectionsRepository()
+    oanda = await repo.get_oanda()
+    if not oanda.get("access_token"):
+        raise HTTPException(status_code=400, detail="OANDA is not connected")
+
+    snapshots_repo = OandaAccountSnapshotsRepository()
+    doc = await snapshots_repo.get_latest_accounts()
+    if doc is None:
+        sync = await run_oanda_account_sync(force=True)
+        if sync.accounts_count == 0 and sync.skipped_reason == "not_configured":
+            raise HTTPException(status_code=400, detail="OANDA is not connected")
+        doc = await snapshots_repo.get_latest_accounts()
+        if doc is None:
+            raise HTTPException(status_code=503, detail="OANDA account list not synced yet")
+
+    synced_at = doc.get("synced_at")
+    return JSONResponse(
+        {
+            "accounts": doc.get("accounts") or [],
+            "environment": doc.get("environment"),
+            "synced_at": synced_at.isoformat() if isinstance(synced_at, datetime) else synced_at,
+        }
+    )
+
+
 @router.get("/oanda/account-summary")
 async def get_oanda_account_summary(_username: str = Depends(require_auth)) -> JSONResponse:
     repo = ExchangeConnectionsRepository()
     oanda = await repo.get_oanda()
     access_token = oanda.get("access_token", "")
     account_id = oanda.get("account_id")
-    environment = oanda.get("environment", "practice")
 
     if not access_token or not account_id:
         raise HTTPException(status_code=400, detail="OANDA is not connected")
 
-    try:
-        summary = await oanda_get_account_summary(access_token, environment, account_id)
-    except httpx.HTTPStatusError as exc:
-        status = exc.response.status_code
-        if status == 401:
-            raise HTTPException(status_code=502, detail="Invalid OANDA access token") from exc
-        if status == 403:
-            raise HTTPException(
-                status_code=502,
-                detail="Token is not authorized for this environment",
-            ) from exc
-        raise HTTPException(status_code=502, detail=f"OANDA returned HTTP {status}") from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"OANDA request failed: {exc}") from exc
+    summary = await get_cached_oanda_account_summary(force_sync_if_missing=True)
+    if summary is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OANDA account summary not synced yet; try again shortly",
+        )
 
     return JSONResponse(summary)
+
+
+@router.get("/oanda/account-summary/history")
+async def get_oanda_account_summary_history(
+    _username: str = Depends(require_auth),
+    since: str | None = Query(default=None, description="ISO-8601 UTC lower bound (inclusive)"),
+    until: str | None = Query(default=None, description="ISO-8601 UTC upper bound (inclusive)"),
+    limit: int = Query(default=2000, ge=1, le=10_000),
+) -> JSONResponse:
+    """Return time-series account summary snapshots for charting."""
+    repo = ExchangeConnectionsRepository()
+    oanda = await repo.get_oanda()
+    account_id = oanda.get("account_id")
+    if not oanda.get("access_token") or not account_id:
+        raise HTTPException(status_code=400, detail="OANDA is not connected")
+
+    since_dt = _parse_iso_datetime(since)
+    until_dt = _parse_iso_datetime(until)
+
+    snapshots_repo = OandaAccountSnapshotsRepository()
+    rows = await snapshots_repo.list_summary_history(
+        account_id=str(account_id),
+        since=since_dt,
+        until=until_dt,
+        limit=limit,
+    )
+    points = [snapshots_repo.public_summary(row) for row in rows]
+    return JSONResponse({"account_id": account_id, "points": points})
+
+
+def _parse_iso_datetime(raw: str | None) -> datetime | None:
+    if not raw or not raw.strip():
+        return None
+    text = raw.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime: {raw}") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @router.post("/oanda/test")

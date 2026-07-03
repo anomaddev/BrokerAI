@@ -89,22 +89,33 @@ class DataManagerWorker(EphemeralBot[PipelineContext, PipelineContext]):
 
 
 async def fetch_account_summary(request: AccountSummaryRequest) -> WorkerResult[dict]:
-    """Fetch account summary for an asset class.
-
-    TODO(loop): Implement non-OANDA account sources and MongoDB persistence.
-    """
+    """Fetch account summary for an asset class from MongoDB (synced every 5 minutes)."""
     if request.asset_class != "forex":
         return WorkerResult(
             ok=False,
             error=f"Account summary not implemented for {request.asset_class}",
         )
 
-    from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
+    from brokerai.trading.oanda_account_sync import get_cached_oanda_account_summary
 
-    oanda = await ExchangeConnectionsRepository().get_oanda()
+    summary = await get_cached_oanda_account_summary(force_sync_if_missing=False)
+    if summary is None:
+        from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
+
+        oanda = await ExchangeConnectionsRepository().get_oanda()
+        return WorkerResult(
+            ok=True,
+            data={
+                "asset_class": request.asset_class,
+                "account_id": oanda.get("account_id"),
+                "connected": bool(oanda.get("access_token") and oanda.get("account_id")),
+            },
+        )
+
     snapshot = {
         "asset_class": request.asset_class,
-        "account_id": oanda.get("account_id"),
-        "connected": bool(oanda.get("access_token") and oanda.get("account_id")),
+        "account_id": summary.get("account_id") or summary.get("id"),
+        "connected": True,
+        **summary,
     }
     return WorkerResult(ok=True, data=snapshot)
