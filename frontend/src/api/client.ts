@@ -357,6 +357,14 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  getRssFeeds: () => request<RssFeedsCatalog>("/api/settings/rss-feeds"),
+  saveRssFeeds: (data: Partial<RssFeedsSettings>) =>
+    request<RssFeedsCatalog>("/api/settings/rss-feeds", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  getRssFeedsOpmlUrl: () => "/api/settings/rss-feeds/opml",
+
   getForexPairs: () =>
     request<{
       catalog: string[];
@@ -860,10 +868,41 @@ export type ContributorModel = {
 
 export type ResearchDataSources = {
   newsapi: boolean;
+  rss_enabled: boolean;
+  rss_categories: Record<string, boolean>;
   web_search_enabled: boolean;
   web_search_model_id: string | null;
   x_search_enabled: boolean;
   x_search_model_id: string | null;
+};
+
+export type RssFeedCategory = {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  feed_count: number;
+};
+
+export type RssFeedItem = {
+  id: string;
+  title: string;
+  url: string;
+  category: string;
+  category_enabled: boolean;
+};
+
+export type RssFeedsCatalog = {
+  rss_enabled: boolean;
+  categories: RssFeedCategory[];
+  feeds: RssFeedItem[];
+  total_feeds: number;
+  enabled_feed_count: number;
+};
+
+export type RssFeedsSettings = {
+  rss_enabled?: boolean;
+  rss_categories?: Record<string, boolean>;
 };
 
 export type ResearchScheduleMarket = {

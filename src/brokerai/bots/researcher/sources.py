@@ -10,6 +10,8 @@ from brokerai.bots.researcher.news import (
     fetch_news_via_x_search,
 )
 from brokerai.bots.researcher.prompts import news_queries_for_group
+from brokerai.bots.researcher.rss import fetch_rss_articles, filter_articles_for_group
+from brokerai.bots.researcher.rss_feeds import normalize_rss_categories
 from brokerai.provider_capabilities import supports_capability
 
 logger = logging.getLogger(__name__)
@@ -28,19 +30,27 @@ class SearchSource:
 class ResolvedSources:
     newsapi_enabled: bool = False
     newsapi_key: str = ""
+    rss_enabled: bool = False
+    rss_categories: dict[str, bool] | None = None
     web_search: SearchSource | None = None
     x_search: SearchSource | None = None
+    rss_articles: list[dict] | None = None
 
     @property
     def any_active(self) -> bool:
         return bool(
-            (self.newsapi_enabled and self.newsapi_key) or self.web_search or self.x_search
+            (self.newsapi_enabled and self.newsapi_key)
+            or self.rss_enabled
+            or self.web_search
+            or self.x_search
         )
 
     def describe(self) -> list[str]:
         active: list[str] = []
         if self.newsapi_enabled and self.newsapi_key:
             active.append("NewsAPI")
+        if self.rss_enabled:
+            active.append("RSS")
         if self.web_search:
             active.append(f"web search ({_model_label(self.web_search.model)})")
         if self.x_search:
@@ -113,6 +123,8 @@ def resolve_sources(
         capabilities_map=capabilities_map,
         models_by_id=models_by_id,
     )
+    resolved.rss_enabled = bool(data_sources.get("rss_enabled"))
+    resolved.rss_categories = normalize_rss_categories(data_sources.get("rss_categories"))
     return resolved
 
 
@@ -183,9 +195,31 @@ async def fetch_group_articles(
         )
         return "X search", articles
 
+    async def _run_rss() -> tuple[str, list[dict]]:
+        if sources.rss_articles is not None:
+            articles = filter_articles_for_group(
+                sources.rss_articles,
+                primary,
+                group_pairs,
+                limit=page_size,
+            )
+            return "RSS", articles
+        articles, notes = await fetch_rss_articles(categories=sources.rss_categories)
+        if notes:
+            logger.info("RSS prefetch for %s: %s", primary, "; ".join(notes))
+        filtered = filter_articles_for_group(
+            articles,
+            primary,
+            group_pairs,
+            limit=page_size,
+        )
+        return "RSS", filtered
+
     jobs: list[tuple[str, "asyncio.Future"]] = []
     if sources.newsapi_enabled and sources.newsapi_key:
         jobs.append(("NewsAPI", _run_newsapi()))
+    if sources.rss_enabled:
+        jobs.append(("RSS", _run_rss()))
     if sources.web_search:
         jobs.append(("Web search", _run_web()))
     if sources.x_search:

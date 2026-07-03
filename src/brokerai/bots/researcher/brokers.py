@@ -11,6 +11,7 @@ from brokerai.bots.researcher.prompts import (
     build_analysis_messages,
     group_forex_pairs,
 )
+from brokerai.bots.researcher.rss import fetch_rss_articles
 from brokerai.bots.researcher.sources import ResolvedSources, fetch_group_articles
 from brokerai.db.repositories.asset_settings import (
     ASSET_CLASSES,
@@ -166,6 +167,21 @@ async def prefetch_forex_articles(
     if total == 0:
         return {}
 
+    prefetch_sources = sources
+    if sources.rss_enabled and sources.rss_articles is None:
+        rss_articles, rss_notes = await fetch_rss_articles(categories=sources.rss_categories)
+        if rss_notes:
+            logger.info("RSS prefetch: %s", "; ".join(rss_notes))
+        prefetch_sources = ResolvedSources(
+            newsapi_enabled=sources.newsapi_enabled,
+            newsapi_key=sources.newsapi_key,
+            rss_enabled=sources.rss_enabled,
+            rss_categories=sources.rss_categories,
+            web_search=sources.web_search,
+            x_search=sources.x_search,
+            rss_articles=rss_articles,
+        )
+
     completed = 0
     progress_lock = asyncio.Lock()
 
@@ -173,7 +189,7 @@ async def prefetch_forex_articles(
         nonlocal completed
         try:
             articles, notes = await fetch_group_articles(
-                sources, primary, group_pairs, page_size=page_size
+                prefetch_sources, primary, group_pairs, page_size=page_size
             )
             if notes:
                 logger.info("Forex %s sources: %s", primary, "; ".join(notes))
