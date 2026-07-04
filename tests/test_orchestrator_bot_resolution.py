@@ -6,23 +6,17 @@ from brokerai.core.orchestrator import Orchestrator
 
 def test_resolved_bot_names_auto_injects_secretary_pipeline_bots():
     orchestrator = Orchestrator.__new__(Orchestrator)
-    orchestrator.settings = Settings(
-        enabled_bots="researcher",
-        use_secretary_pipeline=True,
-    )
+    orchestrator.settings = Settings(enabled_bots="researcher")
 
-    names = orchestrator._resolved_bot_names(use_secretary=True)
+    names = orchestrator._resolved_bot_names()
 
     assert names == ["researcher", "secretary", "broker"]
 
 
-def test_resolved_bot_names_legacy_mode_unchanged():
+def test_resolved_bot_names_preserves_explicit_order():
     orchestrator = Orchestrator.__new__(Orchestrator)
-    orchestrator.settings = Settings(
-        enabled_bots="data_manager,data_analyzer,researcher",
-        use_secretary_pipeline=False,
-    )
+    orchestrator.settings = Settings(enabled_bots="secretary,broker,researcher")
 
-    names = orchestrator._resolved_bot_names(use_secretary=False)
+    names = orchestrator._resolved_bot_names()
 
-    assert names == ["data_manager", "data_analyzer", "researcher"]
+    assert names == ["secretary", "broker", "researcher"]

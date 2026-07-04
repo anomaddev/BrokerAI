@@ -69,6 +69,8 @@ def test_get_candles_returns_payload(mock_require_service, mock_register_watch, 
         "M15",
         bar_count=120,
         source="oanda",
+        since=None,
+        until=None,
         requester="web_explore",
     )
 
@@ -101,6 +103,8 @@ def test_get_candles_accepts_max_limit(mock_require_service, _mock_register_watc
         "M15",
         bar_count=2000,
         source="oanda",
+        since=None,
+        until=None,
         requester="web_explore",
     )
 

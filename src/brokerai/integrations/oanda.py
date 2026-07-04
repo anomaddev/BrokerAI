@@ -1,26 +1,29 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-OANDA_ENVIRONMENTS = ("practice", "live")
+from brokerai.integrations.oanda_client import (
+    OANDA_ENVIRONMENTS,
+    auth_headers,
+    base_url,
+    get_oanda_client,
+)
 
-_BASE_URLS = {
-    "practice": "https://api-fxpractice.oanda.com",
-    "live": "https://api-fxtrade.oanda.com",
-}
 
-
-def base_url(environment: str) -> str:
-    return _BASE_URLS.get(environment, _BASE_URLS["practice"])
+logger = logging.getLogger(__name__)
 
 
 def _auth_headers(access_token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {access_token.strip()}"}
+    return auth_headers(access_token)
+
+
+async def _http_client(access_token: str, environment: str):
+    return await get_oanda_client(access_token, environment)
 
 
 async def list_accounts(access_token: str, environment: str) -> list[dict[str, Any]]:
@@ -29,11 +32,8 @@ async def list_accounts(access_token: str, environment: str) -> list[dict[str, A
     Raises httpx.HTTPError on transport failures and httpx.HTTPStatusError on
     non-2xx responses so callers can translate them into user-facing messages.
     """
-    url = f"{base_url(environment)}/v3/accounts"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token))
-        response.raise_for_status()
-        data = response.json()
+    client = await _http_client(access_token, environment)
+    data = await client.get_json("/v3/accounts", timeout=15.0)
     accounts = data.get("accounts") or []
     return [
         {"id": acc.get("id"), "tags": acc.get("tags") or []}
@@ -42,18 +42,8 @@ async def list_accounts(access_token: str, environment: str) -> list[dict[str, A
     ]
 
 
-async def get_account_summary(
-    access_token: str,
-    environment: str,
-    account_id: str,
-) -> dict[str, Any]:
-    """Fetch account summary for a single OANDA account."""
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/summary"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token))
-        response.raise_for_status()
-        data = response.json()
-    account = data.get("account") or {}
+def normalize_account_summary_fields(account: dict[str, Any]) -> dict[str, Any]:
+    """Map OANDA account object fields to BrokerAI summary shape."""
     return {
         "id": account.get("id"),
         "alias": account.get("alias"),
@@ -67,6 +57,59 @@ async def get_account_summary(
         "open_trade_count": account.get("openTradeCount"),
         "open_position_count": account.get("openPositionCount"),
         "pending_order_count": account.get("pendingOrderCount"),
+    }
+
+
+async def get_account_summary(
+    access_token: str,
+    environment: str,
+    account_id: str,
+) -> dict[str, Any]:
+    """Fetch account summary for a single OANDA account."""
+    client = await _http_client(access_token, environment)
+    data = await client.get_json(f"/v3/accounts/{account_id}/summary", timeout=15.0)
+    account = data.get("account") or {}
+    return normalize_account_summary_fields(account)
+
+
+async def get_account_details(
+    access_token: str,
+    environment: str,
+    account_id: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Fetch full OANDA account details (open trades, orders, positions).
+
+    Returns ``(account_dict, lastTransactionID)``.
+    """
+    client = await _http_client(access_token, environment)
+    data = await client.get_json(f"/v3/accounts/{account_id}", timeout=15.0)
+    account = data.get("account") or {}
+    last_txn = data.get("lastTransactionID")
+    return account, str(last_txn) if last_txn else None
+
+
+async def poll_account_changes(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    *,
+    since_transaction_id: str,
+) -> dict[str, Any]:
+    """Poll OANDA account updates since *since_transaction_id*.
+
+    Returns ``{changes, state, lastTransactionID}`` (keys may be absent).
+    """
+    client = await _http_client(access_token, environment)
+    data = await client.get_json(
+        f"/v3/accounts/{account_id}/changes",
+        params={"sinceTransactionID": since_transaction_id},
+        timeout=15.0,
+    )
+    last_txn = data.get("lastTransactionID")
+    return {
+        "changes": data.get("changes") or {},
+        "state": data.get("state") or {},
+        "lastTransactionID": str(last_txn) if last_txn else None,
     }
 
 
@@ -318,12 +361,13 @@ async def fetch_account_pricing(
     if not unique:
         return {}
 
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/pricing"
     params = {"instruments": ",".join(unique)}
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token), params=params)
-        response.raise_for_status()
-        data = response.json()
+    http = await _http_client(access_token, environment)
+    data = await http.get_json(
+        f"/v3/accounts/{account_id}/pricing",
+        params=params,
+        timeout=15.0,
+    )
 
     prices: dict[str, float] = {}
     for raw in data.get("prices") or []:
@@ -457,11 +501,12 @@ async def list_trades(
     if before_id:
         params["beforeID"] = before_id
 
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token), params=params)
-        response.raise_for_status()
-        data = response.json()
+    http = await _http_client(access_token, environment)
+    data = await http.get_json(
+        f"/v3/accounts/{account_id}/trades",
+        params=params,
+        timeout=30.0,
+    )
 
     trades: list[dict[str, Any]] = []
     for raw in data.get("trades") or []:
@@ -505,6 +550,108 @@ async def list_all_trades(
     return all_trades, last_txn
 
 
+def _transactions_from_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize transaction objects from an OANDA list/idrange/sinceid payload."""
+    events: list[dict[str, Any]] = []
+    for raw in data.get("transactions") or []:
+        if not isinstance(raw, dict):
+            continue
+        normalized = normalize_oanda_transaction(raw)
+        if normalized is not None:
+            events.append(normalized)
+    return events
+
+
+async def _iter_transaction_pages(
+    http: Any,
+    *,
+    initial_path: str,
+    params: dict[str, Any] | None = None,
+    timeout: float = 30.0,
+) -> AsyncIterator[list[dict[str, Any]]]:
+    """Yield normalized transaction batches one OANDA response page at a time."""
+    data = await http.get_json(initial_path, params=params, timeout=timeout)
+    page_events = _transactions_from_payload(data)
+    if page_events:
+        yield page_events
+
+    for page_url in data.get("pages") or []:
+        if not isinstance(page_url, str) or not page_url.strip():
+            continue
+        page_data = await http.get_json(page_url, timeout=timeout)
+        page_events = _transactions_from_payload(page_data)
+        if page_events:
+            yield page_events
+
+
+async def _fetch_paginated_transactions(
+    http: Any,
+    *,
+    initial_path: str,
+    params: dict[str, Any] | None = None,
+    timeout: float = 30.0,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch all transaction pages from an OANDA idrange or sinceid response."""
+    all_events: list[dict[str, Any]] = []
+    last_txn: str | None = None
+
+    data = await http.get_json(initial_path, params=params, timeout=timeout)
+    all_events.extend(_transactions_from_payload(data))
+    raw_last = data.get("lastTransactionID")
+    if raw_last is not None:
+        last_txn = str(raw_last)
+
+    for page_url in data.get("pages") or []:
+        if not isinstance(page_url, str) or not page_url.strip():
+            continue
+        page_data = await http.get_json(page_url, timeout=timeout)
+        all_events.extend(_transactions_from_payload(page_data))
+        page_last = page_data.get("lastTransactionID")
+        if page_last is not None:
+            last_txn = str(page_last)
+
+    return all_events, last_txn
+
+
+async def iter_transactions_idrange(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    *,
+    from_id: str,
+    to_id: str,
+) -> AsyncIterator[list[dict[str, Any]]]:
+    """Yield normalized transactions per OANDA page for an inclusive ID range."""
+    params = {"from": from_id, "to": to_id}
+    http = await _http_client(access_token, environment)
+    async for page in _iter_transaction_pages(
+        http,
+        initial_path=f"/v3/accounts/{account_id}/transactions/idrange",
+        params=params,
+        timeout=30.0,
+    ):
+        yield page
+
+
+async def iter_transactions_since(
+    access_token: str,
+    environment: str,
+    account_id: str,
+    *,
+    since_id: str,
+) -> AsyncIterator[list[dict[str, Any]]]:
+    """Yield normalized transactions per OANDA page since *since_id* (exclusive)."""
+    params = {"id": since_id}
+    http = await _http_client(access_token, environment)
+    async for page in _iter_transaction_pages(
+        http,
+        initial_path=f"/v3/accounts/{account_id}/transactions/sinceid",
+        params=params,
+        timeout=30.0,
+    ):
+        yield page
+
+
 async def list_transactions_idrange(
     access_token: str,
     environment: str,
@@ -513,24 +660,15 @@ async def list_transactions_idrange(
     from_id: str,
     to_id: str,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """Fetch OANDA transactions in an inclusive ID range."""
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/transactions/idrange"
+    """Fetch OANDA transactions in an inclusive ID range (all pages)."""
     params = {"from": from_id, "to": to_id}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token), params=params)
-        response.raise_for_status()
-        data = response.json()
-
-    events: list[dict[str, Any]] = []
-    for raw in data.get("transactions") or []:
-        if not isinstance(raw, dict):
-            continue
-        normalized = normalize_oanda_transaction(raw)
-        if normalized is not None:
-            events.append(normalized)
-
-    last_txn = data.get("lastTransactionID")
-    return events, str(last_txn) if last_txn else None
+    http = await _http_client(access_token, environment)
+    return await _fetch_paginated_transactions(
+        http,
+        initial_path=f"/v3/accounts/{account_id}/transactions/idrange",
+        params=params,
+        timeout=30.0,
+    )
 
 
 async def list_transactions_since(
@@ -540,24 +678,15 @@ async def list_transactions_since(
     *,
     since_id: str,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """Fetch OANDA transactions since *since_id* (exclusive)."""
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/transactions/sinceid"
+    """Fetch OANDA transactions since *since_id* (exclusive, all pages)."""
     params = {"id": since_id}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token), params=params)
-        response.raise_for_status()
-        data = response.json()
-
-    events: list[dict[str, Any]] = []
-    for raw in data.get("transactions") or []:
-        if not isinstance(raw, dict):
-            continue
-        normalized = normalize_oanda_transaction(raw)
-        if normalized is not None:
-            events.append(normalized)
-
-    last_txn = data.get("lastTransactionID")
-    return events, str(last_txn) if last_txn else None
+    http = await _http_client(access_token, environment)
+    return await _fetch_paginated_transactions(
+        http,
+        initial_path=f"/v3/accounts/{account_id}/transactions/sinceid",
+        params=params,
+        timeout=30.0,
+    )
 
 
 async def get_transaction(
@@ -567,13 +696,15 @@ async def get_transaction(
     transaction_id: str,
 ) -> dict[str, Any] | None:
     """Fetch a single OANDA transaction by id."""
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/transactions/{transaction_id}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token))
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
-        data = response.json()
+    http = await _http_client(access_token, environment)
+    response = await http.get(
+        f"/v3/accounts/{account_id}/transactions/{transaction_id}",
+        timeout=15.0,
+        allow_404=True,
+    )
+    if response.status_code == 404:
+        return None
+    data = response.json()
 
     raw = data.get("transaction")
     if not isinstance(raw, dict):
@@ -587,11 +718,8 @@ async def list_pending_orders(
     account_id: str,
 ) -> list[dict[str, Any]]:
     """Fetch pending OANDA orders for an account."""
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/pendingOrders"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token))
-        response.raise_for_status()
-        data = response.json()
+    http = await _http_client(access_token, environment)
+    data = await http.get_json(f"/v3/accounts/{account_id}/pendingOrders", timeout=15.0)
     return [o for o in (data.get("orders") or []) if isinstance(o, dict)]
 
 
@@ -601,11 +729,8 @@ async def list_positions(
     account_id: str,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Fetch OANDA open positions for validation."""
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/positions"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token))
-        response.raise_for_status()
-        data = response.json()
+    http = await _http_client(access_token, environment)
+    data = await http.get_json(f"/v3/accounts/{account_id}/positions", timeout=15.0)
     positions = [p for p in (data.get("positions") or []) if isinstance(p, dict)]
     last_txn = data.get("lastTransactionID")
     return positions, str(last_txn) if last_txn else None
@@ -621,13 +746,15 @@ async def get_broker_trade(
     if not access_token.strip() or not account_id.strip() or not trade_id.strip():
         return None
 
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades/{trade_id}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token))
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
-        data = response.json()
+    http = await _http_client(access_token, environment)
+    response = await http.get(
+        f"/v3/accounts/{account_id}/trades/{trade_id}",
+        timeout=15.0,
+        allow_404=True,
+    )
+    if response.status_code == 404:
+        return None
+    data = response.json()
 
     raw = data.get("trade")
     if not isinstance(raw, dict):
@@ -691,11 +818,8 @@ async def list_open_trades(
     account_id: str,
 ) -> list[dict[str, Any]]:
     """Fetch open trades for a single OANDA account."""
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/openTrades"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(url, headers=_auth_headers(access_token))
-        response.raise_for_status()
-        data = response.json()
+    http = await _http_client(access_token, environment)
+    data = await http.get_json(f"/v3/accounts/{account_id}/openTrades", timeout=15.0)
     trades: list[dict[str, Any]] = []
     for raw in data.get("trades") or []:
         if not isinstance(raw, dict):
@@ -867,28 +991,18 @@ def _trim_closed_candles(candles: list[dict[str, Any]], requested: int) -> list[
     return candles[-requested:]
 
 
-def _should_retry_oanda(exc: BaseException) -> bool:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in (429, 500, 502, 503, 504)
-    return isinstance(exc, httpx.TransportError)
-
-
-@retry(
-    retry=retry_if_exception(_should_retry_oanda),
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=1, max=30),
-    reraise=True,
-)
-async def _get_candles(
-    client: httpx.AsyncClient,
-    url: str,
-    *,
+async def _get_candles_payload(
     access_token: str,
+    environment: str,
+    instrument: str,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    response = await client.get(url, headers=_auth_headers(access_token), params=params)
-    response.raise_for_status()
-    return response.json()
+    http = await _http_client(access_token, environment)
+    return await http.get_json(
+        f"/v3/instruments/{instrument}/candles",
+        params=params,
+        timeout=30.0,
+    )
 
 
 async def fetch_candles(
@@ -904,19 +1018,12 @@ async def fetch_candles(
     if not access_token.strip():
         raise ValueError("OANDA access token is not configured")
 
-    url = f"{base_url(environment)}/v3/instruments/{instrument}/candles"
     params = {
         "granularity": granularity,
         "count": _oanda_request_count(count),
         "price": price,
     }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        payload = await _get_candles(
-            client,
-            url,
-            access_token=access_token,
-            params=params,
-        )
+    payload = await _get_candles_payload(access_token, environment, instrument, params)
 
     return _trim_closed_candles(_parse_oanda_candles(payload), count)
 
@@ -935,20 +1042,13 @@ async def fetch_candles_to(
     if not access_token.strip():
         raise ValueError("OANDA access token is not configured")
 
-    url = f"{base_url(environment)}/v3/instruments/{instrument}/candles"
     params = {
         "granularity": granularity,
         "to": to_time,
         "count": _oanda_request_count(count),
         "price": price,
     }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        payload = await _get_candles(
-            client,
-            url,
-            access_token=access_token,
-            params=params,
-        )
+    payload = await _get_candles_payload(access_token, environment, instrument, params)
 
     return _trim_closed_candles(_parse_oanda_candles(payload), count)
 
@@ -967,20 +1067,13 @@ async def fetch_candles_from(
     if not access_token.strip():
         raise ValueError("OANDA access token is not configured")
 
-    url = f"{base_url(environment)}/v3/instruments/{instrument}/candles"
     params = {
         "granularity": granularity,
         "from": from_time,
         "count": _oanda_request_count(count),
         "price": price,
     }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        payload = await _get_candles(
-            client,
-            url,
-            access_token=access_token,
-            params=params,
-        )
+    payload = await _get_candles_payload(access_token, environment, instrument, params)
 
     return _trim_closed_candles(_parse_oanda_candles(payload), count)
 
@@ -1065,14 +1158,14 @@ async def place_market_order(
     if take_profit is not None:
         order["takeProfitOnFill"] = {"price": format_oanda_price(take_profit, instrument)}
 
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/orders"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            url,
-            headers={**_auth_headers(access_token), "Content-Type": "application/json"},
-            json={"order": order},
-        )
-        return _raise_for_oanda_order_response(response)
+    http = await _http_client(access_token, environment)
+    response = await http.request(
+        "POST",
+        f"/v3/accounts/{account_id}/orders",
+        json={"order": order},
+        timeout=30.0,
+    )
+    return _raise_for_oanda_order_response(response)
 
 
 async def close_broker_trade(
@@ -1089,12 +1182,12 @@ async def close_broker_trade(
     if not trade_id.strip():
         raise ValueError("OANDA trade id is required")
 
-    url = f"{base_url(environment)}/v3/accounts/{account_id}/trades/{trade_id}/close"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.put(
-            url,
-            headers={**_auth_headers(access_token), "Content-Type": "application/json"},
-            json={"units": "ALL"},
-        )
-        response.raise_for_status()
-        return response.json()
+    http = await _http_client(access_token, environment)
+    response = await http.request(
+        "PUT",
+        f"/v3/accounts/{account_id}/trades/{trade_id}/close",
+        json={"units": "ALL"},
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return response.json()

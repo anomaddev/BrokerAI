@@ -537,6 +537,9 @@ export const api = {
 
   getTradeReconciliation: () => request<TradeReconciliation>("/api/trades/reconciliation"),
 
+  getInstrumentExposure: (exchangeId = "oanda") =>
+    request<InstrumentExposureResponse>(`/api/trades/exposure?exchange_id=${encodeURIComponent(exchangeId)}`),
+
   syncTrades: () =>
     request<BackgroundTaskAccepted>("/api/trades/sync", {
       method: "POST",
@@ -605,6 +608,8 @@ export type ChildOrder = {
   trade_id?: string | null;
   create_time?: string | null;
   filled_time?: string | null;
+  filling_event_id?: string | null;
+  cancelling_event_id?: string | null;
 };
 
 export type Trade = {
@@ -617,22 +622,22 @@ export type Trade = {
   asset_class: string;
   direction: string;
   entry_price: number;
-  stop_loss: number | ChildOrder | null;
-  take_profit: number | ChildOrder | null;
+  stop_loss: ChildOrder | null;
+  take_profit: ChildOrder | null;
   stop_loss_price?: number | null;
   take_profit_price?: number | null;
   stop_loss_order?: ChildOrder | null;
   take_profit_order?: ChildOrder | null;
   exit_mode: string;
   risk_pct: number;
-  units: number | null;
+  initial_qty: number;
+  current_qty: number;
+  units: number;
   confidence: number;
-  status: "open" | "closed" | "cancelled";
-  state?: "open" | "closed" | "cancelled";
-  broker_order_id: string | null;
-  broker_lot_id?: string | null;
-  opened_at: string | null;
-  closed_at?: string | null;
+  state: "open" | "closed" | "cancelled";
+  broker_lot_id: string | null;
+  open_time: string | null;
+  close_time: string | null;
   close_reason?: string;
   execution_reason?: string | null;
   reason_display?: {
@@ -645,8 +650,6 @@ export type Trade = {
   exit_price?: number | null;
   realized_pl?: number | null;
   unrealized_pl?: number | null;
-  open_time?: string | null;
-  close_time?: string | null;
   timeframe?: string | null;
   entry_candle_open?: string | null;
   exit_candle_open?: string | null;
@@ -654,6 +657,22 @@ export type Trade = {
   trade_date?: string;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type InstrumentExposureRow = {
+  exchange_id: string;
+  symbol: string;
+  pair?: string;
+  direction: string;
+  total_qty: number;
+  average_price: number | null;
+  unrealized_pl: number | null;
+  broker_lot_ids: string[];
+};
+
+export type InstrumentExposureResponse = {
+  exposure: InstrumentExposureRow[];
+  count: number;
 };
 
 export type TradesListResponse = {
@@ -1079,10 +1098,7 @@ export type TradeSyncResult = {
   lots_upserted?: number;
   events_upserted?: number;
   enriched?: number;
-  imported_trade_ids: string[];
-  updated_trade_ids: string[];
-  closed_trade_ids: string[];
-  backfilled_trade_ids: string[];
+  backfilled_lot_ids?: string[];
   error?: string;
   mode?: string;
 };

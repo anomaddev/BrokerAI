@@ -59,7 +59,7 @@ def test_validate_params_accepts_trailing_stop_take_profit():
     assert result["exits"]["take_profit"]["trail_mode"] == "ema_slow"
 
 
-def test_validate_params_migrates_legacy_trailing_block():
+def test_validate_params_rejects_legacy_trailing_block():
     preset = get_preset("ema_crossover")
     assert preset is not None
     params = {
@@ -70,10 +70,8 @@ def test_validate_params_migrates_legacy_trailing_block():
             "trailing": {"enabled": True, "atr_multiplier": 1.2},
         },
     }
-    result = validate_params(preset, params)
-    assert result["exits"]["take_profit"]["mode"] == "trailing_stop"
-    assert result["exits"]["take_profit"]["trail_mode"] == "atr"
-    assert "trailing" not in result["exits"]
+    with pytest.raises(ParamsValidationError):
+        validate_params(preset, params)
 
 
 def test_validate_params_rejects_min_candles_below_computed():

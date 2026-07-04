@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
 from brokerai.db.repositories.oanda_account_snapshots import OandaAccountSnapshotsRepository
 from brokerai.integrations.oanda import test_connection as oanda_test_connection
-from brokerai.trading.oanda_account_sync import get_cached_oanda_account_summary, run_oanda_account_sync
+from brokerai.trading.oanda_account_sync import (
+    get_cached_oanda_account_summary,
+    run_oanda_account_sync,
+    run_oanda_accounts_list_sync,
+)
 from brokerai.web.routes.auth import require_auth
 
 router = APIRouter(prefix="/api/settings/exchanges", tags=["settings-exchanges"])
@@ -97,12 +101,10 @@ async def get_oanda_accounts(_username: str = Depends(require_auth)) -> JSONResp
     snapshots_repo = OandaAccountSnapshotsRepository()
     doc = await snapshots_repo.get_latest_accounts()
     if doc is None:
-        sync = await run_oanda_account_sync(force=True)
-        if sync.accounts_count == 0 and sync.skipped_reason == "not_configured":
-            raise HTTPException(status_code=400, detail="OANDA is not connected")
-        doc = await snapshots_repo.get_latest_accounts()
-        if doc is None:
+        count = await run_oanda_accounts_list_sync()
+        if count == 0:
             raise HTTPException(status_code=503, detail="OANDA account list not synced yet")
+        doc = await snapshots_repo.get_latest_accounts()
 
     synced_at = doc.get("synced_at")
     return JSONResponse(
@@ -130,6 +132,16 @@ async def get_oanda_account_summary(_username: str = Depends(require_auth)) -> J
             status_code=503,
             detail="OANDA account summary not synced yet; try again shortly",
         )
+
+    from brokerai.db.repositories.broker_sync_state import BrokerSyncStateRepository
+
+    sync_state = await BrokerSyncStateRepository().get_state("oanda", str(account_id))
+    if sync_state:
+        synced_at = sync_state.get("last_sync_at")
+        summary["last_transaction_id"] = sync_state.get("sync_cursor")
+        summary["last_sync_error"] = sync_state.get("last_sync_error")
+        if isinstance(synced_at, datetime):
+            summary["broker_synced_at"] = synced_at.isoformat()
 
     return JSONResponse(summary)
 

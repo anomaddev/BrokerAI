@@ -13,6 +13,7 @@ import type { CandleBar, Trade } from "../../api/client";
 import ChartOhlcLegend from "../chart/ChartOhlcLegend";
 import MarketClosureOverlay from "../chart/MarketClosureOverlay";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
+import type { TimeFormatOptions } from "../../lib/formatTime";
 import type { ChartOverlayItem } from "../../lib/chart/chartOverlayState";
 import {
   CANDLESTICK_SERIES_OPTIONS,
@@ -49,6 +50,7 @@ type TradeCandleChartProps = {
   error: string | null;
   overlayItems: ChartOverlayItem[];
   candleWindow: TradeCandleWindow | null;
+  timeOptions?: TimeFormatOptions;
 };
 
 function toSeriesTime(unixSeconds: number): UTCTimestamp {
@@ -132,8 +134,10 @@ export default function TradeCandleChart({
   error,
   overlayItems,
   candleWindow,
+  timeOptions: timeOptionsProp,
 }: TradeCandleChartProps) {
-  const { timeOptions } = useGeneralSettings();
+  const { timeOptions: defaultTimeOptions } = useGeneralSettings();
+  const timeOptions = timeOptionsProp ?? defaultTimeOptions;
   const priceWrapRef = useRef<HTMLDivElement>(null);
   const priceContainerRef = useRef<HTMLDivElement>(null);
   const adxContainerRef = useRef<HTMLDivElement>(null);

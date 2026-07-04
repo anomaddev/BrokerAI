@@ -96,6 +96,21 @@ async def ensure_indexes() -> None:
         [("exchange_id", 1), ("broker_lot_id", 1), ("time", -1)],
         name="broker_events_exchange_lot_time",
     )
+    await db.broker_events.create_index(
+        [("exchange_id", 1), ("account_id", 1), ("broker_order_id", 1), ("time", -1)],
+        name="broker_events_exchange_account_order_time",
+    )
+    await db.broker_events.create_index(
+        [("retention_expires_at", 1)],
+        name="broker_events_retention_expires_at",
+        expireAfterSeconds=0,
+        partialFilterExpression={"retention_expires_at": {"$exists": True}},
+    )
+    await db.instrument_exposure.create_index(
+        [("exchange_id", 1), ("account_id", 1), ("symbol", 1), ("direction", 1)],
+        unique=True,
+        name="instrument_exposure_exchange_account_symbol_direction",
+    )
     await db.broker_sync_state.create_index(
         [("exchange_id", 1), ("account_id", 1)],
         unique=True,

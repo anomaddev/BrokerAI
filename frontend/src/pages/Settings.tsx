@@ -202,21 +202,6 @@ function logUpdatesDebug({ label, config, update, checkError, flags }: UpdatesDe
   console.groupEnd();
 }
 
-function AiModelsTab() {
-  return <ModelsTab />;
-}
-
-function DataConnectionsTab() {
-  return <DataConnectionsTabComponent />;
-}
-
-function ResearchSettingsTab() {
-  return <ReportsTab />;
-}
-
-function ResearchDataSettingsTab() {
-  return <ResearchDataTab />;
-}
 
 function resolveCheckError(data: UpdateStatusResponse | null): string | null {
   if (!data) return null;
@@ -1047,15 +1032,10 @@ export default function Settings() {
             <Route path="general" element={<GeneralTab />} />
             <Route path="account" element={<AccountTab />} />
             <Route path="display" element={<DisplayTab />} />
-            <Route path="models" element={<AiModelsTab />} />
-            <Route path="ai-models" element={<Navigate to="/settings/models" replace />} />
-            <Route path="reports" element={<ResearchSettingsTab />} />
-            <Route path="data" element={<ResearchDataSettingsTab />} />
-            <Route path="daily-reports" element={<Navigate to="/settings/reports" replace />} />
-            <Route path="weekly-reports" element={<Navigate to="/settings/reports" replace />} />
-            <Route path="research" element={<Navigate to="/settings/reports" replace />} />
-            <Route path="connections" element={<DataConnectionsTab />} />
-            <Route path="data-connections" element={<Navigate to="/settings/connections" replace />} />
+            <Route path="models" element={<ModelsTab />} />
+            <Route path="reports" element={<ReportsTab />} />
+            <Route path="data" element={<ResearchDataTab />} />
+            <Route path="connections" element={<DataConnectionsTabComponent />} />
             <Route path="broker/general" element={<BrokerGeneralTab />} />
             <Route path="broker/forex" element={<AssetClassTab assetClass="forex" label="Forex" />} />
             <Route
@@ -1067,13 +1047,6 @@ export default function Settings() {
             <Route path="broker/futures" element={<AssetClassTab assetClass="futures" label="Futures" />} />
             <Route path="broker/options" element={<AssetClassTab assetClass="options" label="Options" />} />
             <Route path="broker" element={<Navigate to="/settings/broker/general" replace />} />
-            <Route path="forex" element={<Navigate to="/settings/broker/forex" replace />} />
-            <Route path="metals" element={<Navigate to="/settings/broker/metals" replace />} />
-            <Route path="stocks" element={<Navigate to="/settings/broker/stocks" replace />} />
-            <Route path="crypto" element={<Navigate to="/settings/broker/crypto" replace />} />
-            <Route path="futures" element={<Navigate to="/settings/broker/futures" replace />} />
-            <Route path="options" element={<Navigate to="/settings/broker/options" replace />} />
-            <Route path="brokers" element={<Navigate to="/settings/broker/general" replace />} />
             <Route path="system" element={<SystemTab />} />
             <Route path="*" element={<GeneralTab />} />
           </Routes>

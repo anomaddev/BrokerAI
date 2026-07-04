@@ -57,19 +57,7 @@ def _normalize_data_sources(raw: Any) -> dict[str, Any]:
 
 
 def _normalize_settings(doc: dict[str, Any]) -> dict[str, Any]:
-    legacy_effort = _valid_effort(doc.get("reasoning_effort"))
-
-    contributors_raw = doc.get("contributor_models")
-    if contributors_raw is None:
-        ids = doc.get("selected_model_ids")
-        if ids is None:
-            legacy_single = doc.get("selected_model_id")
-            ids = [legacy_single] if legacy_single else []
-        contributors_raw = [
-            {"model_id": item, "reasoning_effort": legacy_effort, "enabled": True}
-            for item in ids
-            if item
-        ]
+    contributors_raw = doc.get("contributor_models") or []
 
     contributors: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -81,7 +69,7 @@ def _normalize_settings(doc: dict[str, Any]) -> dict[str, Any]:
 
     synthesis_model_id = doc.get("synthesis_model_id")
     synthesis_model_id = str(synthesis_model_id) if synthesis_model_id else None
-    synthesis_effort = _valid_effort(doc.get("synthesis_reasoning_effort", legacy_effort))
+    synthesis_effort = _valid_effort(doc.get("synthesis_reasoning_effort"))
 
     return {
         "id": SINGLETON_ID,
@@ -224,10 +212,7 @@ class ResearchSettingsRepository:
         payload = {**doc, "id": SINGLETON_ID}
         await handle.db[self.COLLECTION].update_one(
             {"id": SINGLETON_ID},
-            {
-                "$set": payload,
-                "$unset": {"selected_model_id": "", "selected_model_ids": "", "reasoning_effort": ""},
-            },
+            {"$set": payload},
             upsert=True,
         )
 

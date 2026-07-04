@@ -16,13 +16,17 @@ def close_details_from_metadata(close_metadata: dict[str, Any] | None) -> dict[s
     return {}
 
 
+def _is_closed(doc: dict[str, Any]) -> bool:
+    return str(doc.get("state") or "").lower() == "closed"
+
+
 def resolved_close_fields(doc: dict[str, Any]) -> dict[str, Any]:
     """Merge persisted close fields with values recoverable from metadata."""
     exit_price = doc.get("exit_price")
     realized_pl = doc.get("realized_pl")
-    closed_at = doc.get("closed_at")
+    closed_at = doc.get("close_time") or doc.get("closed_at")
 
-    if doc.get("status") != "closed":
+    if not _is_closed(doc):
         return {
             "exit_price": exit_price,
             "realized_pl": realized_pl,
@@ -46,7 +50,7 @@ def resolved_close_fields(doc: dict[str, Any]) -> dict[str, Any]:
 
 def close_details_need_backfill(doc: dict[str, Any]) -> bool:
     """Return True when a closed trade is missing exit price or realized P/L."""
-    if doc.get("status") != "closed":
+    if not _is_closed(doc):
         return False
     fields = resolved_close_fields(doc)
     return fields.get("exit_price") is None or fields.get("realized_pl") is None

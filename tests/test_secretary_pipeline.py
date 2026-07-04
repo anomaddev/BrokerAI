@@ -71,10 +71,10 @@ def test_pipeline_candle_cache_roundtrip():
 def test_settings_secretary_defaults():
     assert Settings.model_fields["enabled_bots"].default == "secretary,broker,researcher"
     settings = Settings(enabled_bots="secretary,broker,researcher")
-    assert settings.use_secretary_pipeline is True
     assert settings.enabled_bot_names == ["secretary", "broker", "researcher"]
     assert settings.pipeline_concurrency == 10
     assert settings.broker_sync_interval_seconds == 30
+    assert settings.oanda_account_sync_interval_seconds == 60
 
 
 def test_candle_timeline_snapshot_next_fetches():

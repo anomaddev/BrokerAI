@@ -61,41 +61,28 @@ async def _trade_sync_loop() -> None:
     while True:
         interval = max(60, get_settings().trade_sync_interval_seconds)
         try:
-            result = await run_broker_sync(exchange_id="oanda", mode="incremental")
+            result = await run_broker_sync(
+                exchange_id="oanda",
+                mode="incremental",
+                include_account_summary=True,
+            )
             if result.configured and (
-                result.lots_upserted or result.enriched or result.lots_closed
+                result.lots_upserted
+                or result.enriched
+                or result.lots_closed
+                or result.summary_synced
             ):
                 logger.info(
-                    "Web broker sync — lots=%s enriched=%s closed=%s",
+                    "Web broker sync — lots=%s enriched=%s closed=%s summary=%s",
                     result.lots_upserted,
                     result.enriched,
                     result.lots_closed,
+                    result.summary_synced,
                 )
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.warning("OANDA trade sync loop failed", exc_info=True)
-        await asyncio.sleep(interval)
-
-
-async def _oanda_account_sync_loop() -> None:
-    """Sync OANDA accounts and account summaries to MongoDB on a fixed interval."""
-    from brokerai.trading.oanda_account_sync import run_oanda_account_sync
-
-    while True:
-        interval = max(60, get_settings().oanda_account_sync_interval_seconds)
-        try:
-            result = await run_oanda_account_sync()
-            if result.summary_synced:
-                logger.info(
-                    "Web OANDA account sync — account=%s accounts=%d",
-                    result.account_id,
-                    result.accounts_count,
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning("OANDA account sync loop failed", exc_info=True)
         await asyncio.sleep(interval)
 
 
@@ -117,11 +104,12 @@ async def _app_lifespan(_app: FastAPI):
     except Exception:
         logger.warning("Background task reconciliation failed", exc_info=True)
     trade_sync_task = asyncio.create_task(_trade_sync_loop())
-    account_sync_task = asyncio.create_task(_oanda_account_sync_loop())
     yield
     trade_sync_task.cancel()
-    account_sync_task.cancel()
-    await asyncio.gather(trade_sync_task, account_sync_task, return_exceptions=True)
+    await asyncio.gather(trade_sync_task, return_exceptions=True)
+    from brokerai.integrations.oanda_client import close_oanda_client
+
+    await close_oanda_client()
     from brokerai.db.client import close_db
 
     await close_db()
@@ -302,8 +290,7 @@ async def pipeline_status(_username: str = Depends(require_auth)) -> JSONRespons
         return JSONResponse(pipeline)
     return JSONResponse(
         {
-            "enabled": settings.use_secretary_pipeline,
-            "use_secretary_pipeline": settings.use_secretary_pipeline,
+            "enabled": True,
             "queued_jobs": 0,
             "active_pipelines": 0,
         }

@@ -23,8 +23,6 @@ from brokerai.core.control import ControlServer
 
 logger = logging.getLogger(__name__)
 
-_LEGACY_PIPELINE_BOTS = frozenset({"data_manager", "data_analyzer", "executor", "brokers"})
-
 
 class Orchestrator:
     def __init__(self) -> None:
@@ -34,56 +32,33 @@ class Orchestrator:
         self._started_at: datetime | None = None
         self._tasks: dict[str, asyncio.Task] = {}
 
-    def _resolved_bot_names(self, use_secretary: bool) -> list[str]:
-        """Return bot names to load, auto-injecting Secretary pipeline bots when required."""
+    def _resolved_bot_names(self) -> list[str]:
+        """Return bot names to load, auto-injecting secretary and broker when required."""
         names = list(self.settings.enabled_bot_names)
-        if not use_secretary:
-            return names
-
         for required in ("secretary", "broker"):
             if required not in names:
                 names.append(required)
-                logger.info(
-                    "Auto-enabled '%s' — required when BROKERAI_USE_SECRETARY_PIPELINE=true",
-                    required,
-                )
+                logger.info("Auto-enabled '%s' — required for the Secretary pipeline", required)
         return names
 
     def _load_bots(self) -> None:
         bot_registry = get_bot_registry()
-        use_secretary = self.settings.use_secretary_pipeline
 
-        for name in self._resolved_bot_names(use_secretary):
-            if use_secretary and name in _LEGACY_PIPELINE_BOTS:
-                logger.info(
-                    "Skipping legacy bot '%s' — use_secretary_pipeline is enabled",
-                    name,
-                )
-                continue
+        for name in self._resolved_bot_names():
             bot_cls = bot_registry.get(name)
             if bot_cls is None:
                 logger.warning("Unknown bot '%s', skipping", name)
                 continue
             self.bots[name] = bot_cls()
 
-        self._wire_bots(use_secretary)
+        self._wire_bots()
 
-        if use_secretary:
-            if "secretary" not in self.bots:
-                logger.warning(
-                    "use_secretary_pipeline is enabled but secretary is not in enabled_bots — "
-                    "candle fetch and strategy analysis will not run"
-                )
-        else:
-            has_manager = "data_manager" in self.bots
-            has_analyzer = "data_analyzer" in self.bots
-            if has_manager and not has_analyzer:
-                logger.warning(
-                    "data_manager is enabled without data_analyzer — candles will be cached "
-                    "but strategy analysis will not run on new bars"
-                )
+        if "secretary" not in self.bots:
+            logger.warning(
+                "secretary is not in enabled_bots — candle fetch and strategy analysis will not run"
+            )
 
-    def _wire_bots(self, use_secretary: bool) -> None:
+    def _wire_bots(self) -> None:
         secretary = self.bots.get("secretary")
         broker = self.bots.get("broker")
 
@@ -92,27 +67,6 @@ class Orchestrator:
                 secretary.attach_broker(broker)
             if hasattr(broker, "attach_data_manager") and hasattr(secretary, "service"):
                 broker.attach_data_manager(secretary.service)
-
-        if use_secretary:
-            return
-
-        data_analyzer = self.bots.get("data_analyzer")
-        executor = self.bots.get("executor")
-        brokers = self.bots.get("brokers")
-        data_manager = self.bots.get("data_manager")
-        if data_manager is not None and hasattr(data_manager, "service"):
-            service = data_manager.service
-            for bot in (data_analyzer, executor, brokers):
-                if bot is not None and hasattr(bot, "attach_data_manager"):
-                    bot.attach_data_manager(service)
-        if (
-            data_analyzer is not None
-            and executor is not None
-            and hasattr(executor, "attach_data_analyzer")
-        ):
-            executor.attach_data_analyzer(data_analyzer)
-        if executor is not None and brokers is not None and hasattr(brokers, "attach_executor"):
-            brokers.attach_executor(executor)
 
     def _tick_interval_seconds(self, name: str) -> float:
         settings = self.settings
@@ -123,41 +77,13 @@ class Orchestrator:
         return 5.0
 
     async def _run_startup_pass(self) -> None:
-        if self.settings.use_secretary_pipeline:
-            secretary = self.bots.get("secretary")
-            if secretary is not None and hasattr(secretary, "run_startup_pass"):
-                logger.info("Orchestrator startup — secretary warm-up and analysis")
-                try:
-                    await secretary.run_startup_pass()
-                except Exception:
-                    logger.exception("Orchestrator startup — secretary pass failed")
-            return
-
-        data_manager = self.bots.get("data_manager")
-        data_analyzer = self.bots.get("data_analyzer")
-
-        if data_manager is None and data_analyzer is None:
-            return
-
-        if data_manager is not None:
-            logger.info("Orchestrator startup — warming candle cache")
+        secretary = self.bots.get("secretary")
+        if secretary is not None and hasattr(secretary, "run_startup_pass"):
+            logger.info("Orchestrator startup — secretary warm-up and analysis")
             try:
-                await data_manager.tick()
+                await secretary.run_startup_pass()
             except Exception:
-                logger.exception("Orchestrator startup — data_manager pass failed")
-
-        if data_analyzer is not None and hasattr(data_analyzer, "run_startup_pass"):
-            try:
-                await data_analyzer.run_startup_pass()
-            except Exception:
-                logger.exception("Orchestrator startup — data_analyzer pass failed")
-
-        executor = self.bots.get("executor")
-        if executor is not None and hasattr(executor, "run_startup_pass"):
-            try:
-                await executor.run_startup_pass()
-            except Exception:
-                logger.exception("Orchestrator startup — executor pass failed")
+                logger.exception("Orchestrator startup — secretary pass failed")
 
     async def start_all(self) -> None:
         for name, bot in self.bots.items():
@@ -227,7 +153,6 @@ class Orchestrator:
         status = await secretary.status()
         return {
             "enabled": True,
-            "use_secretary_pipeline": self.settings.use_secretary_pipeline,
             "queued_jobs": status.get("queued_jobs", 0),
             "active_pipelines": status.get("active_pipelines", 0),
             "last_completed_at": status.get("last_completed_at"),

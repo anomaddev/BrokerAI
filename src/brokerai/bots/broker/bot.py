@@ -20,7 +20,7 @@ from brokerai.bots.secretary.activity import (
 from brokerai.bots.secretary.types import PipelineContext
 from brokerai.core.worker_pool import get_worker_pool
 from brokerai.db.repositories.asset_settings import AssetSettingsRepository
-from brokerai.db.repositories.trades import TradesRepository
+from brokerai.db.repositories.broker_lots import BrokerLotsRepository
 from brokerai.trading.pipeline import ensure_trading_registries
 from brokerai.trading.schedule import utc_now
 from brokerai.trading.types import AnalysisResult, TradeIntent, WorkUnit
@@ -56,6 +56,9 @@ class BrokerBot(Bot):
         logger.info("Broker bot started")
 
     async def on_stop(self) -> None:
+        from brokerai.integrations.oanda_client import close_oanda_client
+
+        await close_oanda_client()
         logger.info("Broker bot stopped")
 
     async def status(self) -> dict:
@@ -105,7 +108,7 @@ class BrokerBot(Bot):
 
         data_manager = self._require_data_manager()
         await self._refresh_strategies()
-        trade_counts = await TradesRepository().daily_trade_counts()
+        trade_counts = await BrokerLotsRepository().daily_lot_counts()
         forex_settings = await AssetSettingsRepository().get("forex")
         now = utc_now()
 

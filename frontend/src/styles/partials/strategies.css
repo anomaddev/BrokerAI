@@ -2741,6 +2741,28 @@
   flex-shrink: 0;
 }
 
+.trade-detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.trade-detail-utc-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.trade-detail-utc-toggle-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .trade-detail-header-main {
   display: flex;
   flex-wrap: wrap;

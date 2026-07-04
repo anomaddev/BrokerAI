@@ -1,19 +1,57 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from brokerai.trading.broker.models import BrokerEvent, ChildOrder, PositionLot
+
+logger = logging.getLogger(__name__)
+
+_SL_FILL_TYPES = frozenset({"STOP_LOSS_ORDER", "ORDER_FILL"})
+_TP_FILL_TYPES = frozenset({"TAKE_PROFIT_ORDER", "ORDER_FILL"})
+
+
+def _closing_fill_reason_from_events(
+    lot: PositionLot,
+    events: list[BrokerEvent],
+) -> str | None:
+    """Infer SL/TP close from closing txn types when embedded child state is stale."""
+    closing_set = set(lot.closing_event_ids)
+    if not closing_set:
+        return None
+    saw_sl_fill = False
+    saw_tp_fill = False
+    for event in events:
+        if event.broker_event_id not in closing_set:
+            continue
+        event_type = event.event_type.upper()
+        if event_type == "STOP_LOSS_ORDER":
+            saw_sl_fill = True
+        elif event_type == "TAKE_PROFIT_ORDER":
+            saw_tp_fill = True
+        elif event_type == "ORDER_FILL":
+            order_id = str(event.broker_order_id or "")
+            if lot.stop_loss and order_id == lot.stop_loss.broker_order_id:
+                saw_sl_fill = True
+            if lot.take_profit and order_id == lot.take_profit.broker_order_id:
+                saw_tp_fill = True
+    if saw_sl_fill and not saw_tp_fill:
+        return "stop_loss"
+    if saw_tp_fill and not saw_sl_fill:
+        return "take_profit"
+    return None
 
 
 def infer_close_reason(lot: PositionLot, events: list[BrokerEvent] | None = None) -> str:
     """Infer ``close_reason`` from child order states and broker events.
 
     Priority:
-    1. SL/TP order filled
-    2. Partial close (multiple closing events)
-    3. ORDER_FILL with MARKET_ORDER reason
-    4. Already set close_reason (strategy_exit, manual_close)
-    5. broker_closed (fallback)
+    1. Preserve strategy_exit / manual_close when already set
+    2. SL/TP order filled (embedded child state)
+    3. SL/TP inferred from closing txn event types
+    4. Partial close (multiple closing events)
+    5. ORDER_FILL with MARKET_ORDER / CLIENT reason
+    6. broker_closed (fallback)
     """
     if lot.state != "closed":
         return lot.close_reason or ""
@@ -25,6 +63,11 @@ def infer_close_reason(lot: PositionLot, events: list[BrokerEvent] | None = None
         return "stop_loss"
     if lot.take_profit and lot.take_profit.state.upper() == "FILLED":
         return "take_profit"
+
+    if events:
+        event_reason = _closing_fill_reason_from_events(lot, events)
+        if event_reason:
+            return event_reason
 
     if len(lot.closing_event_ids) > 1:
         return "partial_close"
@@ -39,6 +82,27 @@ def infer_close_reason(lot: PositionLot, events: list[BrokerEvent] | None = None
                     return "manual_close"
 
     return lot.close_reason or "broker_closed"
+
+
+def validate_close_reason_linkage(lot: PositionLot) -> None:
+    """Log when inferred close path disagrees with child-order fill linkage."""
+    if lot.state != "closed":
+        return
+    closing_ids = set(lot.closing_event_ids)
+    if lot.close_reason == "stop_loss" and lot.stop_loss and lot.stop_loss.filling_event_id:
+        if closing_ids and lot.stop_loss.filling_event_id not in closing_ids:
+            logger.warning(
+                "Close reason stop_loss but fill txn missing from closing_event_ids lot=%s fill=%s",
+                lot.broker_lot_id,
+                lot.stop_loss.filling_event_id,
+            )
+    if lot.close_reason == "take_profit" and lot.take_profit and lot.take_profit.filling_event_id:
+        if closing_ids and lot.take_profit.filling_event_id not in closing_ids:
+            logger.warning(
+                "Close reason take_profit but fill txn missing from closing_event_ids lot=%s fill=%s",
+                lot.broker_lot_id,
+                lot.take_profit.filling_event_id,
+            )
 
 
 def enrich_lot_from_events(lot: PositionLot, events: list[BrokerEvent]) -> PositionLot:
@@ -60,6 +124,9 @@ def enrich_lot_from_events(lot: PositionLot, events: list[BrokerEvent]) -> Posit
 
     if lot_events:
         lot.last_event_id = lot_events[-1].broker_event_id
+
+    if lot.state == "closed":
+        validate_close_reason_linkage(lot)
 
     return lot
 

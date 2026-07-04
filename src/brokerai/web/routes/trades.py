@@ -86,7 +86,7 @@ async def _resolve_trade_timeframe(trade: dict[str, Any]) -> str:
 
 
 def _trade_is_open(trade: dict[str, Any]) -> bool:
-    return str(trade.get("status") or trade.get("state") or "closed") == "open"
+    return str(trade.get("state") or "closed") == "open"
 
 
 def _entry_candle_price_side(trade: dict[str, Any]) -> str:
@@ -167,6 +167,16 @@ async def sync_trades(
     return _accepted_task_response(task_id)
 
 
+@router.get("/exposure")
+async def list_instrument_exposure(
+    exchange_id: str = Query(default="oanda"),
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    service = BrokerStateService()
+    rollups = await service.list_instrument_exposure(exchange_id=exchange_id)
+    return JSONResponse({"exposure": rollups, "count": len(rollups)})
+
+
 @router.get("")
 async def list_trades(
     _username: str = Depends(require_auth),
@@ -204,7 +214,7 @@ async def close_trade(
     trade = await service.get_lot_by_id(trade_id)
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
-    if trade.get("status") != "open" and trade.get("state") != "open":
+    if trade.get("state") != "open":
         raise HTTPException(status_code=400, detail="Trade is not open")
 
     updated = await service.close_lot(
@@ -228,8 +238,8 @@ async def debug_trade_row(
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
 
-    broker_lot_id = str(trade.get("broker_lot_id") or trade.get("broker_order_id") or "")
-    state = str(trade.get("state") or trade.get("status") or "")
+    broker_lot_id = str(trade.get("broker_lot_id") or "")
+    state = str(trade.get("state") or "")
     source = str(trade.get("_source") or "broker_lots")
     units = trade.get("units")
     summary = (
@@ -283,7 +293,7 @@ async def get_trade_candles(
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
 
-    opened_at = _parse_trade_instant(trade.get("opened_at") or trade.get("open_time"))
+    opened_at = _parse_trade_instant(trade.get("open_time"))
     if opened_at is None:
         raise HTTPException(status_code=400, detail="Trade open time is unavailable")
 

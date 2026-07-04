@@ -18,13 +18,12 @@ DEFAULT_TRADE_CHART_TIMEFRAME = "M15"
 
 
 def _resolve_lot_state(doc: dict[str, Any]) -> str:
-    """Normalize open/closed/cancelled from ``state`` or ``status``."""
-    for key in ("state", "status"):
-        value = doc.get(key)
-        if isinstance(value, str) and value.strip():
-            normalized = value.strip().lower()
-            if normalized in ("open", "closed", "cancelled"):
-                return normalized
+    """Normalize open/closed/cancelled from ``state``."""
+    value = doc.get("state")
+    if isinstance(value, str) and value.strip():
+        normalized = value.strip().lower()
+        if normalized in ("open", "closed", "cancelled"):
+            return normalized
     return "open"
 
 
@@ -35,31 +34,48 @@ def _state_match_query(state: str) -> dict[str, Any]:
     return {}
 
 
-def _quantities_from_doc(doc: dict[str, Any]) -> tuple[float, float]:
-    """Resolve ``initial_qty`` / ``current_qty`` from lot or legacy ``units`` fields."""
-    state = _resolve_lot_state(doc)
-    legacy_units = doc.get("units")
-    legacy_abs: float | None = None
-    if legacy_units is not None:
-        try:
-            legacy_abs = abs(float(legacy_units))
-        except (TypeError, ValueError):
-            legacy_abs = None
+def _lot_time_sort_field(state: str) -> str:
+    """Canonical Mongo sort field for lot lists (``close_time`` / ``open_time``)."""
+    return "close_time" if state == "closed" else "open_time"
 
+
+def _parse_lot_instant(raw: Any) -> datetime | None:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.astimezone(timezone.utc) if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _canonical_open_time(doc: dict[str, Any]) -> datetime | None:
+    return _parse_lot_instant(doc.get("open_time")) or _parse_lot_instant(doc.get("opened_at"))
+
+
+def _canonical_close_time(doc: dict[str, Any]) -> datetime | None:
+    return _parse_lot_instant(doc.get("close_time")) or _parse_lot_instant(doc.get("closed_at"))
+
+
+def _quantities_from_doc(doc: dict[str, Any]) -> tuple[float, float]:
+    """Resolve ``initial_qty`` / ``current_qty`` from a broker lot document."""
+    state = _resolve_lot_state(doc)
     initial_raw = doc.get("initial_qty")
     current_raw = doc.get("current_qty")
     initial = float(initial_raw) if initial_raw is not None else None
     current = float(current_raw) if current_raw is not None else None
 
-    if initial is None and legacy_abs is not None:
-        initial = legacy_abs
     if current is None:
         if state == "open":
-            current = initial if initial is not None else (legacy_abs or 0.0)
+            current = initial if initial is not None else 0.0
         else:
             current = 0.0
     if initial is None:
-        initial = legacy_abs or current or 0.0
+        initial = current or 0.0
 
     return abs(float(initial)), abs(float(current))
 
@@ -91,12 +107,12 @@ def _parse_sort_datetime(value: Any) -> datetime | None:
 def _lot_last_modified(doc: dict[str, Any]) -> datetime:
     """Sort key aligned with the Trades UI “Last modified” column."""
     if _resolve_lot_state(doc) == "closed":
-        for key in ("closed_at", "close_time", "updated_at", "opened_at", "open_time"):
+        for key in ("close_time", "updated_at", "open_time"):
             parsed = _parse_sort_datetime(doc.get(key))
             if parsed is not None:
                 return parsed
     else:
-        for key in ("opened_at", "open_time", "updated_at"):
+        for key in ("open_time", "updated_at"):
             parsed = _parse_sort_datetime(doc.get(key))
             if parsed is not None:
                 return parsed
@@ -130,7 +146,7 @@ def _sort_lots_for_display(
 
 
 def _local_broker_id(doc: dict[str, Any]) -> str:
-    return str(doc.get("broker_lot_id") or doc.get("broker_order_id") or "")
+    return str(doc.get("broker_lot_id") or "")
 
 
 def _dedupe_open_lots(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -173,7 +189,7 @@ def _resolved_execution_reason(doc: dict[str, Any]) -> str | None:
     stored = doc.get("execution_reason")
     if isinstance(stored, str) and stored.strip():
         return stored.strip()
-    if doc.get("status") != "open" and doc.get("state") != "open":
+    if doc.get("state") != "open":
         return None
     reason = _execution_reason_from_metadata(doc.get("metadata"))
     if reason:
@@ -264,14 +280,12 @@ def _lot_to_doc(lot: PositionLot) -> dict[str, Any]:
         "broker_lot_id": lot.broker_lot_id,
         "asset_class": lot.asset_class,
         "state": lot.state,
-        "status": lot.state,
         "instrument": lot.instrument,
         "symbol": lot.symbol,
         "pair": lot.pair,
         "direction": lot.direction,
         "initial_qty": lot.initial_qty,
         "current_qty": lot.current_qty,
-        "units": lot.units,
         "entry_price": lot.entry_price,
         "signal_entry_price": lot.signal_entry_price,
         "exit_price": lot.exit_price,
@@ -279,8 +293,8 @@ def _lot_to_doc(lot: PositionLot) -> dict[str, Any]:
         "realized_pl": lot.realized_pl,
         "costs": lot.costs or {},
         "open_time": open_time,
-        "close_time": lot.close_time,
         "opened_at": open_time,
+        "close_time": lot.close_time,
         "closed_at": lot.close_time,
         "stop_loss": _child_order_to_doc(lot.stop_loss),
         "take_profit": _child_order_to_doc(lot.take_profit),
@@ -302,7 +316,6 @@ def _lot_to_doc(lot: PositionLot) -> dict[str, Any]:
         "trade_date": trade_date,
         "synced_at": lot.synced_at or now,
         "raw_broker": lot.raw_broker,
-        "broker_order_id": lot.broker_lot_id,
         "updated_at": now,
     }
 
@@ -315,7 +328,7 @@ def _lot_from_doc(doc: dict[str, Any]) -> PositionLot:
         id=doc.get("id"),
         exchange_id=str(doc.get("exchange_id", "")),
         account_id=str(doc.get("account_id", "")),
-        broker_lot_id=str(doc.get("broker_lot_id") or doc.get("broker_order_id") or ""),
+        broker_lot_id=str(doc.get("broker_lot_id") or ""),
         asset_class=str(doc.get("asset_class", "forex")),
         state=_resolve_lot_state(doc),
         instrument=symbol,
@@ -329,8 +342,8 @@ def _lot_from_doc(doc: dict[str, Any]) -> PositionLot:
         unrealized_pl=doc.get("unrealized_pl"),
         realized_pl=doc.get("realized_pl"),
         costs=dict(doc.get("costs") or {}),
-        open_time=doc.get("open_time") or doc.get("opened_at"),
-        close_time=doc.get("close_time") or doc.get("closed_at"),
+        open_time=_canonical_open_time(doc),
+        close_time=_canonical_close_time(doc),
         stop_loss=_child_order_from_doc(doc.get("stop_loss")),
         take_profit=_child_order_from_doc(doc.get("take_profit")),
         stop_loss_price=doc.get("stop_loss_price"),
@@ -362,8 +375,8 @@ def serialize_lot(doc: dict[str, Any]) -> dict[str, Any]:
             doc = {**doc, "exit_price": close_fields["exit_price"]}
         if doc.get("realized_pl") is None and close_fields.get("realized_pl") is not None:
             doc = {**doc, "realized_pl": close_fields["realized_pl"]}
-        if doc.get("closed_at") is None and close_fields.get("closed_at") is not None:
-            doc = {**doc, "closed_at": close_fields["closed_at"]}
+        if doc.get("close_time") is None and close_fields.get("closed_at") is not None:
+            doc = {**doc, "close_time": close_fields["closed_at"]}
     lot = _lot_from_doc(doc)
     payload = lot.to_dict()
     reason_code = _reason_code_for_doc(doc)
@@ -378,8 +391,8 @@ def serialize_lot(doc: dict[str, Any]) -> dict[str, Any]:
         payload["exit_price"] = close_fields.get("exit_price")
     if payload.get("realized_pl") is None:
         payload["realized_pl"] = close_fields.get("realized_pl")
-    if payload.get("closed_at") is None:
-        payload["closed_at"] = _format_dt(close_fields.get("closed_at") or doc.get("closed_at"))
+    if payload.get("close_time") is None:
+        payload["close_time"] = _format_dt(close_fields.get("closed_at") or doc.get("close_time"))
     return payload
 
 
@@ -400,10 +413,13 @@ class BrokerLotsRepository:
 
         existing = None
         if lot.broker_lot_id:
-            existing = await handle.db[self.COLLECTION].find_one(
-                {"exchange_id": lot.exchange_id, "broker_lot_id": lot.broker_lot_id},
-                {"_id": 0},
-            )
+            lookup: dict[str, Any] = {
+                "exchange_id": lot.exchange_id,
+                "broker_lot_id": lot.broker_lot_id,
+            }
+            if lot.account_id:
+                lookup["account_id"] = lot.account_id
+            existing = await handle.db[self.COLLECTION].find_one(lookup, {"_id": 0})
 
         account_id = lot.account_id
         if existing:
@@ -515,6 +531,34 @@ class BrokerLotsRepository:
         )
         return serialize_lot(doc) if doc else None
 
+    async def update_unrealized_pl(
+        self,
+        *,
+        exchange_id: str,
+        broker_lot_id: str,
+        unrealized_pl: float,
+        account_id: str | None = None,
+    ) -> bool:
+        """Patch unrealized P/L on an open lot by broker trade id."""
+        handle = await get_db()
+        query: dict[str, Any] = {
+            "exchange_id": exchange_id,
+            "broker_lot_id": broker_lot_id,
+            "state": "open",
+        }
+        if account_id:
+            query["account_id"] = account_id
+        result = await handle.db[self.COLLECTION].update_one(
+            query,
+            {
+                "$set": {
+                    "unrealized_pl": unrealized_pl,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return result.modified_count > 0
+
     async def get_by_id(self, lot_id: str) -> dict[str, Any] | None:
         handle = await get_db()
         doc = await handle.db[self.COLLECTION].find_one({"id": lot_id}, {"_id": 0})
@@ -583,10 +627,17 @@ class BrokerLotsRepository:
         if pair:
             query["pair"] = pair.replace("_", "/")
 
-        sort_field = "closed_at" if state == "closed" else "opened_at"
+        sort_field = _lot_time_sort_field(state)
         if before is not None:
             when = before.astimezone(timezone.utc) if before.tzinfo else before.replace(tzinfo=timezone.utc)
-            query[sort_field] = {"$lt": when}
+            legacy_field = "closed_at" if state == "closed" else "opened_at"
+            query["$or"] = [
+                {sort_field: {"$lt": when}},
+                {
+                    sort_field: {"$exists": False},
+                    legacy_field: {"$lt": when},
+                },
+            ]
 
         cursor = (
             handle.db[self.COLLECTION]
@@ -632,9 +683,7 @@ class BrokerLotsRepository:
         closed = closed_at.astimezone(timezone.utc) if closed_at else now
         updates: dict[str, Any] = {
             "state": "closed",
-            "status": "closed",
             "close_reason": reason,
-            "closed_at": closed,
             "close_time": closed,
             "current_qty": 0,
             "updated_at": now,
@@ -665,9 +714,7 @@ class BrokerLotsRepository:
             {
                 "$set": {
                     "state": "cancelled",
-                    "status": "cancelled",
                     "close_reason": reason,
-                    "closed_at": cancelled,
                     "close_time": cancelled,
                     "current_qty": 0,
                     "updated_at": now,
@@ -737,7 +784,7 @@ class BrokerLotsRepository:
         cursor = (
             handle.db[self.COLLECTION]
             .find(query, {"_id": 0})
-            .sort("closed_at", -1)
+            .sort("close_time", -1)
             .limit(max(1, min(limit, 200)))
         )
         rows = await cursor.to_list(length=limit)
@@ -760,8 +807,12 @@ class BrokerLotsRepository:
             updates["exit_price"] = exit_price
         if realized_pl is not None and doc.get("realized_pl") is None:
             updates["realized_pl"] = realized_pl
-        if closed_at is not None and doc.get("closed_at") is None:
-            updates["closed_at"] = closed_at.astimezone(timezone.utc)
+        if closed_at is not None:
+            closed = closed_at.astimezone(timezone.utc)
+            if doc.get("close_time") is None:
+                updates["close_time"] = closed
+            if doc.get("closed_at") is None:
+                updates["closed_at"] = closed
         if not updates:
             return False
         updates["updated_at"] = datetime.now(timezone.utc)

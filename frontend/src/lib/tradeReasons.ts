@@ -26,6 +26,9 @@ const REASON_REGISTRY: Record<string, ReasonDefinition> = {
   trail_atr: { label: "Trail stop (ATR)", short: "Trail ATR", category: "exit" },
   manual_close: { label: "Manual close", short: "Manual", category: "manual" },
   broker_closed: { label: "Closed on OANDA", short: "Broker close", category: "broker" },
+  stop_loss: { label: "Stop loss hit", short: "Stop loss", category: "exit" },
+  take_profit: { label: "Take profit hit", short: "Take profit", category: "exit" },
+  partial_close: { label: "Partial close", short: "Partial", category: "exit" },
 };
 
 const CATEGORY_LABELS: Record<TradeReasonCategory, string> = {
@@ -84,7 +87,7 @@ function executionReasonCode(trade: Trade): string | null {
 }
 
 function reasonCodeForTrade(trade: Trade): string | null {
-  if (trade.status === "closed") {
+  if (trade.state === "closed") {
     return trade.close_reason?.trim() || null;
   }
   return executionReasonCode(trade);

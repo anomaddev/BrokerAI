@@ -76,8 +76,6 @@ export default function App() {
           <Route path="/trading/trades" element={<Trades />} />
           <Route path="/trading/analysis" element={<StrategyAnalysis />} />
           <Route path="/trading/analysis/:runId" element={<StrategyAnalysisRunView />} />
-          <Route path="/research" element={<Navigate to="/daily-reports" replace />} />
-          <Route path="/research/r/*" element={<Navigate to="/daily-reports" replace />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/settings/*" element={<Settings />} />
         </Route>

@@ -12,32 +12,31 @@ function coerceNumber(value: unknown): number | null {
   return null;
 }
 
-/** Resolve a display price from a legacy number, ChildOrder, or flat price field. */
+/** Resolve a display price from a ChildOrder or flat price field. */
 export function orderPrice(
-  order: number | ChildOrder | null | undefined,
+  order: ChildOrder | null | undefined,
   flatPrice?: number | null,
 ): number | null {
   const fromFlat = coerceNumber(flatPrice);
   if (fromFlat != null) return fromFlat;
   if (order == null) return null;
-  if (typeof order === "number") return coerceNumber(order);
   return coerceNumber(order.price);
 }
 
 export function tradeStatusKey(
-  trade: Pick<Trade, "status" | "state">,
+  trade: Pick<Trade, "state">,
 ): "open" | "closed" | "cancelled" {
-  const raw = (trade.status ?? trade.state ?? "closed").toLowerCase();
+  const raw = (trade.state ?? "closed").toLowerCase();
   if (raw === "open") return "open";
   if (raw === "cancelled") return "cancelled";
   return "closed";
 }
 
-export function tradeIsOpen(trade: Pick<Trade, "status" | "state">): boolean {
+export function tradeIsOpen(trade: Pick<Trade, "state">): boolean {
   return tradeStatusKey(trade) === "open";
 }
 
-export function tradeIsCancelled(trade: Pick<Trade, "status" | "state">): boolean {
+export function tradeIsCancelled(trade: Pick<Trade, "state">): boolean {
   return tradeStatusKey(trade) === "cancelled";
 }
 
@@ -99,13 +98,7 @@ export function tradeReasonCell(trade: Trade): { display: string; title: string 
 }
 
 /** Open date for open trades; close date once closed. */
-export type TradeTemporalFields = Pick<Trade, "status" | "state"> & {
-  opened_at?: string | null;
-  closed_at?: string | null;
-  open_time?: string | null;
-  close_time?: string | null;
-  updated_at?: string | null;
-};
+export type TradeTemporalFields = Pick<Trade, "state" | "open_time" | "close_time" | "updated_at">;
 
 function firstPresentTimestamp(...values: unknown[]): string | null {
   for (const value of values) {
@@ -132,24 +125,12 @@ export function tradeLastModifiedAt(
   const trade = statusOrTrade;
   const status = tradeStatusKey(trade);
   if (status === "closed") {
-    return firstPresentTimestamp(
-      trade.closed_at,
-      trade.close_time,
-      trade.updated_at,
-      trade.opened_at,
-      trade.open_time,
-    );
+    return firstPresentTimestamp(trade.close_time, trade.updated_at, trade.open_time);
   }
   if (status === "cancelled") {
-    return firstPresentTimestamp(
-      trade.closed_at,
-      trade.close_time,
-      trade.opened_at,
-      trade.open_time,
-      trade.updated_at,
-    );
+    return firstPresentTimestamp(trade.close_time, trade.open_time, trade.updated_at);
   }
-  return firstPresentTimestamp(trade.opened_at, trade.open_time, trade.updated_at);
+  return firstPresentTimestamp(trade.open_time, trade.updated_at);
 }
 
 export type TradeSortColumn =
@@ -187,7 +168,7 @@ export function defaultTradeSortDirection(column: TradeSortColumn): TradeSortDir
   return "asc";
 }
 
-function tradeStatusSortKey(trade: Pick<Trade, "status" | "state">): number {
+function tradeStatusSortKey(trade: Pick<Trade, "state">): number {
   const status = tradeStatusKey(trade);
   if (status === "open") return 0;
   if (status === "closed") return 1;
@@ -245,9 +226,9 @@ function tradePnlSortValue(
 
 function tradeDurationSortKey(trade: Trade): number | null {
   if (tradeIsOpen(trade) || tradeIsCancelled(trade)) return null;
-  if (!trade.opened_at || !trade.closed_at) return null;
-  const start = Date.parse(trade.opened_at);
-  const end = Date.parse(trade.closed_at);
+  if (!trade.open_time || !trade.close_time) return null;
+  const start = Date.parse(trade.open_time);
+  const end = Date.parse(trade.close_time);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
   return end - start;
 }
@@ -364,8 +345,8 @@ export function sortTradesForTable(
 
 /** Compare trades for table display: open first, then newest last-modified within each group. */
 export function compareTradesForDisplay(
-  a: Pick<Trade, "status" | "state" | "opened_at" | "closed_at">,
-  b: Pick<Trade, "status" | "state" | "opened_at" | "closed_at">,
+  a: Pick<Trade, "state" | "open_time" | "close_time">,
+  b: Pick<Trade, "state" | "open_time" | "close_time">,
 ): number {
   const aOpen = tradeStatusKey(a) === "open" ? 0 : tradeStatusKey(a) === "cancelled" ? 2 : 1;
   const bOpen = tradeStatusKey(b) === "open" ? 0 : tradeStatusKey(b) === "cancelled" ? 2 : 1;

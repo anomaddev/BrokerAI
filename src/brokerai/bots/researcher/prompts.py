@@ -231,12 +231,6 @@ def build_analysis_messages(
     ]
 
 
-def build_analysis_prompt(primary: str, pairs: list[str], articles: list[dict]) -> str:
-    """Legacy single-string prompt; prefer build_analysis_messages for daily reports."""
-    messages = build_analysis_messages(primary, pairs, articles)
-    return messages[1]["content"]
-
-
 _SYNTHESIS_SYSTEM_PROMPT = """\
 You are the chief market strategist consolidating several analysts' daily forex
 briefs into one authoritative institutional report.

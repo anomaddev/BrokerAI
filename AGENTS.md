@@ -26,11 +26,7 @@ Fresh install shows a Setup wizard at `http://localhost:5173`. Create an admin (
 
 Run pytest **as a module** so the repo root is importable (tests do `from tests.fixtures...` and there is no root `conftest.py`/`__init__.py`): `./venv/bin/python -m pytest`. Plain `pytest` fails collection with `ModuleNotFoundError: No module named 'tests'`.
 
-### Test suite state (NOT an environment problem)
-
-The full suite (`./venv/bin/python -m pytest`) collects 181 tests: 180 pass and 1 fails. The single failure — `tests/test_data_analyzer_startup.py::test_first_tick_analyzes_when_no_prior_revision` — is a **test-isolation flake**: it passes when run alone or with only its own file (`... -m pytest tests/test_data_analyzer_startup.py`), and only fails when the whole suite runs before it (state pollution / ordering, not the environment). Do not try to "fix the environment" for this.
-
-(The `brokerai.trading.data.candle_cache` module referenced by older notes now exists; the `brokerai` CLI imports and runs fine.)
+The full suite (`./venv/bin/python -m pytest`) collects ~230 tests; all should pass. Persistent bots are `secretary`, `broker`, and `researcher` only.
 
 ### Build / typecheck
 

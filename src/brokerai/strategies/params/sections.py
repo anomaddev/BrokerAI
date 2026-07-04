@@ -168,28 +168,11 @@ def validate_filter(
     return normalized
 
 
-def _migrate_trailing_to_take_profit(
-    take_profit: dict[str, Any],
-    trailing: dict[str, Any],
-    *,
-    signal_type: str | None,
-) -> dict[str, Any]:
-    if not trailing.get("enabled"):
-        return take_profit
+def validate_timeframe(value: Any) -> str:
+    if value is not None and value != "":
+        return _normalize_timeframe(value, field="timeframe")
 
-    migrated = dict(take_profit)
-    migrated["mode"] = "trailing_stop"
-    atr_multiplier = trailing.get("atr_multiplier", 1.0)
-    if signal_type == "ema_crossover" and not atr_multiplier:
-        migrated["trail_mode"] = "ema_slow"
-        migrated["trail_ema_ref"] = "slow"
-    elif signal_type == "ema_crossover":
-        migrated["trail_mode"] = "atr"
-        migrated["trail_atr_multiplier"] = float(atr_multiplier)
-    else:
-        migrated["trail_mode"] = "atr"
-        migrated["trail_atr_multiplier"] = float(atr_multiplier)
-    return migrated
+    raise ParamsValidationError("Timeframe is required", field="timeframe")
 
 
 def validate_exits(
@@ -219,12 +202,10 @@ def validate_exits(
         )
 
     take_profit_raw = _require_dict(data.get("take_profit"), f"{field}.take_profit")
-    trailing_raw = data.get("trailing")
-    if isinstance(trailing_raw, dict):
-        take_profit_raw = _migrate_trailing_to_take_profit(
-            take_profit_raw,
-            trailing_raw,
-            signal_type=signal_type,
+    if "trailing" in data:
+        raise ParamsValidationError(
+            "exits.trailing is no longer supported; use take_profit.mode=trailing_stop",
+            field=f"{field}.trailing",
         )
 
     tp_mode = _require_str(take_profit_raw.get("mode"), f"{field}.take_profit.mode")
@@ -429,20 +410,6 @@ def _normalize_timeframe(value: Any, *, field: str) -> str:
     if timeframe not in TIMEFRAMES:
         raise ParamsValidationError(f"Invalid timeframe: {timeframe}", field=field)
     return timeframe
-
-
-def validate_timeframe(
-    value: Any,
-    *,
-    legacy_timeframes: Any = None,
-) -> str:
-    if value is not None and value != "":
-        return _normalize_timeframe(value, field="timeframe")
-
-    if isinstance(legacy_timeframes, list) and legacy_timeframes:
-        return _normalize_timeframe(legacy_timeframes[0], field="timeframes[0]")
-
-    raise ParamsValidationError("Timeframe is required", field="timeframe")
 
 
 def validate_schema_version(value: Any) -> int:

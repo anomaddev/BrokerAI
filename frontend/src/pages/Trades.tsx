@@ -491,7 +491,7 @@ export default function Trades() {
                             ? "—"
                             : isCancelled
                               ? "—"
-                              : tradeDuration(trade.opened_at, trade.closed_at ?? null)}
+                              : tradeDuration(trade.open_time, trade.close_time ?? null)}
                         </td>
                         <td
                           className="research-actions-cell"

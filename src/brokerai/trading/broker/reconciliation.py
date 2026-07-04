@@ -7,7 +7,7 @@ from brokerai.trading.broker.models import PositionLot
 
 
 def _local_broker_id(doc: dict[str, Any]) -> str:
-    return str(doc.get("broker_lot_id") or doc.get("broker_order_id") or "")
+    return str(doc.get("broker_lot_id") or "")
 
 
 def _pair_direction_key(doc: dict[str, Any] | PositionLot) -> tuple[str, str]:
@@ -226,7 +226,6 @@ def reconcile_sync_drift(
         "unmatched_ledger": unmatched_local,
         "unmatched_broker": unmatched_broker,
         "broker_lots": broker_lots,
-        "broker_trades": broker_lots,
     }
 
 
@@ -246,5 +245,4 @@ def unconfigured_reconciliation() -> dict[str, Any]:
         "unmatched_ledger": [],
         "unmatched_broker": [],
         "broker_lots": [],
-        "broker_trades": [],
     }

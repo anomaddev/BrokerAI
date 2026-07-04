@@ -57,11 +57,13 @@ class SecretaryBot(Bot):
 
     async def on_stop(self) -> None:
         set_data_manager_service(None)
+        from brokerai.integrations.oanda_client import close_oanda_client
+
+        await close_oanda_client()
         logger.info("Secretary bot stopped")
 
     async def status(self) -> dict:
         payload = await super().status()
-        settings = get_settings()
         avg_ms = (
             int(sum(self._durations_ms) / len(self._durations_ms))
             if self._durations_ms
@@ -69,7 +71,6 @@ class SecretaryBot(Bot):
         )
         payload.update(
             {
-                "use_secretary_pipeline": settings.use_secretary_pipeline,
                 "queued_jobs": self._queued_jobs,
                 "active_pipelines": self._active_pipelines,
                 "last_completed_at": (
@@ -86,7 +87,7 @@ class SecretaryBot(Bot):
     async def _maybe_fetch_account_summary(self) -> None:
         settings = get_settings()
         now = datetime.now(timezone.utc)
-        interval = settings.oanda_account_sync_interval_seconds
+        interval = max(60, settings.oanda_account_sync_interval_seconds)
         if self._last_account_fetch_at is not None:
             elapsed = (now - self._last_account_fetch_at).total_seconds()
             if elapsed < interval:
@@ -179,20 +180,8 @@ class SecretaryBot(Bot):
         logger.info("Secretary startup — cache warm, waiting for candle close")
 
     async def tick(self) -> None:
-        settings = get_settings()
         await self._maybe_fetch_account_summary()
         await self._maybe_run_scheduled_research()
-
-        if not settings.use_secretary_pipeline:
-            jobs, warnings = await self._timeline.build_due_jobs(self._service)
-            for warning in warnings:
-                logger.debug("Secretary schedule-only — %s", warning)
-            if jobs:
-                logger.info(
-                    "Secretary schedule-only — would run %d pipeline(s)",
-                    len(jobs),
-                )
-            return
 
         if not self._startup_done:
             await self.run_startup_pass()

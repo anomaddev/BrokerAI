@@ -16,19 +16,41 @@ def _now_iso() -> str:
 class ExchangeConnectionsRepository:
     COLLECTION = "exchange_connections"
 
-    async def get_oanda(self) -> dict[str, Any]:
+    async def get_connection(self, exchange_id: str) -> dict[str, Any]:
+        """Return stored credentials for *exchange_id* (empty defaults when missing)."""
         handle = await get_db()
         doc = await handle.db[self.COLLECTION].find_one(
-            {"exchange_id": OANDA_ID}, {"_id": 0}
+            {"exchange_id": exchange_id}, {"_id": 0}
         )
         if doc:
             return doc
-        return {
-            "exchange_id": OANDA_ID,
-            "access_token": "",
-            "environment": "practice",
-            "account_id": None,
-        }
+        if exchange_id == OANDA_ID:
+            return {
+                "exchange_id": OANDA_ID,
+                "access_token": "",
+                "environment": "practice",
+                "account_id": None,
+            }
+        return {"exchange_id": exchange_id}
+
+    async def save_connection(self, exchange_id: str, **fields: Any) -> dict[str, Any]:
+        """Upsert connection fields for *exchange_id*."""
+        doc = {"exchange_id": exchange_id, "updated_at": _now_iso(), **fields}
+        handle = await get_db()
+        await handle.db[self.COLLECTION].update_one(
+            {"exchange_id": exchange_id},
+            {"$set": doc},
+            upsert=True,
+        )
+        return doc
+
+    async def delete_connection(self, exchange_id: str) -> bool:
+        handle = await get_db()
+        result = await handle.db[self.COLLECTION].delete_one({"exchange_id": exchange_id})
+        return result.deleted_count > 0
+
+    async def get_oanda(self) -> dict[str, Any]:
+        return await self.get_connection(OANDA_ID)
 
     async def save_oanda(
         self,
@@ -37,25 +59,15 @@ class ExchangeConnectionsRepository:
         environment: str,
         account_id: str | None,
     ) -> dict[str, Any]:
-        doc = {
-            "exchange_id": OANDA_ID,
-            "access_token": access_token.strip(),
-            "environment": environment,
-            "account_id": account_id or None,
-            "updated_at": _now_iso(),
-        }
-        handle = await get_db()
-        await handle.db[self.COLLECTION].update_one(
-            {"exchange_id": OANDA_ID},
-            {"$set": doc},
-            upsert=True,
+        return await self.save_connection(
+            OANDA_ID,
+            access_token=access_token.strip(),
+            environment=environment,
+            account_id=account_id or None,
         )
-        return doc
 
     async def delete_oanda(self) -> bool:
-        handle = await get_db()
-        result = await handle.db[self.COLLECTION].delete_one({"exchange_id": OANDA_ID})
-        return result.deleted_count > 0
+        return await self.delete_connection(OANDA_ID)
 
     @staticmethod
     def public_oanda(doc: dict[str, Any]) -> dict[str, Any]:

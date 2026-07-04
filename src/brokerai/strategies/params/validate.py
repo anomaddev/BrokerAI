@@ -50,10 +50,7 @@ def validate_params(preset: StrategyPreset, params: dict[str, Any]) -> dict[str,
     filters_schema = schema.get("filters") or []
 
     version = validate_schema_version(params.get("schema_version"))
-    timeframe = validate_timeframe(
-        params.get("timeframe"),
-        legacy_timeframes=params.get("timeframes"),
-    )
+    timeframe = validate_timeframe(params.get("timeframe"))
 
     indicators_raw = params.get("indicators") or {}
     if not isinstance(indicators_raw, dict):

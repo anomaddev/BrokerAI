@@ -19,10 +19,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 COLLECTION = "market_data"
-MIGRATION_COLLECTION = "market_data_timeseries_migration"
 TIME_FIELD = "ts"
 META_FIELD = "meta"
-MIGRATION_BATCH_SIZE = 1000
 
 
 def series_meta(symbol: str, timeframe: str, source: str) -> dict[str, str]:
@@ -106,49 +104,15 @@ def candle_to_timeseries_document(
     return document
 
 
-def flat_document_to_timeseries(document: dict[str, Any]) -> dict[str, Any] | None:
-    """Convert a legacy flat ``market_data`` document to time-series shape."""
-    symbol = document.get("symbol")
-    timeframe = document.get("timeframe")
-    source = document.get("source")
-    if not symbol or not timeframe or not source:
-        return None
-
-    ts = candle_open_time_to_datetime(document.get("time"))
-    if ts is None:
-        return None
-
-    converted: dict[str, Any] = {
-        TIME_FIELD: ts,
-        META_FIELD: series_meta(str(symbol), str(timeframe), str(source)),
-        "time": candle_open_time_to_string(document.get("time"), ts=ts),
-        "open": document["open"],
-        "high": document["high"],
-        "low": document["low"],
-        "close": document["close"],
-        "volume": document.get("volume", 0),
-        "fetched_at": document.get("fetched_at") or datetime.now(timezone.utc),
-    }
-    if document.get("sessions") is not None:
-        converted["sessions"] = document["sessions"]
-    if document.get("trading_day_et") is not None:
-        converted["trading_day_et"] = document["trading_day_et"]
-    if document.get("expires_at") is not None:
-        converted["expires_at"] = document["expires_at"]
-    return converted
-
-
 def timeseries_document_to_candle(document: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a stored document (time-series or legacy flat) for callers."""
+    """Normalize a time-series measurement document for callers."""
     meta = document.get(META_FIELD)
-    if isinstance(meta, dict):
-        symbol = str(meta.get("symbol", ""))
-        timeframe = str(meta.get("timeframe", ""))
-        source = str(meta.get("source", ""))
-    else:
-        symbol = str(document.get("symbol", ""))
-        timeframe = str(document.get("timeframe", ""))
-        source = str(document.get("source", ""))
+    if not isinstance(meta, dict):
+        raise ValueError("market_data document missing time-series meta field")
+
+    symbol = str(meta.get("symbol", ""))
+    timeframe = str(meta.get("timeframe", ""))
+    source = str(meta.get("source", ""))
 
     ts = document.get(TIME_FIELD)
     if ts is None and document.get("time") is not None:
@@ -212,32 +176,8 @@ async def create_timeseries_collection(db: Any, name: str) -> None:
     logger.info("Created MongoDB time-series collection %s", name)
 
 
-async def _migrate_flat_collection(db: Any, *, source_name: str, target_name: str) -> int:
-    """Copy legacy flat candles into a time-series collection."""
-    source = db[source_name]
-    target = db[target_name]
-    batch: list[dict[str, Any]] = []
-    migrated = 0
-
-    async for document in source.find({}):
-        converted = flat_document_to_timeseries(document)
-        if converted is None:
-            continue
-        batch.append(converted)
-        if len(batch) >= MIGRATION_BATCH_SIZE:
-            await target.insert_many(batch, ordered=False)
-            migrated += len(batch)
-            batch = []
-
-    if batch:
-        await target.insert_many(batch, ordered=False)
-        migrated += len(batch)
-
-    return migrated
-
-
 async def ensure_market_data_timeseries(db: Any) -> None:
-    """Ensure ``market_data`` is a time-series collection (migrate legacy data once)."""
+    """Ensure ``market_data`` exists as a MongoDB time-series collection."""
     names = await db.list_collection_names()
 
     if COLLECTION not in names:
@@ -245,38 +185,13 @@ async def ensure_market_data_timeseries(db: Any) -> None:
         await _ensure_ttl_index(db[COLLECTION])
         return
 
-    if await collection_is_timeseries(db, COLLECTION):
-        await _drop_legacy_market_data_indexes(db)
-        await _ensure_ttl_index(db[COLLECTION])
-        return
+    if not await collection_is_timeseries(db, COLLECTION):
+        raise RuntimeError(
+            f"Collection {COLLECTION!r} exists but is not a time-series collection; "
+            "drop it and restart for a clean install"
+        )
 
-    logger.info("Migrating flat market_data collection to MongoDB time series")
-    if MIGRATION_COLLECTION in names:
-        await db[MIGRATION_COLLECTION].drop()
-
-    await create_timeseries_collection(db, MIGRATION_COLLECTION)
-    migrated = await _migrate_flat_collection(
-        db,
-        source_name=COLLECTION,
-        target_name=MIGRATION_COLLECTION,
-    )
-    await db[COLLECTION].drop()
-    await db[MIGRATION_COLLECTION].rename(COLLECTION)
     await _ensure_ttl_index(db[COLLECTION])
-    logger.info("Migrated %d market_data candles to time series", migrated)
-
-
-async def _drop_legacy_market_data_indexes(db: Any) -> None:
-    """Remove unique/compound indexes from the pre-time-series schema."""
-    for index_name in (
-        "market_data_symbol_timeframe_source",
-        "market_data_symbol_timeframe_source_time",
-        "market_data_symbol_timeframe_source_time_desc",
-    ):
-        try:
-            await db[COLLECTION].drop_index(index_name)
-        except Exception:
-            pass
 
 
 async def _ensure_ttl_index(collection: Any) -> None:
@@ -286,6 +201,10 @@ async def _ensure_ttl_index(collection: Any) -> None:
             "expires_at",
             expireAfterSeconds=0,
             name="market_data_expires_at_ttl",
+            partialFilterExpression={
+                f"{META_FIELD}.source": {"$exists": True},
+                "expires_at": {"$exists": True},
+            },
         )
     except Exception as exc:
         message = str(exc).lower()

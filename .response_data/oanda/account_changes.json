@@ -1,0 +1,26 @@
+{
+  "changes": {
+    "tradesOpened": [],
+    "tradesReduced": [],
+    "tradesClosed": [],
+    "ordersCreated": [],
+    "ordersCancelled": [],
+    "ordersFilled": [],
+    "transactions": [],
+    "positions": []
+  },
+  "state": {
+    "unrealizedPL": "55.00",
+    "NAV": "10055.00",
+    "balance": "10000.00",
+    "trades": [
+      {
+        "id": "565",
+        "instrument": "EUR_USD",
+        "currentUnits": "1000",
+        "unrealizedPL": "55.00"
+      }
+    ]
+  },
+  "lastTransactionID": "567"
+}

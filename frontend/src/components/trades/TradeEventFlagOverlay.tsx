@@ -58,7 +58,7 @@ export function computeTradeEventFlagLayouts(
   const layouts: TradeEventFlagLayout[] = [];
   const direction = trade.direction === "short" ? "short" : "long";
 
-  const entryUnix = toUnixSeconds(trade.opened_at);
+  const entryUnix = toUnixSeconds(trade.open_time);
   if (entryUnix != null && Number.isFinite(trade.entry_price)) {
     const x = resolveTradeEventTimeCoordinate(chart, candles, entryUnix);
     const y = resolveTradeEventPriceCoordinate(series, trade.entry_price);
@@ -75,8 +75,8 @@ export function computeTradeEventFlagLayouts(
     }
   }
 
-  if (!tradeIsOpen(trade) && trade.closed_at) {
-    const exitUnix = toUnixSeconds(trade.closed_at);
+  if (!tradeIsOpen(trade) && trade.close_time) {
+    const exitUnix = toUnixSeconds(trade.close_time);
     const exitPrice = tradeExitPrice(trade);
     if (exitUnix != null && exitPrice != null && Number.isFinite(exitPrice)) {
       const x = resolveTradeEventTimeCoordinate(chart, candles, exitUnix);

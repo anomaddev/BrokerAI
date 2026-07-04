@@ -14,8 +14,10 @@ from brokerai.integrations.oanda import (
     list_positions,
     list_transactions_idrange,
     list_transactions_since,
+    normalize_oanda_transaction,
     parse_oanda_close_response,
     place_market_order,
+    poll_account_changes,
     _parse_broker_timestamp,
 )
 from brokerai.trading.broker.adapters.base import BrokerAdapter
@@ -25,6 +27,13 @@ from brokerai.trading.broker.models import (
     ExposureMismatch,
     PositionLot,
     SyncEventsResult,
+    SyncPollResult,
+)
+from brokerai.trading.oanda_account_state import (
+    apply_account_changes,
+    detect_transaction_gap,
+    open_lots_from_account_state,
+    _apply_child_order_patches,
 )
 from brokerai.trading.types import TradeIntent
 
@@ -145,8 +154,20 @@ class OandaAdapter:
         account_id: str,
         *,
         state: str | None = None,
+        full_bootstrap: bool = False,
     ) -> tuple[list[PositionLot], str | None]:
         access_token, environment = self._creds(credentials)
+        if full_bootstrap and not state:
+            from brokerai.trading.oanda_bootstrap import run_oanda_bootstrap
+
+            bootstrap = await run_oanda_bootstrap(
+                access_token,
+                environment,
+                account_id,
+                exchange_id=self.exchange_id,
+            )
+            return bootstrap.lots, bootstrap.last_transaction_id
+
         if state:
             raw_trades, last_txn = await list_all_trades(
                 access_token,
@@ -154,34 +175,16 @@ class OandaAdapter:
                 account_id,
                 state=state,
             )
-        else:
-            open_trades, txn_open = await list_all_trades(
-                access_token,
-                environment,
-                account_id,
-                state="OPEN",
-            )
-            closed_trades, txn_closed = await list_all_trades(
-                access_token,
-                environment,
-                account_id,
-                state="CLOSED",
-            )
-            by_id = {raw["id"]: raw for raw in open_trades}
-            for raw in closed_trades:
-                by_id[raw["id"]] = raw
-            raw_trades = list(by_id.values())
-            last_txn = txn_closed or txn_open
-            if txn_open and txn_closed:
-                try:
-                    last_txn = str(max(int(txn_open), int(txn_closed)))
-                except ValueError:
-                    last_txn = txn_closed or txn_open
-        lots = [
-            lot_from_oanda_trade(raw, exchange_id=self.exchange_id, account_id=account_id)
-            for raw in raw_trades
-        ]
-        return lots, last_txn
+            lots = [
+                lot_from_oanda_trade(raw, exchange_id=self.exchange_id, account_id=account_id)
+                for raw in raw_trades
+            ]
+            return lots, last_txn
+
+        raise ValueError(
+            "OandaAdapter.sync_lots requires full_bootstrap=True or an explicit state filter; "
+            "use run_oanda_bootstrap or sync_incremental_from_changes for cursor-driven sync."
+        )
 
     async def sync_events(
         self,
@@ -190,6 +193,7 @@ class OandaAdapter:
         *,
         since_cursor: str | None,
         full: bool = False,
+        transaction_end_id: str | None = None,
     ) -> SyncEventsResult:
         access_token, environment = self._creds(credentials)
         events: list[BrokerEvent] = []
@@ -197,10 +201,7 @@ class OandaAdapter:
         cursor = since_cursor
 
         if full or not since_cursor:
-            from brokerai.integrations.oanda import get_account_summary, list_positions
-
-            _, positions_last = await list_positions(access_token, environment, account_id)
-            end_id = positions_last or since_cursor or "1"
+            end_id = transaction_end_id or since_cursor or "1"
             start_id = "1"
             if since_cursor and since_cursor.isdigit() and int(since_cursor) > 0:
                 start_id = since_cursor
@@ -213,15 +214,18 @@ class OandaAdapter:
                 to_id=end_id,
             )
             for raw in raw_events:
+                normalized = normalize_oanda_transaction(raw)
+                if normalized is None:
+                    continue
                 events.append(
                     event_from_oanda_transaction(
-                        raw,
+                        normalized,
                         exchange_id=self.exchange_id,
                         account_id=account_id,
                     )
                 )
             if raw_events:
-                last_event_id = raw_events[-1]["id"]
+                last_event_id = str(raw_events[-1].get("id", ""))
         elif since_cursor:
             raw_events, cursor = await list_transactions_since(
                 access_token,
@@ -230,34 +234,124 @@ class OandaAdapter:
                 since_id=since_cursor,
             )
             for raw in raw_events:
+                normalized = normalize_oanda_transaction(raw)
+                if normalized is None:
+                    continue
                 events.append(
                     event_from_oanda_transaction(
-                        raw,
+                        normalized,
                         exchange_id=self.exchange_id,
                         account_id=account_id,
                     )
                 )
             if raw_events:
-                last_event_id = raw_events[-1]["id"]
+                last_event_id = str(raw_events[-1].get("id", ""))
 
         return SyncEventsResult(events=events, cursor=cursor, last_event_id=last_event_id)
+
+    async def sync_incremental_from_changes(
+        self,
+        credentials: dict[str, Any],
+        account_id: str,
+        *,
+        since_cursor: str,
+    ) -> SyncPollResult:
+        """Incremental sync via OANDA Poll Account Updates (single API call)."""
+        access_token, environment = self._creds(credentials)
+        poll = await poll_account_changes(
+            access_token,
+            environment,
+            account_id,
+            since_transaction_id=since_cursor,
+        )
+        changes = poll.get("changes") or {}
+        repair_triggered = False
+        applied = apply_account_changes(
+            changes,
+            exchange_id=self.exchange_id,
+            account_id=account_id,
+        )
+        events: list[BrokerEvent] = list(applied.events)
+
+        raw_txns = changes.get("transactions") or []
+        if detect_transaction_gap(
+            raw_txns,
+            since_id=since_cursor,
+            last_transaction_id=poll.get("lastTransactionID"),
+        ):
+            repair_triggered = True
+            from brokerai.trading.oanda_cursor_repair import repair_transaction_gap
+
+            gap_events = await repair_transaction_gap(
+                access_token=access_token,
+                environment=environment,
+                account_id=account_id,
+                exchange_id=self.exchange_id,
+                since_cursor=since_cursor,
+            )
+            events.extend(gap_events)
+
+        live_open_lots = open_lots_from_account_state(
+            poll.get("state") or {},
+            exchange_id=self.exchange_id,
+            account_id=account_id,
+        )
+        if not live_open_lots:
+            live_open_lots = [lot for lot in applied.lots if lot.state == "open"]
+        else:
+            _apply_child_order_patches(live_open_lots, applied.child_order_patches)
+
+        return SyncPollResult(
+            lots=applied.lots,
+            events=events,
+            live_open_lots=live_open_lots,
+            cursor=poll.get("lastTransactionID"),
+            repair_triggered=repair_triggered,
+            poll_state=poll.get("state") or {},
+        )
 
     async def validate_exposure(
         self,
         credentials: dict[str, Any],
         account_id: str,
-        lots: list[PositionLot],
+        lots: list[PositionLot] | None = None,
     ) -> list[ExposureMismatch]:
         access_token, environment = self._creds(credentials)
         positions, _ = await list_positions(access_token, environment, account_id)
         mismatches: list[ExposureMismatch] = []
 
-        local_by_key: dict[tuple[str, str], float] = {}
-        for lot in lots:
-            if lot.state != "open":
-                continue
-            key = (lot.symbol, lot.direction)
-            local_by_key[key] = local_by_key.get(key, 0.0) + lot.current_qty
+        from brokerai.db.repositories.instrument_exposure import InstrumentExposureRepository
+
+        exposure_repo = InstrumentExposureRepository()
+        rollups = await exposure_repo.list_for_account(
+            exchange_id=self.exchange_id,
+            account_id=account_id,
+        )
+        if rollups:
+            local_by_key = InstrumentExposureRepository.rollups_to_local_by_key(rollups)
+        else:
+            local_by_key = {}
+            source_lots = lots or []
+            for lot in source_lots:
+                if lot.state != "open":
+                    continue
+                key = (lot.symbol, lot.direction)
+                local_by_key[key] = local_by_key.get(key, 0.0) + lot.current_qty
+            if not local_by_key:
+                from brokerai.db.repositories.broker_lots import BrokerLotsRepository
+
+                open_docs = await BrokerLotsRepository().list_open_lots(
+                    exchange_id=self.exchange_id,
+                )
+                for lot_doc in open_docs:
+                    if str(lot_doc.get("account_id") or "") not in ("", account_id):
+                        continue
+                    symbol = str(lot_doc.get("symbol") or lot_doc.get("instrument") or "")
+                    direction = str(lot_doc.get("direction") or "long").lower()
+                    key = (symbol, direction)
+                    local_by_key[key] = local_by_key.get(key, 0.0) + float(
+                        lot_doc.get("current_qty") or 0
+                    )
 
         broker_by_key: dict[tuple[str, str], float] = {}
         for pos in positions:

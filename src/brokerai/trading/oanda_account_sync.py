@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
-
-from brokerai.config.settings import get_settings
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository, OANDA_ID
 from brokerai.db.repositories.oanda_account_snapshots import OandaAccountSnapshotsRepository
-from brokerai.integrations.oanda import get_account_summary, list_accounts
+from brokerai.integrations.oanda import list_accounts
+from brokerai.trading.broker.sync import run_broker_sync
 
 logger = logging.getLogger(__name__)
-
-_SYNC_LOCK = asyncio.Lock()
-_LAST_SUCCESSFUL_SYNC: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -27,94 +21,57 @@ class OandaAccountSyncResult:
     summary_synced: bool = False
     account_id: str | None = None
     synced_at: datetime | None = None
+    cursor_before: str | None = None
+    cursor_after: str | None = None
+    changes_applied: dict[str, int] = field(default_factory=dict)
+    repair_triggered: bool = False
 
 
 def _empty_result(*, configured: bool, skipped_reason: str | None = None) -> OandaAccountSyncResult:
     return OandaAccountSyncResult(configured=configured, skipped_reason=skipped_reason)
 
 
+def _from_sync_result(result) -> OandaAccountSyncResult:
+    return OandaAccountSyncResult(
+        configured=result.configured,
+        skipped_reason=result.skipped_reason or result.error,
+        summary_synced=result.summary_synced,
+        account_id=result.account_id,
+        synced_at=datetime.now(timezone.utc) if result.configured and not result.skipped_reason else None,
+        cursor_before=result.cursor_before,
+        cursor_after=result.cursor_after,
+        changes_applied=dict(result.changes_applied),
+        repair_triggered=result.repair_triggered,
+    )
+
+
 async def run_oanda_account_sync(*, force: bool = False) -> OandaAccountSyncResult:
-    """Fetch OANDA accounts + active account summary and persist to MongoDB.
+    """Deprecated wrapper — delegates to the unified ``run_broker_sync`` orchestrator."""
+    result = await run_broker_sync(
+        exchange_id=OANDA_ID,
+        mode="incremental",
+        force=force,
+        include_account_summary=True,
+        fetch_live_prices=False,
+    )
+    return _from_sync_result(result)
 
-    Runs at most once per ``oanda_account_sync_interval_seconds`` unless *force*
-    is True. Each successful sync appends a summary snapshot keyed by
-    ``account_id`` so historical charts survive account switches.
-    """
-    global _LAST_SUCCESSFUL_SYNC
 
-    settings = get_settings()
-    interval = max(60, settings.oanda_account_sync_interval_seconds)
-
-    if not force and _LAST_SUCCESSFUL_SYNC is not None:
-        elapsed = (datetime.now(timezone.utc) - _LAST_SUCCESSFUL_SYNC).total_seconds()
-        if elapsed < interval:
-            return _empty_result(configured=True, skipped_reason="recent_sync")
-
-    async with _SYNC_LOCK:
-        if not force and _LAST_SUCCESSFUL_SYNC is not None:
-            elapsed = (datetime.now(timezone.utc) - _LAST_SUCCESSFUL_SYNC).total_seconds()
-            if elapsed < interval:
-                return _empty_result(configured=True, skipped_reason="recent_sync")
-
-        oanda = await ExchangeConnectionsRepository().get_oanda()
-        access_token = str(oanda.get("access_token") or "").strip()
-        account_id = str(oanda.get("account_id") or "").strip()
-        environment = str(oanda.get("environment") or "practice")
-
-        if not access_token or not account_id:
-            return _empty_result(configured=False, skipped_reason="not_configured")
-
-        synced_at = datetime.now(timezone.utc)
-        repo = OandaAccountSnapshotsRepository()
-
-        try:
-            accounts = await list_accounts(access_token, environment)
-        except httpx.HTTPError as exc:
-            logger.warning("OANDA account list sync failed: %s", exc)
-            return _empty_result(configured=True, skipped_reason="accounts_fetch_failed")
-
-        await repo.upsert_accounts_snapshot(
-            exchange_id=OANDA_ID,
-            environment=environment,
-            accounts=accounts,
-            synced_at=synced_at,
-        )
-
-        try:
-            summary = await get_account_summary(access_token, environment, account_id)
-        except httpx.HTTPError as exc:
-            logger.warning("OANDA account summary sync failed for %s: %s", account_id, exc)
-            _LAST_SUCCESSFUL_SYNC = synced_at
-            return OandaAccountSyncResult(
-                configured=True,
-                skipped_reason="summary_fetch_failed",
-                accounts_count=len(accounts),
-                summary_synced=False,
-                account_id=account_id,
-                synced_at=synced_at,
-            )
-
-        await repo.insert_summary_snapshot(
-            exchange_id=OANDA_ID,
-            account_id=account_id,
-            environment=environment,
-            summary=summary,
-            synced_at=synced_at,
-        )
-
-        _LAST_SUCCESSFUL_SYNC = synced_at
-        logger.info(
-            "OANDA account sync — account=%s accounts=%d summary=ok",
-            account_id,
-            len(accounts),
-        )
-        return OandaAccountSyncResult(
-            configured=True,
-            accounts_count=len(accounts),
-            summary_synced=True,
-            account_id=account_id,
-            synced_at=synced_at,
-        )
+async def run_oanda_accounts_list_sync() -> int:
+    """Refresh accessible account list (settings / credential test only)."""
+    oanda = await ExchangeConnectionsRepository().get_oanda()
+    access_token = str(oanda.get("access_token") or "").strip()
+    environment = str(oanda.get("environment") or "practice")
+    if not access_token:
+        return 0
+    accounts = await list_accounts(access_token, environment)
+    await OandaAccountSnapshotsRepository().upsert_accounts_snapshot(
+        exchange_id=OANDA_ID,
+        environment=environment,
+        accounts=accounts,
+        synced_at=datetime.now(timezone.utc),
+    )
+    return len(accounts)
 
 
 async def get_cached_oanda_account_summary(

@@ -80,5 +80,5 @@ def test_serialize_lot_cancelled_status():
             "asset_class": "forex",
         }
     )
-    assert payload["status"] == "cancelled"
+    assert payload["state"] == "cancelled"
     assert payload["reason_display"]["short"] == "SL on fill"

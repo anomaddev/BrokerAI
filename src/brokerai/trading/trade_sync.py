@@ -16,7 +16,6 @@ BROKER_CLOSED_REASON = "broker_closed"
 
 
 def _parse_broker_open_time(raw: str | None) -> datetime | None:
-    """Backward-compatible alias for OANDA timestamp parsing."""
     return _parse_broker_timestamp(raw)
 
 
@@ -69,8 +68,8 @@ def broker_trade_to_ledger_intent(broker_trade: dict[str, Any]) -> dict[str, Any
         "units": units,
         "confidence": 0.0,
         "metadata": metadata,
-        "broker_order_id": broker_id,
-        "opened_at": _parse_broker_open_time(str(open_time) if open_time else None),
+        "broker_lot_id": broker_id,
+        "open_time": _parse_broker_open_time(str(open_time) if open_time else None),
     }
 
 
@@ -78,10 +77,6 @@ async def sync_oanda_trades_to_ledger(*, force: bool = False) -> dict[str, Any]:
     """Import/sync OANDA state into ``broker_lots`` via the unified broker sync."""
     result = await run_broker_sync(exchange_id="oanda", mode="incremental", force=force)
     payload = result.to_dict()
-    payload.setdefault("imported_trade_ids", [])
-    payload.setdefault("updated_trade_ids", [])
-    payload.setdefault("closed_trade_ids", [])
-    payload["backfilled_trade_ids"] = list(result.backfilled_lot_ids)
     payload["skipped"] = 1 if result.skipped_reason else 0
     payload["backfilled"] = result.backfilled
     return payload

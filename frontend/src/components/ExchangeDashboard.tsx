@@ -4,6 +4,7 @@ import {
   api,
   type AssetClass,
   type ExchangeConnectionsResponse,
+  type InstrumentExposureRow,
   type OandaAccountSummary,
   type OandaConnection,
 } from "../api/client";
@@ -130,6 +131,54 @@ function buildConnectedExchanges(
   });
 }
 
+function formatExposurePair(symbol: string): string {
+  return symbol.includes("/") ? symbol : symbol.replace("_", "/");
+}
+
+function ExposureSummary({
+  rows,
+  loading,
+  error,
+}: {
+  rows: InstrumentExposureRow[];
+  loading: boolean;
+  error: string | null;
+}) {
+  if (loading) {
+    return <p className="settings-muted dashboard-card-muted">Loading exposure…</p>;
+  }
+  if (error) {
+    return <p className="settings-error">{error}</p>;
+  }
+  if (rows.length === 0) {
+    return <p className="settings-muted dashboard-card-muted">No open instrument exposure.</p>;
+  }
+
+  return (
+    <div className="dashboard-exposure">
+      <h3 className="dashboard-exposure-title">Open exposure</h3>
+      <ul className="dashboard-exposure-list">
+        {rows.map((row) => (
+          <li key={`${row.symbol}-${row.direction}`} className="dashboard-exposure-row">
+            <Link
+              to={`/trades?status=open&pair=${encodeURIComponent(formatExposurePair(row.symbol))}`}
+              className="dashboard-exposure-link"
+            >
+              <span className="dashboard-exposure-symbol">{formatExposurePair(row.symbol)}</span>
+              <span className="dashboard-exposure-meta">
+                {row.direction} · {row.total_qty.toLocaleString()} units
+              </span>
+              <span className={`dashboard-exposure-pl ${plClass(row.unrealized_pl)}`}>
+                {row.unrealized_pl == null ? "—" : formatMoney(row.unrealized_pl)}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function OandaSummary({
   summary,
   loading,
@@ -202,12 +251,18 @@ function ExchangeDashboardCard({
   oandaSummary,
   summaryLoading,
   summaryError,
+  exposureRows,
+  exposureLoading,
+  exposureError,
   enterDelayMs = 0,
 }: {
   overview: ConnectedExchangeOverview;
   oandaSummary: OandaAccountSummary | null;
   summaryLoading: boolean;
   summaryError: string | null;
+  exposureRows: InstrumentExposureRow[];
+  exposureLoading: boolean;
+  exposureError: string | null;
   enterDelayMs?: number;
 }) {
   const { exchange, connection, enabledAssetClasses } = overview;
@@ -236,7 +291,10 @@ function ExchangeDashboardCard({
       )}
 
       {exchange.id === "oanda" && connection?.connected && (
-        <OandaSummary summary={oandaSummary} loading={summaryLoading} error={summaryError} />
+        <>
+          <OandaSummary summary={oandaSummary} loading={summaryLoading} error={summaryError} />
+          <ExposureSummary rows={exposureRows} loading={exposureLoading} error={exposureError} />
+        </>
       )}
 
       <div className="dashboard-card-footer">
@@ -270,6 +328,9 @@ export default function ExchangeDashboard() {
   const [oandaSummary, setOandaSummary] = useState<OandaAccountSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [exposureRows, setExposureRows] = useState<InstrumentExposureRow[]>([]);
+  const [exposureLoading, setExposureLoading] = useState(false);
+  const [exposureError, setExposureError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -297,17 +358,27 @@ export default function ExchangeDashboard() {
         const oandaConnected = connections.oanda?.connected;
         if (oandaConnected) {
           setSummaryLoading(true);
+          setExposureLoading(true);
           try {
-            const summary = await api.getOandaAccountSummary();
-            if (!cancelled) setOandaSummary(summary);
+            const [summary, exposure] = await Promise.all([
+              api.getOandaAccountSummary(),
+              api.getInstrumentExposure("oanda"),
+            ]);
+            if (!cancelled) {
+              setOandaSummary(summary);
+              setExposureRows(exposure.exposure);
+            }
           } catch (err) {
             if (!cancelled) {
-              setSummaryError(
-                err instanceof Error ? err.message : "Failed to load OANDA account summary",
-              );
+              const message = err instanceof Error ? err.message : "Failed to load OANDA data";
+              setSummaryError(message);
+              setExposureError(message);
             }
           } finally {
-            if (!cancelled) setSummaryLoading(false);
+            if (!cancelled) {
+              setSummaryLoading(false);
+              setExposureLoading(false);
+            }
           }
         }
       } catch (err) {
@@ -353,6 +424,9 @@ export default function ExchangeDashboard() {
               oandaSummary={overview.exchange.id === "oanda" ? oandaSummary : null}
               summaryLoading={overview.exchange.id === "oanda" ? summaryLoading : false}
               summaryError={overview.exchange.id === "oanda" ? summaryError : null}
+              exposureRows={overview.exchange.id === "oanda" ? exposureRows : []}
+              exposureLoading={overview.exchange.id === "oanda" ? exposureLoading : false}
+              exposureError={overview.exchange.id === "oanda" ? exposureError : null}
               enterDelayMs={index * 70}
             />
           ))}

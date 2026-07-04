@@ -2,25 +2,65 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-from brokerai.bots.data_analyzer.sub_analyzer import SubAnalyzer
 from brokerai.bots.data_manager.candle_requirements import strategy_params
 from brokerai.bots.data_manager.service import DataManagerService
 from brokerai.config.settings import get_settings
-from brokerai.db.repositories.trades import TradesRepository
+from brokerai.db.repositories.broker_lots import BrokerLotsRepository
+from brokerai.trading.broker.state import BrokerStateService
 from brokerai.trading.candle_context import load_candles_for_unit
-from brokerai.trading.schedule import utc_now
 from brokerai.trading.broker.sync import run_broker_sync
 from brokerai.trading.indicator_cache import IndicatorCache
 from brokerai.trading.registries.exits import create_exit_monitor
+from brokerai.trading.schedule import utc_now
 from brokerai.trading.types import WorkUnit
 
 logger = logging.getLogger(__name__)
 
 
-class _TradeExitAnalyzer(SubAnalyzer):
+class _SubAnalyzer(ABC):
+    trade_id: str
+
+    def __init__(self, trade_id: str) -> None:
+        self.trade_id = trade_id
+
+    @abstractmethod
+    async def evaluate(self) -> None:
+        """Evaluate exit signals for a monitored trade."""
+
+
+async def _close_lot(
+    lots_repo: BrokerLotsRepository,
+    trade_id: str,
+    *,
+    reason: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    lot = await lots_repo.get_by_id(trade_id)
+    if lot is None:
+        return
+    exit_candle_open = (metadata or {}).get("exit_candle_open")
+    if lot.get("state") == "open" and lot.get("broker_lot_id"):
+        await BrokerStateService(lots_repo=lots_repo).close_lot(
+            str(lot.get("exchange_id", "oanda")),
+            trade_id,
+            reason=reason,
+            close_metadata=metadata,
+            exit_candle_open=exit_candle_open,
+        )
+        return
+    await lots_repo.close_lot(
+        trade_id,
+        reason=reason,
+        exit_candle_open=exit_candle_open,
+        close_metadata=metadata,
+    )
+
+
+class _TradeExitAnalyzer(_SubAnalyzer):
     def __init__(
         self,
         trade: dict,
@@ -28,6 +68,7 @@ class _TradeExitAnalyzer(SubAnalyzer):
         unit: WorkUnit,
         indicator_cache: IndicatorCache,
         data_manager: DataManagerService,
+        lots_repo: BrokerLotsRepository,
     ) -> None:
         super().__init__(str(trade.get("id", "")))
         self._trade = trade
@@ -35,6 +76,7 @@ class _TradeExitAnalyzer(SubAnalyzer):
         self._unit = unit
         self._indicator_cache = indicator_cache
         self._data_manager = data_manager
+        self._lots_repo = lots_repo
         self._monitor = create_exit_monitor(trade, params)
 
     async def evaluate(self) -> None:
@@ -67,7 +109,8 @@ class _TradeExitAnalyzer(SubAnalyzer):
             candle_time = candles[-1].get("time")
             if candle_time:
                 close_metadata["exit_candle_open"] = candle_time
-        await TradesRepository().close_trade(
+        await _close_lot(
+            self._lots_repo,
             exit_intent.trade_id,
             reason=exit_intent.reason,
             metadata=close_metadata,
@@ -82,6 +125,7 @@ class BrokerMonitor:
         self._indicator_cache = IndicatorCache()
         self._account_snapshots: dict[str, dict[str, Any]] = {}
         self._last_trade_sync_at: datetime | None = None
+        self._lots_repo = BrokerLotsRepository()
 
     def set_account_snapshot(self, asset_class: str, snapshot: dict[str, Any]) -> None:
         self._account_snapshots[asset_class] = snapshot
@@ -96,7 +140,7 @@ class BrokerMonitor:
         *,
         evaluate_pairs: set[tuple[str, str]] | None = None,
     ) -> None:
-        open_trades = await TradesRepository().list_open_trades()
+        open_trades = await self._lots_repo.list_open_lots()
         units_by_pair: dict[str, WorkUnit] = {unit.pair: unit for unit in work_units}
         active_ids: set[str] = set()
 
@@ -125,6 +169,7 @@ class BrokerMonitor:
                     unit,
                     self._indicator_cache,
                     data_manager,
+                    self._lots_repo,
                 )
 
         stale = [tid for tid in self._sub_analyzers if tid not in active_ids]
@@ -154,14 +199,18 @@ class BrokerMonitor:
                 return
 
         self._last_trade_sync_at = now
-        result = await run_broker_sync(exchange_id="oanda", mode="incremental")
+        result = await run_broker_sync(
+            exchange_id="oanda",
+            mode="incremental",
+            include_account_summary=True,
+            fetch_live_prices=True,
+        )
         if not result.configured:
             return
         imported = int(result.lots_upserted)
         updated = int(result.enriched)
         closed = int(result.lots_closed)
-        backfilled = 0
-        if imported or updated or closed or backfilled:
+        if imported or updated or closed:
             logger.info(
                 "Broker monitor — broker sync lots=%d enriched=%d closed=%d",
                 imported,
@@ -172,5 +221,5 @@ class BrokerMonitor:
     async def sync_account_positions(self) -> None:
         """Slow-tick housekeeping: import broker-only open trades into the ledger."""
         await self._maybe_sync_oanda_trades()
-        open_trades = await TradesRepository().list_open_trades()
+        open_trades = await self._lots_repo.list_open_lots()
         logger.debug("Broker monitor — %d open trade(s)", len(open_trades))

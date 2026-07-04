@@ -2598,6 +2598,64 @@ input {
   color: #ef4444;
 }
 
+.dashboard-exposure {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.dashboard-exposure-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dashboard-exposure-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.dashboard-exposure-link {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  padding: 0.35rem 0.45rem;
+  border-radius: 0.45rem;
+  border: 1px solid transparent;
+}
+
+.dashboard-exposure-link:hover {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dashboard-exposure-symbol {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.dashboard-exposure-meta {
+  grid-column: 1;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.dashboard-exposure-pl {
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .dashboard-card-footer {
   display: flex;
   flex-direction: column;

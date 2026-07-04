@@ -11,7 +11,7 @@ export type TradeCandleWindow = {
   until: string;
   displaySince: string;
   displayUntil: string;
-  /** Entry instant as unix seconds (exact ``opened_at``). */
+  /** Entry instant as unix seconds (exact ``open_time``). */
   entryTime: number;
   /** Exit instant as unix seconds, or null when trade is open. */
   exitTime: number | null;
@@ -40,7 +40,7 @@ export function tradeChartTimeframe(raw: string | null | undefined): Timeframe {
  * include extra warmup history returned by the API for indicator computation.
  */
 export function buildTradeCandleWindow(
-  trade: Pick<Trade, "opened_at" | "closed_at" | "status" | "state">,
+  trade: Pick<Trade, "open_time" | "close_time" | "state">,
   bounds?: {
     since?: string | null;
     until?: string | null;
@@ -48,11 +48,11 @@ export function buildTradeCandleWindow(
     displayUntil?: string | null;
   } | null,
 ): TradeCandleWindow | null {
-  const openedMs = parseInstant(trade.opened_at);
+  const openedMs = parseInstant(trade.open_time);
   if (openedMs == null) return null;
 
   const isOpen = tradeIsOpen(trade);
-  const closedMs = isOpen ? Date.now() : parseInstant(trade.closed_at);
+  const closedMs = isOpen ? Date.now() : parseInstant(trade.close_time);
   if (closedMs == null) return null;
 
   const displaySinceMs =

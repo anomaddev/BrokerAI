@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from brokerai.db.repositories.broker_events import BrokerEventsRepository
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository, apply_candle_anchors_to_lot, serialize_lot
-from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
+from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository, OANDA_ID
+from brokerai.db.repositories.instrument_exposure import InstrumentExposureRepository
 from brokerai.trading.broker.adapters.base import get_adapter
 from brokerai.trading.broker.models import InstrumentExposure, PositionLot, SyncMode, SyncResult
 from brokerai.trading.broker.sync import run_broker_sync
 from brokerai.trading.types import TradeIntent
+
+
+class BrokerNotConfiguredError(Exception):
+    """Raised when broker credentials are missing for an exchange."""
 
 
 class BrokerStateService:
@@ -25,16 +29,24 @@ class BrokerStateService:
         self._lots = lots_repo or BrokerLotsRepository()
         self._events = events_repo or BrokerEventsRepository()
 
+    async def _credentials_for(
+        self,
+        exchange_id: str,
+    ) -> tuple[dict[str, Any], str] | tuple[None, None]:
+        conn = await ExchangeConnectionsRepository().get_connection(exchange_id)
+        if exchange_id == OANDA_ID:
+            access_token = str(conn.get("access_token") or "").strip()
+            account_id = str(conn.get("account_id") or "").strip()
+            if not access_token or not account_id:
+                return None, None
+            return {
+                "access_token": access_token,
+                "environment": str(conn.get("environment") or "practice"),
+            }, account_id
+        return None, None
+
     async def _oanda_context(self) -> tuple[dict[str, Any], str] | tuple[None, None]:
-        oanda = await ExchangeConnectionsRepository().get_oanda()
-        access_token = str(oanda.get("access_token") or "").strip()
-        account_id = str(oanda.get("account_id") or "").strip()
-        if not access_token or not account_id:
-            return None, None
-        return {
-            "access_token": access_token,
-            "environment": str(oanda.get("environment") or "practice"),
-        }, account_id
+        return await self._credentials_for(OANDA_ID)
 
     async def sync(
         self,
@@ -54,7 +66,7 @@ class BrokerStateService:
         return await self._lots.list_open_lots(exchange_id=exchange_id, strategy_id=strategy_id)
 
     async def get_lot(self, exchange_id: str, broker_lot_id: str) -> dict[str, Any] | None:
-        credentials, account_id = await self._oanda_context()
+        credentials, account_id = await self._credentials_for(exchange_id)
         if credentials is None or account_id is None:
             return None
         return await self._lots.get_by_broker_lot_id(exchange_id, account_id, broker_lot_id)
@@ -67,7 +79,7 @@ class BrokerStateService:
         exchange_id: str,
         intent: TradeIntent,
     ) -> dict[str, Any]:
-        credentials, account_id = await self._oanda_context()
+        credentials, account_id = await self._credentials_for(exchange_id)
         intent_meta = intent.metadata or {}
         if credentials is None or account_id is None:
             lot = PositionLot(
@@ -134,7 +146,7 @@ class BrokerStateService:
             return lot_doc
 
         broker_lot_id = str(lot_doc.get("broker_lot_id") or "")
-        credentials, account_id = await self._oanda_context()
+        credentials, account_id = await self._credentials_for(exchange_id)
         close_metadata = dict(close_metadata or {})
         exit_candle = exit_candle_open or close_metadata.pop("exit_candle_open", None)
 
@@ -177,14 +189,37 @@ class BrokerStateService:
         self,
         exchange_id: str,
         symbol: str,
+        *,
+        direction: str | None = None,
     ) -> InstrumentExposure | None:
+        credentials, account_id = await self._credentials_for(exchange_id)
+        if account_id:
+            materialized = await InstrumentExposureRepository().get_for_symbol(
+                exchange_id=exchange_id,
+                account_id=account_id,
+                symbol=symbol,
+                direction=direction,
+            )
+            if materialized is not None:
+                return materialized
+
         lots = await self._lots.list_open_lots(exchange_id=exchange_id)
-        matching = [lot for lot in lots if lot.get("symbol") == symbol or lot.get("pair") == symbol.replace("_", "/")]
+        matching = [
+            lot
+            for lot in lots
+            if lot.get("symbol") == symbol or lot.get("pair") == symbol.replace("_", "/")
+        ]
+        if direction:
+            matching = [lot for lot in matching if str(lot.get("direction") or "").lower() == direction.lower()]
         if not matching:
             return None
-        direction = str(matching[0].get("direction", "long"))
+        resolved_direction = str(matching[0].get("direction", "long"))
         total_qty = sum(float(lot.get("current_qty") or 0) for lot in matching)
-        total_pl = sum(float(lot.get("unrealized_pl") or 0) for lot in matching if lot.get("unrealized_pl") is not None)
+        total_pl = sum(
+            float(lot.get("unrealized_pl") or 0)
+            for lot in matching
+            if lot.get("unrealized_pl") is not None
+        )
         weighted_price = 0.0
         if total_qty > 0:
             weighted_price = sum(
@@ -194,12 +229,32 @@ class BrokerStateService:
         return InstrumentExposure(
             exchange_id=exchange_id,
             symbol=symbol,
-            direction=direction,
+            direction=resolved_direction,
             total_qty=total_qty,
             average_price=weighted_price,
             unrealized_pl=total_pl if total_pl else None,
             broker_lot_ids=[str(lot.get("broker_lot_id")) for lot in matching],
         )
+
+    async def list_instrument_exposure(
+        self,
+        *,
+        exchange_id: str = "oanda",
+    ) -> list[dict[str, Any]]:
+        credentials, account_id = await self._credentials_for(exchange_id)
+        if account_id is None:
+            return []
+        rollups = await InstrumentExposureRepository().list_for_account(
+            exchange_id=exchange_id,
+            account_id=account_id,
+        )
+        if rollups:
+            return rollups
+        lots = await self._lots.list_open_lots(exchange_id=exchange_id)
+        account_lots = [lot for lot in lots if str(lot.get("account_id") or "") == account_id]
+        from brokerai.db.repositories.instrument_exposure import _rollup_from_lot_docs
+
+        return [row.to_dict() for row in _rollup_from_lot_docs(account_lots, exchange_id=exchange_id)]
 
     async def get_events(
         self,
@@ -207,7 +262,7 @@ class BrokerStateService:
         exchange_id: str = "oanda",
         broker_lot_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        credentials, account_id = await self._oanda_context()
+        credentials, account_id = await self._credentials_for(exchange_id)
         return await self._events.list_events(
             exchange_id=exchange_id,
             account_id=account_id,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import {
   api,
@@ -7,7 +7,9 @@ import {
   type Trade,
   type TradeReconciliation,
 } from "../../api/client";
+import ToggleSwitch from "../ToggleSwitch";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
+import { formatAppInstant, type AppInstantStyle } from "../../lib/formatTime";
 import { decomposeStrategyToIndicatorLayers } from "../../lib/chart/chartOverlayState";
 import { TIMEFRAME_LABELS } from "../../lib/strategyParams";
 import {
@@ -38,7 +40,8 @@ export default function TradeDetailOverlay({
   reconciliation,
   onClose,
 }: TradeDetailOverlayProps) {
-  const { formatInstant } = useGeneralSettings();
+  const { showUtc: globalShowUtc, effectiveTimezone } = useGeneralSettings();
+  const [viewUtc, setViewUtc] = useState(globalShowUtc);
   const [trade, setTrade] = useState(initialTrade);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [candles, setCandles] = useState<CandleBar[]>([]);
@@ -57,6 +60,24 @@ export default function TradeDetailOverlay({
     setTrade(initialTrade);
     setFetchError(null);
   }, [initialTrade]);
+
+  useEffect(() => {
+    setViewUtc(globalShowUtc);
+  }, [initialTrade.id, globalShowUtc]);
+
+  const tradeTimeOptions = useMemo(
+    () => ({
+      showUtc: viewUtc,
+      timeZone: effectiveTimezone,
+    }),
+    [viewUtc, effectiveTimezone],
+  );
+
+  const formatTradeInstant = useCallback(
+    (value: string | number | Date | null | undefined, style: AppInstantStyle = "full") =>
+      formatAppInstant(value, tradeTimeOptions, style),
+    [tradeTimeOptions],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -196,20 +217,30 @@ export default function TradeDetailOverlay({
             </span>
             <span className={tradeStatusClassName(status)}>{tradeStatusLabel(status)}</span>
           </div>
-          <button
-            type="button"
-            className="trade-detail-close-btn"
-            onClick={onClose}
-            aria-label="Close trade details"
-          >
-            <X size={18} strokeWidth={1.75} />
-          </button>
+          <div className="trade-detail-header-actions">
+            <label className="trade-detail-utc-toggle">
+              <span className="trade-detail-utc-toggle-label">View UTC</span>
+              <ToggleSwitch
+                label="View UTC"
+                checked={viewUtc}
+                onChange={setViewUtc}
+              />
+            </label>
+            <button
+              type="button"
+              className="trade-detail-close-btn"
+              onClick={onClose}
+              aria-label="Close trade details"
+            >
+              <X size={18} strokeWidth={1.75} />
+            </button>
+          </div>
         </header>
 
         <p className="trade-detail-subtitle settings-muted">
           {trade.strategy_name}
           {` · ${TIMEFRAME_LABELS[timeframe]}`}
-          {lastModified ? ` · Last modified ${formatInstant(lastModified, "compact")}` : ""}
+          {lastModified ? ` · Last modified ${formatTradeInstant(lastModified, "compact")}` : ""}
         </p>
 
         {fetchError && <p className="settings-error trade-detail-fetch-error">{fetchError}</p>}
@@ -237,10 +268,16 @@ export default function TradeDetailOverlay({
               error={candlesError}
               overlayItems={overlayItems}
               candleWindow={candleWindow}
+              timeOptions={tradeTimeOptions}
             />
           </div>
           <aside className="trades-detail-panel-col">
-            <TradeDetailPanel trade={trade} reconciliation={reconciliation} onClose={onClose} />
+            <TradeDetailPanel
+              trade={trade}
+              reconciliation={reconciliation}
+              onClose={onClose}
+              formatInstant={formatTradeInstant}
+            />
           </aside>
         </div>
       </div>

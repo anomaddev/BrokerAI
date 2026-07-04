@@ -274,30 +274,6 @@ Validation errors return HTTP 400 with a descriptive message.
 
 ---
 
-## Legacy flat params (EMA crossover)
+## Schema version policy
 
-Early builds stored flat snake_case keys. The backend auto-migrates on read/write via `src/brokerai/strategies/params/legacy.py`.
-
-| Legacy key | v1 location |
-|------------|-------------|
-| `fast_ema` | `indicators.fast.period` |
-| `slow_ema` | `indicators.slow.period` |
-| `timeframe` | `timeframe` |
-| `direction`, `confirmation` | `signal.*` |
-| `adx_filter`, `adx_period`, `adx_threshold` | `filters[id=adx].*` |
-| `atr_filter`, `atr_period`, `min_atr` | `filters[id=atr].*` |
-| `stop_loss_type`, `sl_*` | `exits.stop_loss.*` |
-| `take_profit_type`, `tp_*`, `trailing_stop`, `trail_atr_multiplier` | `exits.*` |
-| `risk_per_trade` | `risk.risk_per_trade_pct` |
-| `max_trades_per_day` | `risk.max_trades_per_day` |
-| `sessions`, `min_confidence` | `execution.*` |
-
-Removed from params (use document fields instead): `enabled`, `assignment_mode`, `asset_class`, `selected_instruments`.
-
----
-
-## Migration policy
-
-1. **Reads** — Legacy flat params are converted to v1 when serializing strategies.
-2. **Writes** — All creates/updates store normalized v1 params.
-3. **Breaking changes** — Increment `schema_version`, add migrator in `legacy.py`, update this document.
+BrokerAI expects **v1 sectioned params** (`schema_version: 1`). Flat snake_case legacy keys and `exits.trailing` are rejected on read/write with a validation error. Increment `schema_version` and update this document when making breaking param changes.

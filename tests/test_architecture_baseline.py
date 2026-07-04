@@ -9,10 +9,11 @@ from brokerai.tasks.cancellation import CancellationToken, TaskCancelled
 from brokerai.tasks.state import TaskRunnerState
 
 
-def test_normalize_settings_migrates_legacy_model_id():
+def test_normalize_settings_reads_contributor_models():
     doc = {
-        "selected_model_id": "model-a",
-        "reasoning_effort": "medium",
+        "contributor_models": [
+            {"model_id": "model-a", "reasoning_effort": "medium", "enabled": True},
+        ],
     }
     normalized = _normalize_settings(doc)
     assert normalized["contributor_models"] == [

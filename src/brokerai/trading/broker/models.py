@@ -129,7 +129,6 @@ class PositionLot:
             "broker_lot_id": self.broker_lot_id,
             "asset_class": self.asset_class,
             "state": self.state,
-            "status": self.state,
             "instrument": self.instrument,
             "symbol": self.symbol,
             "pair": self.pair,
@@ -145,8 +144,6 @@ class PositionLot:
             "costs": self.costs,
             "open_time": self.open_time.isoformat() if self.open_time else None,
             "close_time": self.close_time.isoformat() if self.close_time else None,
-            "opened_at": self.open_time.isoformat() if self.open_time else None,
-            "closed_at": self.close_time.isoformat() if self.close_time else None,
             "stop_loss": self.stop_loss.to_dict() if self.stop_loss else None,
             "take_profit": self.take_profit.to_dict() if self.take_profit else None,
             "stop_loss_price": self.stop_loss_price,
@@ -166,7 +163,6 @@ class PositionLot:
             "exit_candle_open": self.exit_candle_open,
             "trade_date": self.trade_date,
             "synced_at": self.synced_at.isoformat() if self.synced_at else None,
-            "broker_order_id": self.broker_lot_id,
         }
 
 
@@ -253,6 +249,16 @@ class ExposureMismatch:
 
 
 @dataclass
+class SyncPollResult:
+    lots: list[PositionLot]
+    events: list[BrokerEvent]
+    live_open_lots: list[PositionLot]
+    cursor: str | None
+    repair_triggered: bool = False
+    poll_state: dict[str, Any] | None = None
+
+
+@dataclass
 class SyncEventsResult:
     events: list[BrokerEvent]
     cursor: str | None
@@ -270,6 +276,12 @@ class SyncResult:
     backfilled: int = 0
     backfilled_lot_ids: list[str] = field(default_factory=list)
     exposure_mismatches: list[ExposureMismatch] = field(default_factory=list)
+    summary_synced: bool = False
+    repair_triggered: bool = False
+    account_id: str | None = None
+    cursor_before: str | None = None
+    cursor_after: str | None = None
+    changes_applied: dict[str, int] = field(default_factory=dict)
     error: str | None = None
     skipped_reason: str | None = None
 
@@ -284,6 +296,12 @@ class SyncResult:
             "backfilled": self.backfilled,
             "backfilled_lot_ids": list(self.backfilled_lot_ids),
             "exposure_mismatches": [m.to_dict() for m in self.exposure_mismatches],
+            "summary_synced": self.summary_synced,
+            "repair_triggered": self.repair_triggered,
+            "account_id": self.account_id,
+            "cursor_before": self.cursor_before,
+            "cursor_after": self.cursor_after,
+            "changes_applied": dict(self.changes_applied),
             "error": self.error,
             "skipped_reason": self.skipped_reason,
             "imported": self.lots_upserted,

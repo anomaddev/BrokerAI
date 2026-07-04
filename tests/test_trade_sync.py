@@ -28,6 +28,8 @@ def _sync_result(**overrides):
             "imported": self.lots_upserted,
             "updated": self.enriched,
             "closed": self.lots_closed,
+            "backfilled": self.backfilled,
+            "backfilled_lot_ids": list(self.backfilled_lot_ids),
         },
     }
     defaults.update(overrides)
@@ -51,7 +53,7 @@ def test_broker_trade_to_ledger_intent_short_units_are_negative():
         }
     )
     assert intent["units"] == -500
-    assert intent["broker_order_id"] == "broker-1"
+    assert intent["broker_lot_id"] == "broker-1"
     assert intent["strategy_id"] == "oanda-import"
     assert intent["metadata"]["source"] == "oanda_sync"
 
@@ -145,4 +147,4 @@ async def test_sync_reports_backfilled_from_broker_sync():
         result = await sync_oanda_trades_to_ledger()
 
     assert result["backfilled"] == 1
-    assert result["backfilled_trade_ids"] == ["closed-ledger-1"]
+    assert result["backfilled_lot_ids"] == ["closed-ledger-1"]

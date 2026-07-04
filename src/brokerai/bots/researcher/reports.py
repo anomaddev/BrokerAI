@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from itertools import islice
@@ -30,8 +29,6 @@ _WEEKLY_DEBRIEF_RE = re.compile(r"^weekly_debrief_(\d{1,2})\.md$")
 _MODEL_NAME_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
 _SYNTHESIS_REASONING_RE = re.compile(r"reasoning\s+(\w+)")
 _DAILY_MODEL_SLUG_RE = re.compile(r"-daily_(.+)\.md$")
-
-_legacy_migrated = False
 
 
 def _strip_model_name(value: str) -> str:
@@ -110,7 +107,6 @@ def _build_meta(
 def reports_dir() -> Path:
     path = get_settings().data_dir / "research" / "reports"
     path.mkdir(parents=True, exist_ok=True)
-    _migrate_legacy_reports(path)
     return path
 
 
@@ -255,10 +251,7 @@ def resolve_report_path(identifier: str) -> Path | None:
 
     if re.match(r"^\d{4}-\d{2}-\d{2}$", ident):
         matches = sorted(directory.glob(f"**/{ident}-daily.md"), reverse=True)
-        if matches:
-            return matches[0]
-        legacy = sorted(directory.glob(f"{ident}-*.md"), reverse=True)
-        return legacy[0] if legacy else None
+        return matches[0] if matches else None
 
     candidate = directory / f"{ident}.md"
     if candidate.is_file():
@@ -397,22 +390,3 @@ def load_historical_weekly_debriefs(reference_date: str | date, max_weeks: int =
 
     chunks = [path.read_text(encoding="utf-8").strip() for _, path in selected]
     return "\n\n---\n\n".join(chunk for chunk in chunks if chunk)
-
-
-def _migrate_legacy_reports(directory: Path) -> None:
-    global _legacy_migrated
-    if _legacy_migrated:
-        return
-    _legacy_migrated = True
-
-    for path in list(directory.glob("*.md")):
-        if not path.is_file():
-            continue
-
-        daily_match = _FILENAME_RE.match(path.name)
-        if daily_match and daily_match.group(2) == "daily":
-            report_date = daily_match.group(1)
-            dest = daily_report_path(report_date)
-            if dest != path and not dest.exists():
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(path), str(dest))

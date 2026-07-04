@@ -52,14 +52,21 @@ class Settings(BaseSettings):
     candle_sync_chunk_size: int = 5000
     candle_sync_concurrency: int = 4
     candle_default_timeframes: str = "M15"
-    use_secretary_pipeline: bool = True
     pipeline_concurrency: int = 10
     oanda_fetch_concurrency: int = 8
+    oanda_max_requests_per_second: int = 90
+    oanda_max_new_connections_per_second: int = 2
+    oanda_client_max_age_seconds: int = 3600
+    oanda_cursor_stale_threshold_seconds: int = 3600
+    oanda_exposure_check_interval_seconds: int = 3600
+    broker_events_bulk_batch_size: int = 500
+    broker_events_retention_enabled: bool = True
+    broker_events_low_value_retention_days: int = 90
     analysis_concurrency: int = 10
     secretary_tick_interval_seconds: int = 5
     broker_sync_interval_seconds: int = 30
     trade_sync_interval_seconds: int = 300
-    oanda_account_sync_interval_seconds: int = 300
+    oanda_account_sync_interval_seconds: int = 60
     pipeline_candle_cache_ttl_seconds: int = 60
 
     @property

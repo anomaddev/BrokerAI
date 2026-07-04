@@ -10,12 +10,7 @@ function reportLinkFromTask(task: BackgroundTask): string | null {
   if (typeof reportPath !== "string" || !reportPath) {
     return null;
   }
-  const marker = "/research/reports/";
-  const markerIndex = reportPath.indexOf(marker);
-  const filename =
-    markerIndex >= 0
-      ? reportPath.slice(markerIndex + marker.length)
-      : reportPath.split("/").slice(-2).join("/");
+  const filename = reportPath.split("/").slice(-2).join("/");
   return filename ? `/daily-reports/r/${filename}` : null;
 }
 

@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from brokerai.db.market_data_timeseries import (
     candle_open_time_from_document,
     candle_to_timeseries_document,
-    flat_document_to_timeseries,
     meta_query_filter,
     timeseries_document_to_candle,
 )
@@ -58,22 +57,24 @@ def test_candle_open_time_from_document_time_only_projection():
     )
 
 
-def test_flat_document_to_timeseries_and_back():
-    legacy = {
-        "symbol": "GBP/USD",
-        "timeframe": "H1",
-        "source": "oanda",
-        "time": "2026-02-02T08:00:00.000000000Z",
-        "open": 1.25,
-        "high": 1.26,
-        "low": 1.24,
-        "close": 1.255,
-        "volume": 0,
-        "fetched_at": datetime(2026, 2, 2, 9, 0, tzinfo=timezone.utc),
-    }
-    converted = flat_document_to_timeseries(legacy)
-    assert converted is not None
-    round_trip = timeseries_document_to_candle(converted)
+def test_timeseries_document_to_candle_round_trip():
+    fetched_at = datetime(2026, 2, 2, 9, 0, tzinfo=timezone.utc)
+    document = candle_to_timeseries_document(
+        "GBP/USD",
+        "H1",
+        "oanda",
+        {
+            "time": "2026-02-02T08:00:00.000000000Z",
+            "open": 1.25,
+            "high": 1.26,
+            "low": 1.24,
+            "close": 1.255,
+            "volume": 0,
+        },
+        fetched_at=fetched_at,
+    )
+    assert document is not None
+    round_trip = timeseries_document_to_candle(document)
     assert round_trip["symbol"] == "GBP/USD"
     assert round_trip["timeframe"] == "H1"
     assert round_trip["time"] == "2026-02-02T08:00:00.000000000Z"

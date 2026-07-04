@@ -22,7 +22,8 @@ from typing import Any
 from brokerai.db.client import close_db, get_db
 from brokerai.db.repositories.asset_settings import FOREX_PAIR_CATALOG
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
-from brokerai.db.repositories.trades import TradesRepository
+from brokerai.db.repositories.broker_lots import BrokerLotsRepository
+from brokerai.trading.broker.models import PositionLot
 from brokerai.integrations.oanda import (
     OANDA_ENVIRONMENTS,
     extract_broker_trade_id,
@@ -76,7 +77,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--record",
         action="store_true",
-        help="Persist the trade in MongoDB via TradesRepository.",
+        help="Persist the trade in MongoDB via BrokerLotsRepository.",
     )
     parser.add_argument(
         "--dry-run",
@@ -218,9 +219,27 @@ async def _place_trade(args: argparse.Namespace) -> dict[str, Any]:
             "execution_reason": "random_trade",
             "metadata": {"source": "scripts/place_random_oanda_trade.py"},
         }
-        recorded = await TradesRepository().create_open_trade(
-            trade_payload,
-            broker_order_id=broker_trade_id,
+        recorded = await BrokerLotsRepository().upsert_lot(
+            PositionLot(
+                exchange_id="oanda",
+                account_id="",
+                broker_lot_id=str(broker_trade_id),
+                asset_class="forex",
+                state="open",
+                instrument=pair.replace("/", "_"),
+                symbol=pair.replace("/", "_"),
+                direction=direction,
+                initial_qty=abs(float(units)),
+                current_qty=abs(float(units)),
+                entry_price=entry_price or 0.0,
+                strategy_id="test-script",
+                strategy_name="Random OANDA Test Trade",
+                execution_reason="random_trade",
+                confidence=0.0,
+                risk_pct=0.0,
+                exit_mode="manual",
+            ),
+            preserve_overlay=False,
         )
         result["recorded_trade"] = recorded
 

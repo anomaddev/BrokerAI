@@ -34,8 +34,7 @@ Parallelism is controlled by `BROKERAI_PIPELINE_CONCURRENCY` (default 10) with n
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `BROKERAI_USE_SECRETARY_PIPELINE` | `true` | Enable Secretary mode (legacy bots skipped) |
-| `BROKERAI_ENABLED_BOTS` | `researcher` | Add `secretary,broker` for new pipeline |
+| `BROKERAI_ENABLED_BOTS` | `secretary,broker,researcher` | Persistent bots |
 | `BROKERAI_PIPELINE_CONCURRENCY` | `10` | Max parallel pipelines |
 | `BROKERAI_SECRETARY_TICK_INTERVAL_SECONDS` | `5` | Secretary tick |
 | `BROKERAI_BROKER_SYNC_INTERVAL_SECONDS` | `30` | Broker slow tick |
@@ -44,20 +43,11 @@ Parallelism is controlled by `BROKERAI_PIPELINE_CONCURRENCY` (default 10) with n
 
 ```bash
 BROKERAI_ENABLED_BOTS=secretary,broker,researcher
-BROKERAI_USE_SECRETARY_PIPELINE=true
-```
-
-**Legacy rollback:**
-
-```bash
-BROKERAI_USE_SECRETARY_PIPELINE=false
-BROKERAI_ENABLED_BOTS=data_manager,data_analyzer,executor,brokers,researcher
 ```
 
 ## Migration status
 
 - Forex end-to-end via Secretary: **implemented**
-- Legacy parallel tick bots: **skipped when `use_secretary_pipeline=true`**
 - Multi-asset (stocks, options, futures, metals, crypto): **stubs only** (`TODO(loop)`)
 - Account snapshot MongoDB persistence: **in-memory only** (`TODO(loop)`)
 - Researcher trade-analysis mode: **not implemented** (`TODO(loop)`)

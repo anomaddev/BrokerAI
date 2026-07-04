@@ -3,6 +3,7 @@ import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { ChildOrder, Trade, TradeReconciliation } from "../../api/client";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
+import type { AppInstantStyle } from "../../lib/formatTime";
 import { reasonCategoryLabel, tradeReasonPresentation } from "../../lib/tradeReasons";
 import {
   analysisRunId,
@@ -30,6 +31,10 @@ type TradeDetailPanelProps = {
   trade: Trade;
   reconciliation: TradeReconciliation | null;
   onClose: () => void;
+  formatInstant?: (
+    value: string | number | Date | null | undefined,
+    style?: AppInstantStyle,
+  ) => string;
 };
 
 function DetailRow({
@@ -62,6 +67,8 @@ function childOrderSummary(
   const parts = [price];
   if (order.state?.trim()) parts.push(order.state);
   if (order.broker_order_id?.trim()) parts.push(`#${order.broker_order_id}`);
+  if (order.filling_event_id?.trim()) parts.push(`fill ${order.filling_event_id}`);
+  if (order.cancelling_event_id?.trim()) parts.push(`cancel ${order.cancelling_event_id}`);
   return parts.join(" · ");
 }
 
@@ -77,7 +84,7 @@ function formatRiskPct(value: number | null | undefined): string {
 }
 
 function reasonCode(trade: Trade): string | null {
-  if (trade.status === "closed" || trade.status === "cancelled") {
+  if (trade.state === "closed" || trade.state === "cancelled") {
     return trade.close_reason?.trim() || null;
   }
   return trade.execution_reason?.trim() || trade.reason_display?.code?.trim() || null;
@@ -104,8 +111,10 @@ export default function TradeDetailPanel({
   trade,
   reconciliation,
   onClose,
+  formatInstant: formatInstantProp,
 }: TradeDetailPanelProps) {
-  const { formatInstant } = useGeneralSettings();
+  const { formatInstant: formatInstantFromSettings } = useGeneralSettings();
+  const formatInstant = formatInstantProp ?? formatInstantFromSettings;
 
   const status = tradeStatusKey(trade);
   const isOpen = tradeIsOpen(trade);
@@ -167,7 +176,7 @@ export default function TradeDetailPanel({
             value={
               isOpen || isCancelled
                 ? "—"
-                : tradeDuration(trade.opened_at, trade.closed_at ?? null)
+                : tradeDuration(trade.open_time, trade.close_time ?? null)
             }
           />
         </dl>
@@ -190,12 +199,12 @@ export default function TradeDetailPanel({
         <dl className="analysis-detail-list">
           <DetailRow
             label="Opened"
-            value={trade.opened_at ? formatInstant(trade.opened_at) : "—"}
+            value={trade.open_time ? formatInstant(trade.open_time) : "—"}
           />
           {!isOpen && (
             <DetailRow
               label="Closed"
-              value={trade.closed_at ? formatInstant(trade.closed_at) : "—"}
+              value={trade.close_time ? formatInstant(trade.close_time) : "—"}
             />
           )}
           <DetailRow
@@ -218,7 +227,7 @@ export default function TradeDetailPanel({
         <dl className="analysis-detail-list">
           <DetailRow
             label="Broker lot ID"
-            value={trade.broker_lot_id ?? trade.broker_order_id ?? "—"}
+            value={trade.broker_lot_id ?? "—"}
           />
           {isOpen && badge && reconciliationBadgeLabel(badge) && (
             <DetailRow

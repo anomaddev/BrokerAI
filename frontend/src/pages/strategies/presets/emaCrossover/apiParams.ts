@@ -1,13 +1,9 @@
 import type { EmaCrossoverParams } from "./defaults";
 import { SCHEMA_VERSION, TIMEFRAMES, type StrategyParamsV1, type TakeProfitSpec, type Timeframe } from "../../../../lib/strategyParams";
 
-function normalizeTimeframe(v1: StrategyParamsV1 & { timeframes?: Timeframe[] }): Timeframe {
+function normalizeTimeframe(v1: StrategyParamsV1): Timeframe {
   if (v1.timeframe && TIMEFRAMES.includes(v1.timeframe)) {
     return v1.timeframe;
-  }
-  if (v1.timeframes?.length) {
-    const match = v1.timeframes.find((tf): tf is Timeframe => TIMEFRAMES.includes(tf));
-    if (match) return match;
   }
   return "M15";
 }
@@ -166,11 +162,6 @@ export function v1ToEmaCrossoverParams(v1: StrategyParamsV1): EmaCrossoverParams
 
   params = takeProfitFromApi(v1.exits.take_profit, params);
   return params;
-}
-
-/** @deprecated Use emaCrossoverParamsToV1 */
-export function emaCrossoverBuilderParamsToApi(params: EmaCrossoverParams): StrategyParamsV1 {
-  return emaCrossoverParamsToV1(params);
 }
 
 export const emaCrossoverParamsToApi = emaCrossoverParamsToV1;

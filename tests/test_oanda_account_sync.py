@@ -5,116 +5,57 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from brokerai.trading.oanda_account_sync import run_oanda_account_sync
+from brokerai.trading.broker.models import SyncResult
+from brokerai.trading.oanda_account_sync import get_cached_oanda_account_summary, run_oanda_account_sync
 
 
 @pytest.mark.asyncio
 async def test_run_oanda_account_sync_unconfigured():
     with patch(
-        "brokerai.trading.oanda_account_sync.ExchangeConnectionsRepository",
-    ) as mock_exchange_cls:
-        exchange_repo = AsyncMock()
-        mock_exchange_cls.return_value = exchange_repo
-        exchange_repo.get_oanda.return_value = {
-            "access_token": "",
-            "account_id": "",
-            "environment": "practice",
-        }
-
+        "brokerai.trading.oanda_account_sync.run_broker_sync",
+        new=AsyncMock(
+            return_value=SyncResult(configured=False, mode="incremental", skipped_reason="not_configured")
+        ),
+    ):
         result = await run_oanda_account_sync(force=True)
 
     assert result.configured is False
-    assert result.skipped_reason == "not_configured"
 
 
 @pytest.mark.asyncio
-async def test_run_oanda_account_sync_persists_accounts_and_summary():
-    synced_at = datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
-    summary = {
-        "id": "101-001-test",
-        "alias": "Primary",
-        "currency": "USD",
-        "balance": "10000.00",
-        "nav": "10050.00",
-        "unrealized_pl": "50.00",
-        "realized_pl": "0.00",
-        "margin_available": "9500.00",
-        "margin_used": "500.00",
-        "open_trade_count": 1,
-        "open_position_count": 1,
-        "pending_order_count": 0,
-    }
-    accounts = [{"id": "101-001-test", "tags": []}]
+async def test_run_oanda_account_sync_delegates_to_broker_sync():
+    sync_result = SyncResult(
+        configured=True,
+        mode="incremental",
+        summary_synced=True,
+        account_id="101-001-test",
+        cursor_before="566",
+        cursor_after="567",
+        changes_applied={"transactions": 1},
+        repair_triggered=False,
+    )
 
     with patch(
-        "brokerai.trading.oanda_account_sync.ExchangeConnectionsRepository",
-    ) as mock_exchange_cls, patch(
-        "brokerai.trading.oanda_account_sync.list_accounts",
-        new=AsyncMock(return_value=accounts),
-    ), patch(
-        "brokerai.trading.oanda_account_sync.get_account_summary",
-        new=AsyncMock(return_value=summary),
-    ), patch(
-        "brokerai.trading.oanda_account_sync.OandaAccountSnapshotsRepository",
-    ) as mock_repo_cls:
-        exchange_repo = AsyncMock()
-        mock_exchange_cls.return_value = exchange_repo
-        exchange_repo.get_oanda.return_value = {
-            "access_token": "token",
-            "account_id": "101-001-test",
-            "environment": "practice",
-        }
+        "brokerai.trading.oanda_account_sync.run_broker_sync",
+        new=AsyncMock(return_value=sync_result),
+    ) as mock_sync:
+        result = await run_oanda_account_sync(force=True)
 
-        snapshots_repo = AsyncMock()
-        mock_repo_cls.return_value = snapshots_repo
-
-        with patch(
-            "brokerai.trading.oanda_account_sync.datetime",
-        ) as mock_datetime:
-            mock_datetime.now.return_value = synced_at
-            mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
-
-            result = await run_oanda_account_sync(force=True)
-
-    assert result.configured is True
+    mock_sync.assert_awaited_once_with(
+        exchange_id="oanda",
+        mode="incremental",
+        force=True,
+        include_account_summary=True,
+        fetch_live_prices=False,
+    )
     assert result.summary_synced is True
     assert result.account_id == "101-001-test"
-    assert result.accounts_count == 1
-    snapshots_repo.upsert_accounts_snapshot.assert_awaited_once()
-    snapshots_repo.insert_summary_snapshot.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_run_oanda_account_sync_skips_recent_sync():
-    import brokerai.trading.oanda_account_sync as sync_module
-
-    sync_module._LAST_SUCCESSFUL_SYNC = datetime.now(timezone.utc)
-
-    with patch(
-        "brokerai.trading.oanda_account_sync.ExchangeConnectionsRepository",
-    ) as mock_exchange_cls, patch(
-        "brokerai.trading.oanda_account_sync.list_accounts",
-        new=AsyncMock(),
-    ) as mock_list_accounts:
-        exchange_repo = AsyncMock()
-        mock_exchange_cls.return_value = exchange_repo
-        exchange_repo.get_oanda.return_value = {
-            "access_token": "token",
-            "account_id": "101-001-test",
-            "environment": "practice",
-        }
-
-        result = await run_oanda_account_sync(force=False)
-
-    assert result.skipped_reason == "recent_sync"
-    mock_list_accounts.assert_not_awaited()
-    sync_module._LAST_SUCCESSFUL_SYNC = None
+    assert result.cursor_after == "567"
 
 
 @pytest.mark.asyncio
 async def test_get_cached_oanda_account_summary_returns_latest():
     from brokerai.db.repositories.oanda_account_snapshots import OandaAccountSnapshotsRepository
-    from brokerai.trading.oanda_account_sync import get_cached_oanda_account_summary
 
     stored = {
         "account_id": "101-001-test",

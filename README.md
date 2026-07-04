@@ -43,8 +43,6 @@ Multi-bot trading platform for Proxmox LXC. BrokerAI runs a **Secretary-coordina
 | Associate | Place orders per asset class (forex/OANDA implemented) |
 | Researcher | Generate daily/weekly reports |
 
-**Legacy bots** (when `BROKERAI_USE_SECRETARY_PIPELINE=false`): `data_manager`, `data_analyzer`, `executor`, `brokers` — independent 5s tick loops.
-
 See [`docs/architecture/the-loop.md`](docs/architecture/the-loop.md) for full design notes.
 
 ## Architecture
@@ -177,7 +175,8 @@ Connect Compass to `mongodb://127.0.0.1:27017/brokerai`.
 | `strategies` | Saved strategy definitions (params v1, instruments, enabled) |
 | `strategy_analysis_runs` | Per-candle analyzer output and gate results |
 | `broker_lots` | Open/closed trade ledger |
-| `broker_events` | Normalized broker transaction events |
+| `broker_events` | Normalized broker transaction events (`retention_expires_at` TTL on low-value admin types) |
+| `instrument_exposure` | Materialized per-instrument long/short rollups |
 | `broker_sync_state` | Per-exchange/account sync cursor |
 | `bot_activity` | Pipeline and bot event log |
 | `research_cache` | Daily research summaries |
@@ -241,7 +240,6 @@ brokerai status [--json]
 brokerai bots list [--json]
 brokerai bots start|stop <name> [--json]
 brokerai run orchestrator
-brokerai run data-manager [--once]     # dev: legacy data-manager tick
 brokerai research status [--json]
 brokerai research run-daily [--force]
 brokerai research run-weekly-brief
@@ -268,7 +266,6 @@ Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev). Template: [`co
 | `BROKERAI_SECRET_KEY` | _(generated on install)_ | Session signing secret |
 | `BROKERAI_WEB_PORT` | `1989` | Web UI port |
 | `BROKERAI_ENABLED_BOTS` | `secretary,broker,researcher` | Active persistent bots |
-| `BROKERAI_USE_SECRETARY_PIPELINE` | `true` | Secretary-coordinated pipeline |
 | `BROKERAI_PIPELINE_CONCURRENCY` | `10` | Max parallel symbol pipelines |
 | `BROKERAI_SECRETARY_TICK_INTERVAL_SECONDS` | `5` | Secretary tick interval |
 | `BROKERAI_BROKER_SYNC_INTERVAL_SECONDS` | `30` | Broker OANDA sync interval |
@@ -279,13 +276,6 @@ Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev). Template: [`co
 | `BROKERAI_LOG_DIR` | `/var/log/brokerai` | Logs |
 | `BROKERAI_AUTO_UPDATE` | `true` | Enable automatic updates |
 | `BROKERAI_UPDATE_TRACK` | `branch` | `branch` \| `release` \| `latest-release` \| `next-major` |
-
-### Legacy rollback
-
-```bash
-BROKERAI_USE_SECRETARY_PIPELINE=false
-BROKERAI_ENABLED_BOTS=data_manager,data_analyzer,executor,brokers,researcher
-```
 
 ## Web API
 
@@ -394,7 +384,6 @@ BrokerAI/
 - **Research trade-analysis mode** — not implemented
 - **Fixed account balance for sizing** — forex associate uses 10,000 default when OANDA balance is unavailable
 - **Account snapshots in-memory** — not yet persisted to MongoDB
-- **Legacy mode** — pre-Secretary tick bots still work but Secretary mode is the supported path
 
 ## License
 

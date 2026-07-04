@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from brokerai.db.repositories.trades import _execution_reason_from_metadata, serialize_trade
+from brokerai.db.repositories.broker_lots import (
+    _execution_reason_from_metadata,
+    serialize_lot,
+)
 from brokerai.trading.trade_close_details import close_details_from_metadata, resolved_close_fields
 
 
 def test_resolved_close_fields_uses_metadata_when_top_level_missing():
     doc = {
-        "status": "closed",
+        "state": "closed",
         "close_metadata": {
             "broker_close": {
                 "orderFillTransaction": {
@@ -37,61 +40,51 @@ def test_execution_reason_from_metadata_maps_test_script_source():
     assert reason == "random_trade"
 
 
-def test_serialize_trade_includes_execution_reason_for_open_trade():
+def test_serialize_lot_includes_execution_reason_for_open_trade():
     doc = {
         "id": "trade-1",
-        "status": "open",
+        "state": "open",
+        "initial_qty": 1000,
+        "current_qty": 1000,
+        "direction": "long",
+        "entry_price": 1.1,
         "metadata": {"analysis": {"signal": "bearish_cross"}},
     }
-    serialized = serialize_trade(doc)
+    serialized = serialize_lot(doc)
     assert serialized["execution_reason"] == "bearish_cross"
     assert serialized["reason_display"]["short"] == "Bear cross"
     assert serialized["reason_display"]["category"] == "signal"
 
 
-def test_serialize_trade_test_script_open_reason():
+def test_serialize_lot_test_script_open_reason():
     doc = {
         "id": "trade-test",
-        "status": "open",
+        "state": "open",
+        "initial_qty": 1000,
+        "current_qty": 1000,
+        "direction": "long",
+        "entry_price": 1.1,
         "strategy_id": "test-script",
         "metadata": {"source": "scripts/place_random_oanda_trade.py"},
     }
-    serialized = serialize_trade(doc)
+    serialized = serialize_lot(doc)
     assert serialized["execution_reason"] == "random_trade"
     assert serialized["reason_display"]["short"] == "Random Trade"
     assert serialized["reason_display"]["label"] == "Random Trade"
 
 
-def test_serialize_legacy_trade_uses_units_field():
-    from brokerai.db.migrations.legacy_trades_to_lots import legacy_trade_to_lot_doc
-    from brokerai.db.repositories.broker_lots import serialize_lot
-
-    serialized = serialize_lot(
-        legacy_trade_to_lot_doc(
-            {
-                "id": "legacy-1",
-                "status": "closed",
-                "pair": "EUR/USD",
-                "direction": "long",
-                "units": -1000,
-                "entry_price": 1.1,
-            }
-        )
-    )
-    assert serialized["units"] == 1000
-    assert serialized["initial_qty"] == 1000
-
-
-def test_serialize_trade_enriches_closed_trade_from_metadata():
+def test_serialize_lot_enriches_closed_trade_from_metadata():
     doc = {
         "id": "trade-1",
-        "status": "closed",
+        "state": "closed",
+        "initial_qty": 1000,
+        "current_qty": 0,
+        "direction": "long",
+        "entry_price": 1.1,
         "strategy_id": "s1",
         "strategy_name": "EMA",
         "pair": "EUR/USD",
         "asset_class": "forex",
-        "direction": "long",
-        "entry_price": 1.1,
         "metadata": {},
         "close_metadata": {
             "broker_close": {
@@ -102,7 +95,7 @@ def test_serialize_trade_enriches_closed_trade_from_metadata():
             }
         },
     }
-    serialized = serialize_trade(doc)
+    serialized = serialize_lot(doc)
     assert serialized["exit_price"] == 1.105
     assert serialized["realized_pl"] == -3.25
 

@@ -17,10 +17,9 @@ CLOSED_TRADE = {
     "direction": "long",
     "entry_price": 1.1,
     "exit_price": 1.12,
-    "status": "closed",
     "state": "closed",
-    "opened_at": "2026-07-01T10:00:00+00:00",
-    "closed_at": "2026-07-01T12:00:00+00:00",
+    "open_time": "2026-07-01T10:00:00+00:00",
+    "close_time": "2026-07-01T12:00:00+00:00",
 }
 
 STRATEGY_CLOSED_TRADE = {
@@ -30,9 +29,8 @@ STRATEGY_CLOSED_TRADE = {
 
 OPEN_TRADE = {
     **CLOSED_TRADE,
-    "status": "open",
     "state": "open",
-    "closed_at": None,
+    "close_time": None,
     "exit_price": None,
 }
 
