@@ -19,6 +19,7 @@ from brokerai.bots.researcher.llm import analyze_with_model, test_model
 from brokerai.bots.researcher.news import test_newsapi
 from brokerai.bots.researcher.prompts import build_synthesis_messages, group_forex_pairs, is_market_closed
 from brokerai.bots.researcher.reports import (
+    daily_report_exists,
     delete_report,
     list_reports,
     load_historical_weekly_debriefs,
@@ -292,8 +293,10 @@ async def run_daily_report(
     if not manual and not settings.get("daily_report_enabled", False):
         return RunResult(ok=False, skipped_reason="Daily reports are disabled")
 
-    if not force and settings.get("last_daily_run_date") == today:
-        return RunResult(ok=False, skipped_reason=f"Daily report already ran for {today}")
+    if not force and (
+        settings.get("last_daily_run_date") == today or daily_report_exists(today)
+    ):
+        return RunResult(ok=False, skipped_reason=f"Daily report already exists for {today}")
 
     models_repo = AiModelsRepository()
     connections_repo = DataConnectionsRepository()

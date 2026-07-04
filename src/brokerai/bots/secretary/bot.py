@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from brokerai.bots.base import Bot
 from brokerai.bots.data_manager.service import DataManagerService, set_data_manager_service
+from brokerai.bots.researcher.reports import daily_report_exists
 from brokerai.bots.researcher.worker import ResearchRequest
 from brokerai.bots.researcher.worker_runner import ResearcherWorker
 from brokerai.bots.researcher.weekly import (
@@ -129,7 +130,11 @@ class SecretaryBot(Bot):
                 settings.get("daily_report_market_offset_hours", -2),
             ):
                 today = now.date().isoformat()
-                if settings.get("last_daily_run_date") != today:
+                daily_done = (
+                    settings.get("last_daily_run_date") == today
+                    or daily_report_exists(today)
+                )
+                if not daily_done:
                     await pool.run(
                         ResearcherWorker,
                         ResearchRequest(scheduled_kind="daily"),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from brokerai.bots.data_manager.candle_requirements import CandleRequirement, collect_candle_requirements
 from brokerai.bots.data_manager.candle_schedule import is_candle_fetch_due, next_candle_close_at
@@ -19,12 +19,23 @@ from brokerai.trading.work_plan import build_work_plan
 
 logger = logging.getLogger(__name__)
 
+# How long to suppress strategy reloads after a stable idle skip (no strategies,
+# watches, or registered candle demand). Recheck periodically so config changes
+# are picked up without polling MongoDB every secretary tick.
+_PIPELINE_IDLE_RECHECK = timedelta(seconds=60)
+
 
 class CandleTimeline:
     """Builds candle requirements and detects due close jobs for Secretary."""
 
     def __init__(self) -> None:
         self._next_fetch_at: dict[str, datetime] = {}
+        self._pipeline_idle_reason: str | None = None
+        self._pipeline_idle_until: datetime | None = None
+
+    def _clear_pipeline_idle(self) -> None:
+        self._pipeline_idle_reason = None
+        self._pipeline_idle_until = None
 
     def snapshot_next_fetches(self) -> dict[str, str]:
         now = datetime.now(timezone.utc)
@@ -50,12 +61,30 @@ class CandleTimeline:
     ) -> tuple[list[CandleJob], list[str]]:
         """Return CandleJobs due for pipeline dispatch and any planning warnings."""
         when = now or datetime.now(timezone.utc)
+
+        if service.registered_demand():
+            self._clear_pipeline_idle()
+        elif (
+            self._pipeline_idle_reason is not None
+            and self._pipeline_idle_until is not None
+            and when < self._pipeline_idle_until
+        ):
+            return [], []
+
         warnings: list[str] = []
-        result = await load_runnable_forex_strategies()
         watch_requirements = await collect_watch_requirements()
+        result = await load_runnable_forex_strategies()
 
         if result.skip_reason and not watch_requirements and not service.registered_demand():
-            return [], [result.skip_reason]
+            if result.skip_reason != self._pipeline_idle_reason:
+                self._pipeline_idle_reason = result.skip_reason
+                self._pipeline_idle_until = when + _PIPELINE_IDLE_RECHECK
+                return [], [result.skip_reason]
+            self._pipeline_idle_reason = result.skip_reason
+            self._pipeline_idle_until = when + _PIPELINE_IDLE_RECHECK
+            return [], []
+
+        self._clear_pipeline_idle()
 
         if result.skip_reason:
             requirements: list[CandleRequirement] = []

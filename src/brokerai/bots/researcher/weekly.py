@@ -195,6 +195,8 @@ async def preview_weekly_debrief_skip_reason(
     week_start, week_key = target
     if not force and settings.get("last_weekly_debrief_run_week") == week_key:
         return f"Weekly debrief already ran for {week_key}"
+    if not force and weekly_debrief_path(week_start).is_file():
+        return f"Weekly debrief already exists for {week_key}"
 
     model, model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
     if model_skip:

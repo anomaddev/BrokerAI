@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -243,95 +243,72 @@ async def test_startup_jobs_bootstrap_stale_cache():
 
 
 @pytest.mark.asyncio
-async def test_due_jobs_skip_bootstrap_requirements():
-    """Incomplete cache warm-up belongs to startup, not periodic ticks."""
+async def test_due_jobs_idle_cache_avoids_repeated_strategy_loads():
+    """When nothing can run, log once and skip MongoDB strategy reloads between rechecks."""
     timeline = CandleTimeline()
     service = MagicMock()
     service.registered_demand.return_value = []
-    service.cache = MagicMock()
-    service.cache.is_cache_complete_up_to = AsyncMock(return_value=False)
-    service.latest_candle_time = AsyncMock(return_value="2026-01-01T00:00:00.000000000Z")
 
-    requirement = CandleRequirement(timeframe="M15", pairs=("EUR/USD",), bar_count=63)
-    strategy = _strategy()
-    when = datetime(2026, 1, 1, 0, 15, 5, tzinfo=timezone.utc)
-    timeline._next_fetch_at["M15"] = datetime(2026, 1, 1, 0, 15, 3, tzinfo=timezone.utc)
-
-    load_result = MagicMock(
-        skip_reason=None,
-        strategies=[(strategy, ["EUR/USD"])],
-    )
+    load_result = MagicMock(skip_reason="no enabled strategies", strategies=[])
 
     with (
         patch(
             "brokerai.bots.secretary.candle_timeline.load_runnable_forex_strategies",
             new_callable=AsyncMock,
             return_value=load_result,
+        ) as load_strategies,
+        patch(
+            "brokerai.bots.secretary.candle_timeline.collect_watch_requirements",
+            new_callable=AsyncMock,
+            return_value=[],
         ),
+    ):
+        jobs, warnings = await timeline.build_due_jobs(service)
+        assert jobs == []
+        assert warnings == ["no enabled strategies"]
+        assert load_strategies.await_count == 1
+
+        jobs, warnings = await timeline.build_due_jobs(service)
+        assert jobs == []
+        assert warnings == []
+        assert load_strategies.await_count == 1
+
+        when = datetime.now(timezone.utc) + timedelta(seconds=61)
+        jobs, warnings = await timeline.build_due_jobs(service, now=when)
+        assert jobs == []
+        assert warnings == []
+        assert load_strategies.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_due_jobs_idle_cache_clears_when_demand_registered():
+    timeline = CandleTimeline()
+    service = MagicMock()
+    service.registered_demand.return_value = []
+
+    load_result = MagicMock(skip_reason="no enabled strategies", strategies=[])
+
+    with (
+        patch(
+            "brokerai.bots.secretary.candle_timeline.load_runnable_forex_strategies",
+            new_callable=AsyncMock,
+            return_value=load_result,
+        ) as load_strategies,
         patch(
             "brokerai.bots.secretary.candle_timeline.collect_watch_requirements",
             new_callable=AsyncMock,
             return_value=[],
         ),
         patch(
-            "brokerai.bots.secretary.candle_timeline.collect_candle_requirements",
-            return_value=([requirement], []),
-        ),
-        patch(
             "brokerai.bots.secretary.candle_timeline.requirement_needs_bootstrap",
             new_callable=AsyncMock,
-            return_value=True,
+            return_value=False,
         ),
     ):
-        jobs, _warnings = await timeline.build_due_jobs(service, now=when)
+        await timeline.build_due_jobs(service)
+        assert load_strategies.await_count == 1
 
-    assert jobs == []
-
-
-@pytest.mark.asyncio
-async def test_startup_jobs_bootstrap_stale_cache():
-    """Startup warm-up should full-sync stale cache, not incremental catch-up."""
-    timeline = CandleTimeline()
-    service = MagicMock()
-    service.latest_candle_time = AsyncMock(return_value="2026-01-01T00:00:00.000000000Z")
-
-    strategy = _strategy()
-    load_result = MagicMock(
-        skip_reason=None,
-        strategies=[(strategy, ["EUR/USD"])],
-    )
-    runtime = MagicMock()
-    runtime.build_work_plan.return_value = MagicMock(
-        units=[
-            MagicMock(
-                pair="EUR/USD",
-                timeframe="M15",
-                bar_count=63,
-                asset_class="forex",
-                strategies=(strategy,),
-            )
-        ]
-    )
-
-    with (
-        patch(
-            "brokerai.bots.secretary.candle_timeline.load_runnable_forex_strategies",
-            new_callable=AsyncMock,
-            return_value=load_result,
-        ),
-        patch(
-            "brokerai.bots.secretary.candle_timeline.get_asset_runtime",
-            return_value=runtime,
-        ),
-        patch(
-            "brokerai.bots.secretary.candle_timeline.requirement_needs_bootstrap",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-    ):
-        jobs = await timeline.build_startup_jobs(service)
-
-    assert len(jobs) == 1
-    assert jobs[0].bootstrap is True
-    assert jobs[0].incremental is False
-    assert "M15" in timeline._next_fetch_at
+        service.registered_demand.return_value = [("EUR/USD", "M15", "oanda", 63)]
+        await timeline.build_due_jobs(service)
+        assert load_strategies.await_count == 2
+        assert timeline._pipeline_idle_reason is None

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from brokerai.db.market_data_timeseries import (
+    _ensure_ttl_index,
     candle_open_time_from_document,
     candle_to_timeseries_document,
     meta_query_filter,
@@ -79,3 +83,18 @@ def test_timeseries_document_to_candle_round_trip():
     assert round_trip["timeframe"] == "H1"
     assert round_trip["time"] == "2026-02-02T08:00:00.000000000Z"
     assert round_trip["close"] == 1.255
+
+
+@pytest.mark.asyncio
+async def test_ensure_ttl_index_purges_expired_documents():
+    collection = MagicMock()
+    collection.delete_many = AsyncMock(return_value=MagicMock(deleted_count=2))
+    collection.drop_index = AsyncMock()
+
+    await _ensure_ttl_index(collection)
+
+    collection.delete_many.assert_awaited_once()
+    query = collection.delete_many.await_args.args[0]
+    assert "expires_at" in query
+    assert query["expires_at"]["$lte"].tzinfo == timezone.utc
+    collection.drop_index.assert_awaited_once_with("market_data_expires_at_ttl")

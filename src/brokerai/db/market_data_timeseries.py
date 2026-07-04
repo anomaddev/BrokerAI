@@ -195,19 +195,25 @@ async def ensure_market_data_timeseries(db: Any) -> None:
 
 
 async def _ensure_ttl_index(collection: Any) -> None:
-    """TTL index for ephemeral explore/watch candles (unchanged semantics)."""
+    """Expire ephemeral explore/watch candles (``expires_at`` field).
+
+    MongoDB 7+ time-series collections only support TTL indexes on the
+    ``timeField`` with a ``partialFilterExpression`` limited to the
+    ``metaField``. An ``expires_at`` TTL index is therefore unsupported;
+    purge expired rows at startup instead (idempotent).
+    """
+    now = datetime.now(timezone.utc)
+    result = await collection.delete_many(
+        {
+            "expires_at": {"$exists": True, "$lte": now},
+        }
+    )
+    deleted = int(result.deleted_count)
+    if deleted:
+        logger.info("Purged %d expired market_data candles", deleted)
+
+    # Drop a legacy flat-collection TTL index if it survived a migration.
     try:
-        await collection.create_index(
-            "expires_at",
-            expireAfterSeconds=0,
-            name="market_data_expires_at_ttl",
-            partialFilterExpression={
-                f"{META_FIELD}.source": {"$exists": True},
-                "expires_at": {"$exists": True},
-            },
-        )
-    except Exception as exc:
-        message = str(exc).lower()
-        if "already exists" in message or "duplicate key" in message:
-            return
-        raise
+        await collection.drop_index("market_data_expires_at_ttl")
+    except Exception:
+        pass
