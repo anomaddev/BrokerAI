@@ -104,3 +104,96 @@ def test_get_strategy_analysis_run_not_found(mock_repo_cls, client: TestClient) 
     response = client.get("/api/strategy-analysis-runs/missing")
 
     assert response.status_code == 404
+
+
+@patch("brokerai.web.routes.strategy_analysis_runs.StrategyAnalysisRunsRepository")
+def test_delete_strategy_analysis_run(mock_repo_cls, client: TestClient) -> None:
+    repo = AsyncMock()
+    mock_repo_cls.return_value = repo
+    repo.delete_by_id.return_value = True
+
+    response = client.delete("/api/strategy-analysis-runs/run-1")
+
+    assert response.status_code == 200
+    assert response.json() == {"id": "run-1", "status": "deleted"}
+    repo.delete_by_id.assert_awaited_once_with("run-1")
+
+
+@patch("brokerai.web.routes.strategy_analysis_runs.StrategyAnalysisRunsRepository")
+def test_delete_strategy_analysis_run_not_found(mock_repo_cls, client: TestClient) -> None:
+    repo = AsyncMock()
+    mock_repo_cls.return_value = repo
+    repo.delete_by_id.return_value = False
+
+    response = client.delete("/api/strategy-analysis-runs/missing")
+
+    assert response.status_code == 404
+
+
+@patch("brokerai.web.routes.strategy_analysis_runs.run_manual_strategy_analysis")
+def test_run_manual_strategy_analysis(mock_run, client: TestClient) -> None:
+    mock_run.return_value = {
+        "id": "run-manual-1",
+        "strategy_id": "strategy-1",
+        "strategy_name": "Test",
+        "pair": "EUR/USD",
+        "timeframe": "M15",
+        "direction": "long",
+        "confidence": 0.8,
+        "signal_type": "ema_crossover",
+        "min_candles": 63,
+        "metadata": {},
+        "candle_time": "2026-01-01T00:15:00+00:00",
+        "analyzed_at": "2026-01-01T00:15:01+00:00",
+        "run_type": "manual",
+        "execution": None,
+    }
+
+    response = client.post(
+        "/api/strategy-analysis-runs/run",
+        json={
+            "strategy_id": "strategy-1",
+            "asset_class": "forex",
+            "symbol": "EUR/USD",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "run-manual-1"
+    assert response.json()["run_type"] == "manual"
+    mock_run.assert_awaited_once_with(
+        strategy_id="strategy-1",
+        asset_class="forex",
+        symbol="EUR/USD",
+    )
+
+
+@patch("brokerai.web.routes.strategy_analysis_runs.run_manual_strategy_analysis")
+def test_run_manual_strategy_analysis_validation_error(mock_run, client: TestClient) -> None:
+    mock_run.side_effect = ValueError("Strategy not found")
+
+    response = client.post(
+        "/api/strategy-analysis-runs/run",
+        json={
+            "strategy_id": "missing",
+            "asset_class": "forex",
+            "symbol": "EUR/USD",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Strategy not found"
+
+
+def test_run_manual_strategy_analysis_requires_auth() -> None:
+    app.dependency_overrides.clear()
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/strategy-analysis-runs/run",
+            json={
+                "strategy_id": "strategy-1",
+                "asset_class": "forex",
+                "symbol": "EUR/USD",
+            },
+        )
+    assert response.status_code == 401

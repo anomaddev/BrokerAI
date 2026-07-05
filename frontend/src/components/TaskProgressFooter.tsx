@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { ROUTES } from "../lib/routes";
 import { useCallback, useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../api/client";
@@ -11,7 +12,7 @@ function reportLinkFromTask(task: BackgroundTask): string | null {
     return null;
   }
   const filename = reportPath.split("/").slice(-2).join("/");
-  return filename ? `/daily-reports/r/${filename}` : null;
+  return filename ? ROUTES.research.reportView(filename) : null;
 }
 
 export default function TaskProgressFooter() {

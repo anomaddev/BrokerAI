@@ -6,6 +6,15 @@ from brokerai.trading.session_gate import is_asset_trading_session_active, is_st
 from brokerai.trading.types import AnalysisResult, TradeIntent
 
 
+def is_executor_eligible(result: AnalysisResult) -> bool:
+    """Return whether broker/executor gates should run for this analysis.
+
+    Zero-confidence or directionless runs are recorded only — they are not
+    submitted to the executor and keep ``execution`` unset in persistence.
+    """
+    return result.confidence > 0 and result.direction is not None
+
+
 def passes_confidence_gate(result: AnalysisResult, params: dict[str, Any]) -> bool:
     execution = params.get("execution") or {}
     min_confidence = int(execution.get("min_confidence", 0))

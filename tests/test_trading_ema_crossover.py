@@ -105,3 +105,58 @@ def test_run_strategy_analysis_rejects_insufficient_candles():
     assert result.metadata.get("reason") == "insufficient_candles"
     assert result.metadata.get("have") == 10
     assert result.metadata.get("need", 0) >= 63
+
+
+def test_detect_crossover_only_on_current_candle():
+    from brokerai.trading.presets.ema_crossover.signal import _detect_crossover
+
+    fast = [
+        {"time": "2026-01-01T00:00:00+00:00", "value": 1.0},
+        {"time": "2026-01-01T00:15:00+00:00", "value": 1.0},
+        {"time": "2026-01-01T00:30:00+00:00", "value": 2.0},
+    ]
+    slow = [
+        {"time": "2026-01-01T00:00:00+00:00", "value": 1.5},
+        {"time": "2026-01-01T00:15:00+00:00", "value": 1.5},
+        {"time": "2026-01-01T00:30:00+00:00", "value": 1.5},
+    ]
+
+    direction, confidence, metadata = _detect_crossover(
+        fast,
+        slow,
+        [],
+        direction_filter="both",
+        confirmation="close",
+    )
+
+    assert direction == "long"
+    assert confidence > 0
+    assert metadata["signal"] == "bullish_cross"
+    assert metadata["crossover_time"] == "2026-01-01T00:30:00+00:00"
+
+
+def test_detect_crossover_ignores_historical_cross():
+    from brokerai.trading.presets.ema_crossover.signal import _detect_crossover
+
+    fast = [
+        {"time": "2026-01-01T00:00:00+00:00", "value": 2.0},
+        {"time": "2026-01-01T00:15:00+00:00", "value": 1.0},
+        {"time": "2026-01-01T00:30:00+00:00", "value": 1.2},
+    ]
+    slow = [
+        {"time": "2026-01-01T00:00:00+00:00", "value": 1.5},
+        {"time": "2026-01-01T00:15:00+00:00", "value": 1.5},
+        {"time": "2026-01-01T00:30:00+00:00", "value": 1.5},
+    ]
+
+    direction, confidence, metadata = _detect_crossover(
+        fast,
+        slow,
+        [],
+        direction_filter="both",
+        confirmation="close",
+    )
+
+    assert direction is None
+    assert confidence == 0.0
+    assert metadata["signal"] == "none"

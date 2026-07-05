@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { api, type Strategy } from "../../api/client";
+import { ROUTES } from "../../lib/routes";
 import EmaCrossoverBuilder from "./presets/emaCrossover/EmaCrossoverBuilder";
 import CustomBuilder from "./presets/custom/CustomBuilder";
 import { v1ToEmaCrossoverParams } from "./presets/emaCrossover/apiParams";
@@ -30,9 +31,9 @@ export default function StrategyEditPage() {
     };
   }, [id]);
 
-  if (!id) return <Navigate to="/trading/strategies" replace />;
+  if (!id) return <Navigate to={ROUTES.research.strategies} replace />;
   if (loading) return <div className="center-page">Loading strategy…</div>;
-  if (error || !strategy) return <Navigate to="/trading/strategies" replace />;
+  if (error || !strategy) return <Navigate to={ROUTES.research.strategies} replace />;
 
   const commonProps = {
     editStrategyId: strategy.id,
@@ -60,5 +61,5 @@ export default function StrategyEditPage() {
     );
   }
 
-  return <Navigate to="/trading/strategies" replace />;
+  return <Navigate to={ROUTES.research.strategies} replace />;
 }

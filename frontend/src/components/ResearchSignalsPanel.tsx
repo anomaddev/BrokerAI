@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { ROUTES } from "../lib/routes";
 import {
   api,
   type ResearchAssetSignals,
@@ -96,7 +97,7 @@ export default function ResearchSignalsPanel() {
         {snapshot.report_date && (
           <span className="research-signals-meta">
             {snapshot.report_filename ? (
-              <Link to={`/daily-reports/r/${snapshot.report_filename}`}>
+              <Link to={ROUTES.research.reportView(snapshot.report_filename)}>
                 Daily report · {snapshot.report_date}
               </Link>
             ) : (

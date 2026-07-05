@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Minus, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, type AssetClass, type Strategy } from "../api/client";
+import { ROUTES } from "../lib/routes";
 import { TIMEFRAME_LABELS, type Timeframe } from "../lib/strategyParams";
 import AssetClassFilterSelect from "../components/AssetClassFilterSelect";
 import StrategyTemplatesSection from "../components/strategies/StrategyTemplatesSection";
@@ -288,7 +289,7 @@ export default function Strategies() {
   }
 
   function openStrategy(strategy: Strategy) {
-    navigate(`/trading/strategies/${strategy.id}/edit`);
+    navigate(ROUTES.research.strategyEdit(strategy.id));
   }
 
   const hasSavedStrategies = strategies.length > 0;
@@ -302,10 +303,6 @@ export default function Strategies() {
       <StrategyTemplatesSection />
 
       <div className="settings-panel strategy-saved-panel">
-        <div className="settings-panel-header">
-          <h2 className="settings-subtitle">Your strategies</h2>
-        </div>
-
         {hasSavedStrategies && (
           <div className="research-filters">
             <input

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "./api/client";
 import Setup from "./pages/Setup";
@@ -17,6 +17,27 @@ import StrategyAnalysisRunView from "./pages/StrategyAnalysisRunView";
 import Trades from "./pages/Trades";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
+
+function LegacyReportRedirect() {
+  const params = useParams();
+  const suffix = params["*"] ?? "";
+  return <Navigate to={`/research/reports/r/${suffix}`} replace />;
+}
+
+function LegacyAnalysisRunRedirect() {
+  const { runId } = useParams();
+  return <Navigate to={`/research/analysis/${runId ?? ""}`} replace />;
+}
+
+function LegacyStrategyNewRedirect() {
+  const { presetId } = useParams();
+  return <Navigate to={`/research/strategies/new/${presetId ?? ""}`} replace />;
+}
+
+function LegacyStrategyEditRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/research/strategies/${id ?? ""}/edit`} replace />;
+}
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<"loading" | "setup" | "auth" | "ok">("loading");
@@ -66,18 +87,27 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<AppLayout />}>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/daily-reports" element={<Research />} />
-          <Route path="/daily-reports/r/*" element={<ResearchReportView />} />
+          <Route path="/research/reports" element={<Research />} />
+          <Route path="/research/reports/r/*" element={<ResearchReportView />} />
+          <Route path="/research/strategies" element={<Strategies />} />
+          <Route path="/research/strategies/new/:presetId" element={<StrategyBuilderPage />} />
+          <Route path="/research/strategies/:id/edit" element={<StrategyEditPage />} />
+          <Route path="/research/analysis" element={<StrategyAnalysis />} />
+          <Route path="/research/analysis/:runId" element={<StrategyAnalysisRunView />} />
+          <Route path="/research/backtest" element={<Backtesting />} />
+          <Route path="/trading/forex" element={<Trades />} />
           <Route path="/trading/explore" element={<Explore />} />
-          <Route path="/research/backtesting" element={<Backtesting />} />
-          <Route path="/trading/strategies" element={<Strategies />} />
-          <Route path="/trading/strategies/new/:presetId" element={<StrategyBuilderPage />} />
-          <Route path="/trading/strategies/:id/edit" element={<StrategyEditPage />} />
-          <Route path="/trading/trades" element={<Trades />} />
-          <Route path="/trading/analysis" element={<StrategyAnalysis />} />
-          <Route path="/trading/analysis/:runId" element={<StrategyAnalysisRunView />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/settings/*" element={<Settings />} />
+          <Route path="/daily-reports" element={<Navigate to="/research/reports" replace />} />
+          <Route path="/daily-reports/r/*" element={<LegacyReportRedirect />} />
+          <Route path="/trading/strategies" element={<Navigate to="/research/strategies" replace />} />
+          <Route path="/trading/strategies/new/:presetId" element={<LegacyStrategyNewRedirect />} />
+          <Route path="/trading/strategies/:id/edit" element={<LegacyStrategyEditRedirect />} />
+          <Route path="/trading/analysis" element={<Navigate to="/research/analysis" replace />} />
+          <Route path="/trading/analysis/:runId" element={<LegacyAnalysisRunRedirect />} />
+          <Route path="/research/backtesting" element={<Navigate to="/research/backtest" replace />} />
+          <Route path="/trading/trades" element={<Navigate to="/trading/forex" replace />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

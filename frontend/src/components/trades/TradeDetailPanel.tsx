@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { ChildOrder, Trade, TradeReconciliation } from "../../api/client";
+import { ROUTES } from "../../lib/routes";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
 import type { AppInstantStyle } from "../../lib/formatTime";
 import { reasonCategoryLabel, tradeReasonPresentation } from "../../lib/tradeReasons";
@@ -257,7 +258,7 @@ export default function TradeDetailPanel({
           </Link>
           {trade.strategy_id && (
             <Link
-              to={`/trading/strategies/${encodeURIComponent(trade.strategy_id)}/edit`}
+              to={ROUTES.research.strategyEdit(trade.strategy_id)}
               className="btn btn-secondary btn-sm"
               onClick={onClose}
             >
@@ -266,7 +267,7 @@ export default function TradeDetailPanel({
           )}
           {runId && (
             <Link
-              to={`/trading/analysis/${encodeURIComponent(runId)}`}
+              to={ROUTES.research.analysisRun(runId)}
               className="btn btn-secondary btn-sm"
               onClick={onClose}
             >

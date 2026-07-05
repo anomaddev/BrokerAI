@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { AssetClass } from "../../api/client";
+import { ROUTES } from "../../lib/routes";
 import type { StrategyParamsV1 } from "../../lib/strategyParams";
 import { TIMEFRAME_LABELS } from "../../lib/strategyParams";
 import { api } from "../../api/client";
@@ -98,7 +99,7 @@ export default function SaveStrategyOverlay({
         });
       }
       onClose();
-      navigate("/trading/strategies");
+      navigate(ROUTES.research.strategies);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save strategy");
     } finally {

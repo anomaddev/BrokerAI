@@ -10,7 +10,7 @@
 
 Multi-bot trading platform for Proxmox LXC. BrokerAI runs a **Secretary-coordinated trading loop** for forex: strategy-driven candle analysis, OANDA order execution, a MongoDB trade ledger, daily research reports, and a full React dashboard — all managed via the `brokerai` CLI.
 
-**Alpha 0.0.6** — Secretary pipeline, live forex execution (OANDA), trade ledger, strategy builder, Explore charts, and research reports. See [`docs/releases/v0.0.5.md`](docs/releases/v0.0.5.md) for the prior major release notes.
+**Alpha 0.0.7** — Unified OANDA sync and broker ledger (`broker_lots`, `broker_events`, `broker_sync_state`), child-order semantics, instrument exposure, trade detail workspace, and tiered event retention. See [`docs/releases/v0.0.7.md`](docs/releases/v0.0.7.md). Prior major release: [`v0.0.5.md`](docs/releases/v0.0.5.md).
 
 ## Overview
 
@@ -178,6 +178,7 @@ Connect Compass to `mongodb://127.0.0.1:27017/brokerai`.
 | `broker_events` | Normalized broker transaction events (`retention_expires_at` TTL on low-value admin types) |
 | `instrument_exposure` | Materialized per-instrument long/short rollups |
 | `broker_sync_state` | Per-exchange/account sync cursor |
+| `oanda_account_summaries` | OANDA account summary snapshots from sync |
 | `bot_activity` | Pipeline and bot event log |
 | `research_cache` | Daily research summaries |
 | `ai_models` | Connected LLM configs |
@@ -347,6 +348,7 @@ cd frontend && npm install && npm run dev -- --host 127.0.0.1   # terminal 3
 | [`docs/architecture/data-manager.md`](docs/architecture/data-manager.md) | Candle fetch and cache |
 | [`docs/architecture/data-analyzer.md`](docs/architecture/data-analyzer.md) | Strategy analysis |
 | [`docs/architecture/caching.md`](docs/architecture/caching.md) | Cache behavior |
+| [`docs/architecture/oanda-entity-linkages.md`](docs/architecture/oanda-entity-linkages.md) | OANDA sync, broker ledger, entity mapping |
 | [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md) | Strategy params v1 |
 
 ## Project structure
@@ -383,7 +385,6 @@ BrokerAI/
 - **Backtesting not implemented** — placeholder page only
 - **Research trade-analysis mode** — not implemented
 - **Fixed account balance for sizing** — forex associate uses 10,000 default when OANDA balance is unavailable
-- **Account snapshots in-memory** — not yet persisted to MongoDB
 
 ## License
 

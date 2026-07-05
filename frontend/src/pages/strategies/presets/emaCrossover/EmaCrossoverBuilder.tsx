@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { ROUTES } from "../../../../lib/routes";
 import SaveStrategyOverlay from "../../../../components/strategies/SaveStrategyOverlay";
 import StrategyChartShell from "../../../../components/strategies/chart/StrategyChartShell";
 import MockStatsStrip from "../../../../components/strategies/chart/MockStatsStrip";
@@ -175,7 +176,7 @@ export default function EmaCrossoverBuilder({
         <div className="strategy-builder-top-row">
           <div className="strategy-chart-area-bar">
             <div className="strategy-chart-area-bar-main">
-              <Link to="/trading/strategies" className="strategy-builder-back-btn">
+              <Link to={ROUTES.research.strategies} className="strategy-builder-back-btn">
                 <ArrowLeft size={16} aria-hidden="true" />
                 <span>Strategies</span>
               </Link>

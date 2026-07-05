@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 
-from brokerai.trading.execution_gates import passes_execution_gates, resolve_priority_conflicts
+from brokerai.trading.execution_gates import (
+    is_executor_eligible,
+    passes_execution_gates,
+    resolve_priority_conflicts,
+)
 from brokerai.trading.session_gate import normalize_strategy_session
 from brokerai.trading.types import AnalysisResult
 
@@ -8,6 +12,43 @@ from brokerai.trading.types import AnalysisResult
 def test_normalize_strategy_session_aliases():
     assert normalize_strategy_session("London") == "london"
     assert normalize_strategy_session("Sydney") == "asia"
+
+
+def test_is_executor_eligible_requires_signal_and_confidence():
+    no_signal = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.0,
+        direction=None,
+        min_candles=50,
+        signal_type="ema_crossover",
+    )
+    zero_confidence = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.0,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+    )
+    actionable = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.75,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+    )
+
+    assert is_executor_eligible(no_signal) is False
+    assert is_executor_eligible(zero_confidence) is False
+    assert is_executor_eligible(actionable) is True
 
 
 def test_passes_execution_gates_blocks_low_confidence():

@@ -16,15 +16,7 @@ import {
   connectedExchangeIds,
   type Exchange,
 } from "../lib/exchanges";
-
-const ASSET_CLASS_LABELS: Record<AssetClass, string> = {
-  forex: "Forex",
-  metals: "Precious Metals",
-  stocks: "Stocks",
-  crypto: "Crypto",
-  futures: "Futures",
-  options: "Options",
-};
+import { ASSET_CLASS_LABELS, loadAssetClassStatuses } from "../lib/assetClassStatus";
 
 const ASSET_CLASS_SETTINGS: Record<AssetClass, string> = {
   forex: "/settings/broker/forex",
@@ -71,23 +63,12 @@ function plClass(value: string | null | undefined): string {
 }
 
 async function loadAssetUsages(): Promise<AssetUsage[]> {
-  const [forex, metals, stocks, crypto, futures, options] = await Promise.all([
-    api.getForexPairs(),
-    api.getAssetSettings("metals"),
-    api.getAssetSettings("stocks"),
-    api.getAssetSettings("crypto"),
-    api.getAssetSettings("futures"),
-    api.getAssetSettings("options"),
-  ]);
-
-  return [
-    { assetClass: "forex", label: ASSET_CLASS_LABELS.forex, enabled: forex.enabled },
-    { assetClass: "metals", label: ASSET_CLASS_LABELS.metals, enabled: metals.enabled },
-    { assetClass: "stocks", label: ASSET_CLASS_LABELS.stocks, enabled: stocks.enabled },
-    { assetClass: "crypto", label: ASSET_CLASS_LABELS.crypto, enabled: crypto.enabled },
-    { assetClass: "futures", label: ASSET_CLASS_LABELS.futures, enabled: futures.enabled },
-    { assetClass: "options", label: ASSET_CLASS_LABELS.options, enabled: options.enabled },
-  ];
+  const rows = await loadAssetClassStatuses();
+  return rows.map((row) => ({
+    assetClass: row.assetClass,
+    label: row.label,
+    enabled: row.enabled,
+  }));
 }
 
 async function loadPrimaryExchanges(): Promise<Partial<Record<AssetClass, string | null>>> {

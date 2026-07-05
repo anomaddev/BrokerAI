@@ -1,4 +1,5 @@
 import { LineChart, SlidersHorizontal } from "lucide-react";
+import { ROUTES } from "../../../lib/routes";
 import { ASSET_CLASS_LABELS } from "../../../lib/strategies/instruments";
 import type { StrategyPreset } from "./types";
 
@@ -9,7 +10,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     description: "9/21 EMA crossover on M15 with ADX + ATR filters for any forex pair.",
     assetClasses: ["forex"],
     enabledPills: [{ label: ASSET_CLASS_LABELS.forex, assetClass: "forex" }],
-    route: "/trading/strategies/new/ema-crossover",
+    route: ROUTES.research.strategyNew("ema-crossover"),
     icon: LineChart,
     tags: ["Trend", "Forex"],
     locked: true,
@@ -20,7 +21,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     description: "Build your own strategy by adding signals, filters, and rules from scratch.",
     assetClasses: ["forex", "metals", "stocks", "crypto", "futures", "options"],
     enabledPills: [{ label: "All asset classes", assetClass: "forex" }],
-    route: "/trading/strategies/new/custom",
+    route: ROUTES.research.strategyNew("custom"),
     icon: SlidersHorizontal,
     tags: ["Flexible"],
     locked: false,

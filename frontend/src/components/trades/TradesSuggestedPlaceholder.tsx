@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
+import { ROUTES } from "../../lib/routes";
 
 export default function TradesSuggestedPlaceholder() {
   return (
@@ -7,7 +8,7 @@ export default function TradesSuggestedPlaceholder() {
       <h2 className="settings-subtitle">Suggested trades &amp; tips</h2>
       <p className="settings-muted trades-coming-soon-lead">
         Entry suggestions from strategy analysis and exit tips for open positions will appear
-        here. Until then, use Live Analysis to inspect recent signals and gate outcomes.
+        here. Until then, use Analysis to inspect recent signals and gate outcomes.
       </p>
 
       <div className="trades-coming-soon-sections">
@@ -62,9 +63,9 @@ export default function TradesSuggestedPlaceholder() {
         </section>
       </div>
 
-      <Link to="/trading/analysis" className="btn btn-secondary btn-sm trades-coming-soon-link">
+      <Link to={ROUTES.research.analysis} className="btn btn-secondary btn-sm trades-coming-soon-link">
         <ExternalLink size={14} aria-hidden="true" />
-        Open Live Analysis
+        Open Analysis
       </Link>
     </div>
   );

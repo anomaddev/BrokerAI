@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Download, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
+import { ROUTES } from "../lib/routes";
 import {
   api,
   BACKGROUND_TASK_COMPLETED_EVENT,
@@ -137,7 +138,7 @@ export default function Research() {
   }, [reports, query, typeFilter]);
 
   function openReport(report: ResearchReportMeta) {
-    navigate(`/daily-reports/r/${report.filename}`);
+    navigate(ROUTES.research.reportView(report.filename));
   }
 
   async function downloadReport(report: ResearchReportMeta) {
@@ -240,8 +241,28 @@ export default function Research() {
       <h1 className="page-title">Research</h1>
       <ResearchSignalsPanel />
       <div className="settings-panel">
-        <div className="settings-panel-header research-reports-header">
-          <h2 className="settings-subtitle">Reports</h2>
+        <div className="research-filters research-reports-toolbar">
+          <input
+            type="search"
+            className="research-search"
+            placeholder="Search by date, model, type, or filename…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <div className="research-select-wrap">
+            <select
+              className="research-select"
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              aria-label="Filter by report type"
+            >
+              {TYPE_FILTERS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="research-reports-actions">
             <button
               type="button"
@@ -283,30 +304,6 @@ export default function Research() {
                 ? "Running…"
                 : "Run weekly debrief"}
             </button>
-          </div>
-        </div>
-
-        <div className="research-filters">
-          <input
-            type="search"
-            className="research-search"
-            placeholder="Search by date, model, type, or filename…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <div className="research-select-wrap">
-            <select
-              className="research-select"
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              aria-label="Filter by report type"
-            >
-              {TYPE_FILTERS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
           </div>
         </div>
 

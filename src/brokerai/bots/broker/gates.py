@@ -7,7 +7,7 @@ from brokerai.bots.data_manager.candles import OANDA_SOURCE
 from brokerai.bots.data_manager.service import DataManagerService
 from brokerai.db.repositories.strategy_analysis_runs import StrategyAnalysisRunsRepository
 from brokerai.trading.ai_confirmation import maybe_confirm_trade_intent
-from brokerai.trading.execution_gates import passes_execution_gates, resolve_priority_conflicts
+from brokerai.trading.execution_gates import is_executor_eligible, passes_execution_gates, resolve_priority_conflicts
 from brokerai.trading.types import AnalysisResult, TradeIntent
 
 
@@ -58,6 +58,8 @@ async def apply_execution_gates(
     gated: list[tuple[AnalysisResult, dict, dict]] = []
 
     for analysis in analyses:
+        if not is_executor_eligible(analysis):
+            continue
         strategy = strategies_by_id.get(analysis.strategy_id)
         if strategy is None:
             continue

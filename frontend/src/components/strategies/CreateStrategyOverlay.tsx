@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ROUTES } from "../../lib/routes";
 import StrategyOverlay from "./StrategyOverlay";
 import StrategyModeStep from "./StrategyModeStep";
 import StrategyPresetStep from "./StrategyPresetStep";
@@ -30,7 +31,7 @@ export default function CreateStrategyOverlay({ onClose }: CreateStrategyOverlay
           onSelectPreset={() => setStep("preset")}
           onSelectCustom={() => {
             onClose();
-            navigate("/trading/strategies/new/custom");
+            navigate(ROUTES.research.strategyNew("custom"));
           }}
           onCancel={onClose}
         />

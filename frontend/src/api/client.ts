@@ -72,6 +72,10 @@ export type TradeCandlesResponse = CandlesResponse & {
   warmup_bars: number;
 };
 
+export type AnalysisRunCandlesResponse = TradeCandlesResponse & {
+  price_side: string;
+};
+
 export const PROFILE_PHOTO_PATH = "/api/auth/profile-photo";
 
 export function profilePhotoUrl(cacheBust?: number): string {
@@ -500,6 +504,27 @@ export const api = {
     request<StrategyAnalysisRun>(
       `/api/strategy-analysis-runs/${encodeURIComponent(runId)}`,
     ),
+
+  getStrategyAnalysisRunCandles: (runId: string) =>
+    request<AnalysisRunCandlesResponse>(
+      `/api/strategy-analysis-runs/${encodeURIComponent(runId)}/candles`,
+    ),
+
+  deleteStrategyAnalysisRun: (runId: string) =>
+    request<{ id: string; status: string }>(
+      `/api/strategy-analysis-runs/${encodeURIComponent(runId)}`,
+      { method: "DELETE" },
+    ),
+
+  runStrategyAnalysis: (body: {
+    strategy_id: string;
+    asset_class: string;
+    symbol: string;
+  }) =>
+    request<StrategyAnalysisRun>("/api/strategy-analysis-runs/run", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   listTrades: (params?: {
     status?: "open" | "closed" | "all";

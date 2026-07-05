@@ -5,6 +5,8 @@ import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from brokerai.db.client import get_db
 
 
@@ -14,14 +16,6 @@ def _default_lock_holder() -> str:
 
 class BrokerSyncStateRepository:
     COLLECTION = "broker_sync_state"
-
-    @staticmethod
-    def _as_utc_aware(value: datetime | None) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
 
     async def get_state(self, exchange_id: str, account_id: str) -> dict[str, Any] | None:
         handle = await get_db()
@@ -68,55 +62,60 @@ class BrokerSyncStateRepository:
         holder: str | None = None,
         ttl_seconds: int = 90,
     ) -> bool:
-        """Acquire a distributed lease for OANDA account polling."""
+        """Acquire a distributed lease for OANDA account polling.
+
+        Uses a conditional update only (never upsert on the lock filter). When no
+        row exists yet, inserts one. If insert races another writer, retries the
+        conditional update once.
+
+        Edge cases:
+        - Another process holds a non-expired lock → returns ``False`` (no error).
+        - Row exists but fails the lock ``$or`` (held by another) → must not upsert;
+          that would violate the unique ``(exchange_id, account_id)`` index.
+        """
         handle = await get_db()
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=max(30, ttl_seconds))
         lock_holder = holder or _default_lock_holder()
 
-        doc = await handle.db[self.COLLECTION].find_one(
-            {"exchange_id": exchange_id, "account_id": account_id},
-            {"_id": 0, "sync_lock_holder": 1, "sync_lock_expires_at": 1},
-        )
-        if doc:
-            existing_holder = doc.get("sync_lock_holder")
-            existing_expires = self._as_utc_aware(doc.get("sync_lock_expires_at"))
-            if (
-                existing_holder
-                and existing_holder != lock_holder
-                and existing_expires is not None
-                and existing_expires > now
-            ):
-                return False
+        lock_filter: dict[str, Any] = {
+            "exchange_id": exchange_id,
+            "account_id": account_id,
+            "$or": [
+                {"sync_lock_holder": {"$exists": False}},
+                {"sync_lock_expires_at": {"$lte": now}},
+                {"sync_lock_holder": lock_holder},
+            ],
+        }
+        lock_set = {
+            "sync_lock_holder": lock_holder,
+            "sync_lock_expires_at": expires_at,
+            "updated_at": now,
+        }
 
         result = await handle.db[self.COLLECTION].update_one(
-            {
-                "exchange_id": exchange_id,
-                "account_id": account_id,
-                "$or": [
-                    {"sync_lock_holder": {"$exists": False}},
-                    {"sync_lock_expires_at": {"$lte": now}},
-                    {"sync_lock_holder": lock_holder},
-                ],
-            },
-            {
-                "$set": {
-                    "sync_lock_holder": lock_holder,
-                    "sync_lock_expires_at": expires_at,
-                    "updated_at": now,
-                },
-                "$setOnInsert": {"created_at": now},
-            },
-            upsert=True,
+            lock_filter,
+            {"$set": lock_set},
         )
-        if result.modified_count or result.upserted_id:
+        if result.modified_count:
             return True
-        # Re-check after race
-        doc = await handle.db[self.COLLECTION].find_one(
-            {"exchange_id": exchange_id, "account_id": account_id},
-            {"_id": 0, "sync_lock_holder": 1},
-        )
-        return bool(doc and doc.get("sync_lock_holder") == lock_holder)
+
+        try:
+            await handle.db[self.COLLECTION].insert_one(
+                {
+                    "exchange_id": exchange_id,
+                    "account_id": account_id,
+                    **lock_set,
+                    "created_at": now,
+                }
+            )
+            return True
+        except DuplicateKeyError:
+            result = await handle.db[self.COLLECTION].update_one(
+                lock_filter,
+                {"$set": lock_set},
+            )
+            return bool(result.modified_count)
 
     async def release_sync_lock(
         self,

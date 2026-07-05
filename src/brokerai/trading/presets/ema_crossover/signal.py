@@ -26,47 +26,50 @@ def _detect_crossover(
     direction_filter: str,
     confirmation: str,
 ) -> tuple[str | None, float, dict[str, Any]]:
+    """Detect an EMA crossover on the **current** (last) candle only.
+
+    Live analysis runs when a new bar closes; a signal is emitted only when the
+    crossover completes on that bar — the intended trade entry candle.
+    """
+    if len(fast) < 2:
+        return None, 0.0, {"signal": "none"}
+
     slow_map = {str(point["time"]): float(point["value"]) for point in slow}
     adx_map = {str(point["time"]): float(point["value"]) for point in adx}
 
-    for index in range(len(fast) - 1, 0, -1):
-        time_key = str(fast[index]["time"])
-        prev_time = str(fast[index - 1]["time"])
-        curr_fast = float(fast[index]["value"])
-        prev_fast = float(fast[index - 1]["value"])
-        slow_val = slow_map.get(time_key)
-        prev_slow = slow_map.get(prev_time)
-        if slow_val is None or prev_slow is None:
-            continue
+    index = len(fast) - 1
+    time_key = str(fast[index]["time"])
+    prev_time = str(fast[index - 1]["time"])
+    curr_fast = float(fast[index]["value"])
+    prev_fast = float(fast[index - 1]["value"])
+    slow_val = slow_map.get(time_key)
+    prev_slow = slow_map.get(prev_time)
+    if slow_val is None or prev_slow is None:
+        return None, 0.0, {"signal": "none"}
 
-        bullish = prev_fast <= prev_slow and curr_fast > slow_val
-        bearish = prev_fast >= prev_slow and curr_fast < slow_val
-        if not bullish and not bearish:
-            continue
+    bullish = prev_fast <= prev_slow and curr_fast > slow_val
+    bearish = prev_fast >= prev_slow and curr_fast < slow_val
+    if not bullish and not bearish:
+        return None, 0.0, {"signal": "none"}
 
-        signal_direction = "long" if bullish else "short"
-        if direction_filter == "long" and signal_direction != "long":
-            continue
-        if direction_filter == "short" and signal_direction != "short":
-            continue
+    signal_direction = "long" if bullish else "short"
+    if direction_filter == "long" and signal_direction != "long":
+        return None, 0.0, {"signal": "none"}
+    if direction_filter == "short" and signal_direction != "short":
+        return None, 0.0, {"signal": "none"}
 
-        if confirmation == "pullback":
-            if index < 2:
-                continue
-        elif confirmation == "aggressive":
-            pass
+    if confirmation == "pullback" and index < 2:
+        return None, 0.0, {"signal": "none"}
 
-        adx_val = adx_map.get(time_key, 20.0)
-        confidence_pct = min(95.0, 50.0 + adx_val)
-        metadata = {
-            "signal": "bullish_cross" if bullish else "bearish_cross",
-            "crossover_time": time_key,
-            "adx": adx_val,
-            "confirmation": confirmation,
-        }
-        return signal_direction, confidence_pct / 100.0, metadata
-
-    return None, 0.0, {"signal": "none"}
+    adx_val = adx_map.get(time_key, 20.0)
+    confidence_pct = min(95.0, 50.0 + adx_val)
+    metadata = {
+        "signal": "bullish_cross" if bullish else "bearish_cross",
+        "crossover_time": time_key,
+        "adx": adx_val,
+        "confirmation": confirmation,
+    }
+    return signal_direction, confidence_pct / 100.0, metadata
 
 
 class EmaCrossoverSignalEvaluator:

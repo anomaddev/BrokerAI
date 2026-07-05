@@ -54,6 +54,13 @@ async def test_strategy_analysis_runs_repository_insert_list_get_update():
         stored[run_id] = {**stored[run_id], **update_doc["$set"]}
         return MagicMock(matched_count=1)
 
+    async def delete_one(query):
+        run_id = query["id"]
+        if run_id in stored:
+            del stored[run_id]
+            return MagicMock(deleted_count=1)
+        return MagicMock(deleted_count=0)
+
     cursor = MagicMock()
 
     async def to_list(length=200):
@@ -67,6 +74,7 @@ async def test_strategy_analysis_runs_repository_insert_list_get_update():
     collection = MagicMock()
     collection.insert_one = AsyncMock(side_effect=insert_one)
     collection.update_one = AsyncMock(side_effect=update_one)
+    collection.delete_one = AsyncMock(side_effect=delete_one)
     collection.find_one = AsyncMock(
         side_effect=lambda query, projection: stored.get(query["id"])
     )
@@ -115,6 +123,10 @@ async def test_strategy_analysis_runs_repository_insert_list_get_update():
         after_update = await repo.get_by_id(inserted["id"])
         assert after_update is not None
         assert after_update["execution"]["gates_passed"] is False
+
+        deleted = await repo.delete_by_id(inserted["id"])
+        assert deleted is True
+        assert await repo.get_by_id(inserted["id"]) is None
 
 
 def test_serialize_analysis_run_formats_datetimes():

@@ -690,7 +690,7 @@ function UpdatesCard() {
               id="update-release"
               value={config.release}
               disabled={formDisabled}
-              placeholder="0.0.6"
+              placeholder="0.0.7"
               onChange={(e) => applyConfig({ release: e.target.value }, 2000)}
             />
           </div>

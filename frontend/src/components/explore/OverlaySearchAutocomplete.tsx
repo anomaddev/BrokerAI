@@ -316,7 +316,7 @@ export default function OverlaySearchAutocomplete({
             <p className="explore-strategy-note explore-strategy-note--warn">
               {strategy.name} uses{" "}
               {TIMEFRAME_LABELS[strategyTimeframe(strategy)!]} candles. Chart is{" "}
-              {TIMEFRAME_LABELS[chartTimeframe]} — indicators may differ from live analysis.
+              {TIMEFRAME_LABELS[chartTimeframe]} — indicators may differ from saved analysis runs.
             </p>
           ) : null}
           {symbolMismatch ? (

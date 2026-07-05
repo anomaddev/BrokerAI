@@ -43,9 +43,6 @@ export default function Activity() {
     <div>
       <h1 className="page-title">Activity</h1>
       <div className="settings-panel">
-        <div className="settings-panel-header">
-          <h2 className="settings-subtitle">Bot activity</h2>
-        </div>
         {loading && <p className="settings-muted">Loading activity…</p>}
         {error && !loading && <p className="settings-error">{error}</p>}
         {!loading && !error && events.length === 0 && (

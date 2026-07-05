@@ -1149,6 +1149,11 @@ input {
   gap: 0.25rem;
 }
 
+.sidebar-bottom-spacer {
+  min-height: 2.75rem;
+  flex-shrink: 0;
+}
+
 .sidebar-status-panel {
   padding: 0 0.125rem;
 }
@@ -1196,6 +1201,7 @@ input {
   color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
   min-height: 2.75rem;
+  position: relative;
 }
 
 .sidebar.collapsed .nav-item {
@@ -1214,6 +1220,43 @@ input {
 
 .nav-item.active .nav-icon {
   color: var(--accent);
+}
+
+.nav-item--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nav-item--disabled:hover {
+  background: transparent;
+  color: var(--muted);
+}
+
+.nav-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.nav-status-dot--enabled {
+  background: var(--green);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 22%, transparent);
+}
+
+.nav-status-dot--disabled {
+  background: var(--red);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 22%, transparent);
+}
+
+.sidebar.collapsed .nav-status-dot {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  margin-left: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
 }
 
 .nav-icon {
@@ -1275,6 +1318,13 @@ input {
   flex-direction: column;
   overflow: hidden;
   padding: 0;
+}
+
+.main-content:has(.analysis-run-view) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 1rem 1.25rem 1.25rem;
 }
 
 .page-title {
@@ -3409,6 +3459,11 @@ input {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  margin-left: auto;
+}
+
+.research-reports-toolbar {
+  align-items: center;
 }
 
 .research-prompt-view-btn {

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from brokerai.bots.associate.worker import AssociateWorker
 from brokerai.bots.base import Bot
-from brokerai.bots.broker.gates import apply_execution_gates
 from brokerai.bots.broker.monitor import BrokerMonitor
 from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_strategies
 from brokerai.bots.data_manager.service import DataManagerService, require_data_manager_service
@@ -19,11 +18,10 @@ from brokerai.bots.secretary.activity import (
 )
 from brokerai.bots.secretary.types import PipelineContext
 from brokerai.core.worker_pool import get_worker_pool
-from brokerai.db.repositories.asset_settings import AssetSettingsRepository
-from brokerai.db.repositories.broker_lots import BrokerLotsRepository
+from brokerai.trading.execution_gates import is_executor_eligible
 from brokerai.trading.pipeline import ensure_trading_registries
 from brokerai.trading.schedule import utc_now
-from brokerai.trading.types import AnalysisResult, TradeIntent, WorkUnit
+from brokerai.trading.types import AnalysisResult, TradeIntent
 
 if TYPE_CHECKING:
     pass
@@ -103,34 +101,18 @@ class BrokerBot(Bot):
         if not new_results:
             return []
 
+        actionable = [analysis for analysis in new_results if is_executor_eligible(analysis)]
+        skipped = len(new_results) - len(actionable)
+
         started = time.monotonic()
         await log_pipeline_broker_started(context)
 
+        from brokerai.trading.broker_execution import run_broker_execution
+
         data_manager = self._require_data_manager()
-        await self._refresh_strategies()
-        trade_counts = await BrokerLotsRepository().daily_lot_counts()
-        forex_settings = await AssetSettingsRepository().get("forex")
-        now = utc_now()
-
-        unit = WorkUnit(
-            pair=context.symbol,
-            asset_class=context.asset_class,
-            timeframe=context.timeframe,
-            bar_count=context.bar_count,
-            strategies=context.strategies,
-        )
-        await self._monitor.sync_exit_monitors(
-            [unit],
-            data_manager,
-            evaluate_pairs={(context.symbol, context.timeframe)},
-        )
-
-        intents = await apply_execution_gates(
-            new_results,
-            self._strategies_by_id,
-            trade_counts=trade_counts,
-            asset_enabled_sessions=forex_settings.get("enabled_sessions"),
-            when=now,
+        intents = await run_broker_execution(
+            actionable,
+            context,
             data_manager=data_manager,
         )
 
@@ -151,8 +133,9 @@ class BrokerBot(Bot):
         duration_ms = int((time.monotonic() - started) * 1000)
         await log_pipeline_broker_completed(context, duration_ms)
         logger.info(
-            "Broker processed %d analysis result(s), %d intent(s) for %s %s",
+            "Broker processed %d analysis result(s), %d skipped (no signal), %d intent(s) for %s %s",
             len(new_results),
+            skipped,
             len(intents),
             context.symbol,
             context.timeframe,

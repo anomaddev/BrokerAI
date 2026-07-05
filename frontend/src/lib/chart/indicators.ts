@@ -140,6 +140,11 @@ export type CrossoverSignal = {
   adx: number;
 };
 
+export function normalizeConfidenceThreshold(minConfidence: number): number {
+  if (!Number.isFinite(minConfidence) || minConfidence <= 0) return 0;
+  return minConfidence <= 1 ? Math.round(minConfidence * 100) : minConfidence;
+}
+
 export function findEmaCrossovers(
   fast: IndicatorPoint[],
   slow: IndicatorPoint[],
@@ -149,6 +154,7 @@ export function findEmaCrossovers(
   const slowMap = new Map(slow.map((point) => [point.time, point.value]));
   const adxMap = new Map(adx.map((point) => [point.time, point.value]));
   const signals: CrossoverSignal[] = [];
+  const minConfidencePct = normalizeConfidenceThreshold(minConfidence);
 
   for (let i = 1; i < fast.length; i += 1) {
     const prevFast = fast[i - 1].value;
@@ -163,7 +169,7 @@ export function findEmaCrossovers(
 
     const adxVal = adxMap.get(fast[i].time) ?? 20;
     const confidence = Math.min(95, Math.round(50 + adxVal));
-    if (confidence < minConfidence) continue;
+    if (confidence < minConfidencePct) continue;
 
     signals.push({
       time: fast[i].time,

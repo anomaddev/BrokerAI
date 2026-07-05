@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, type ResearchReportContent } from "../api/client";
+import { ROUTES } from "../lib/routes";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -50,7 +51,7 @@ export default function ResearchReportView() {
   return (
     <div>
       <div className="research-view-header">
-        <Link to="/daily-reports" className="research-back-link">
+        <Link to={ROUTES.research.reports} className="research-back-link">
           <ArrowLeft size={16} strokeWidth={1.75} />
           Back to reports
         </Link>

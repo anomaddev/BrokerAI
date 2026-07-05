@@ -67,3 +67,18 @@ class StrategyAnalysisRunsRepository:
             {"$set": {"execution": execution}},
         )
         return result.matched_count > 0
+
+    async def delete_by_id(self, run_id: str) -> bool:
+        """Remove a persisted analysis run by id."""
+        handle = await get_db()
+        result = await handle.db[self.COLLECTION].delete_one({"id": run_id})
+        return result.deleted_count > 0
+
+    async def set_run_type(self, run_id: str, run_type: str) -> bool:
+        """Update the persisted run type (e.g. ``live`` → ``manual``)."""
+        handle = await get_db()
+        result = await handle.db[self.COLLECTION].update_one(
+            {"id": run_id},
+            {"$set": {"run_type": run_type}},
+        )
+        return result.matched_count > 0
