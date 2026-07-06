@@ -86,25 +86,37 @@ export function useGeneralSettings() {
 
   const effectiveTimezone = resolveEffectiveTimezone(settings);
   const showUtc = settings.show_utc_times;
+  const timeFormat = settings.time_format;
 
   const timeOptions: TimeFormatOptions = useMemo(
     () => ({
       showUtc,
       timeZone: effectiveTimezone,
+      timeFormat,
     }),
-    [showUtc, effectiveTimezone],
+    [showUtc, effectiveTimezone, timeFormat],
+  );
+
+  /** Settings/history tables: honor timezone + 12/24h, not the charts-only UTC toggle. */
+  const settingsTimeOptions: TimeFormatOptions = useMemo(
+    () => ({
+      showUtc: false,
+      timeZone: effectiveTimezone,
+      timeFormat,
+    }),
+    [effectiveTimezone, timeFormat],
   );
 
   const formatInstant = useCallback(
     (value: string | number | Date | null | undefined, style: AppInstantStyle = "full") =>
       formatAppInstant(value, timeOptions, style),
-    [showUtc, effectiveTimezone],
+    [timeOptions],
   );
 
   const formatTimeOfDay = useCallback(
     (value: string | number | Date, includeWeekday = false) =>
       formatAppTimeOfDay(value, timeOptions, includeWeekday),
-    [showUtc, effectiveTimezone],
+    [timeOptions],
   );
 
   const formatSessionHoursLabel = useCallback(
@@ -112,7 +124,7 @@ export function useGeneralSettings() {
       def: Parameters<typeof formatSessionHours>[0],
       reference?: Date,
     ) => formatSessionHours(def, timeOptions, reference),
-    [showUtc, effectiveTimezone],
+    [timeOptions],
   );
 
   return {
@@ -120,7 +132,9 @@ export function useGeneralSettings() {
     loaded,
     effectiveTimezone,
     showUtc,
+    timeFormat,
     timeOptions,
+    settingsTimeOptions,
     formatInstant,
     formatTimeOfDay,
     formatSessionHours: formatSessionHoursLabel,

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from brokerai.trading.data.candle_cache import CandleCache
+from datetime import datetime, timezone
 
 
 @pytest.mark.asyncio
@@ -61,6 +62,35 @@ async def test_request_candles_backfills_bounded_window():
     )
     service.ensure_coverage.assert_not_awaited()
     assert rows == [{"time": "t1"}]
+
+
+@pytest.mark.asyncio
+async def test_fetch_count_from_oanda_uses_bar_count_not_cache():
+    cache = CandleCache()
+    cache._oanda_credentials = AsyncMock(return_value=("token", "practice"))  # type: ignore[method-assign]
+
+    anchor = datetime(2026, 7, 5, 21, 30, tzinfo=timezone.utc)
+    bar = {
+        "time": "2026-07-05T21:30:00.000000000Z",
+        "open": 1.1,
+        "high": 1.2,
+        "low": 1.0,
+        "close": 1.15,
+        "volume": 10,
+    }
+
+    with patch("brokerai.trading.data.candle_cache.fetch_candles_to", new_callable=AsyncMock) as mock_to:
+        mock_to.return_value = [bar]
+        rows = await cache.fetch_count_from_oanda(
+            "USD/JPY",
+            "M15",
+            100,
+            until=anchor,
+        )
+
+    mock_to.assert_awaited_once()
+    assert mock_to.await_args.kwargs["count"] == 100
+    assert len(rows) == 1
 
 
 @pytest.mark.asyncio

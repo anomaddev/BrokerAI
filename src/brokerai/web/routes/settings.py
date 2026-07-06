@@ -3,6 +3,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from brokerai.config.env_file import config_file_path, config_file_writable, save_update_env_values
+from brokerai.config_backup.change_labels import describe_system_update_change
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.config.settings import UpdateTrack, get_settings, reload_settings
 from brokerai.web.routes.auth import require_auth
 from brokerai.web.update_runner import clear_update_check_cache
@@ -64,6 +66,24 @@ async def put_update_settings(
 
     settings = get_settings()
     auto_update = body.auto_update if body.update_track != "release" else False
+    change_label = describe_system_update_change(
+        {
+            "update_track": settings.update_track,
+            "branch": settings.branch,
+            "release": settings.release or "",
+            "auto_update": settings.auto_update,
+        },
+        update_track=body.update_track,
+        branch=body.branch,
+        release=body.release,
+        auto_update=auto_update,
+    )
+
+    await auto_backup_before(
+        trigger="settings.update",
+        summary="System update settings",
+        change_label=change_label or "System update settings",
+    )
 
     try:
         saved_path = save_update_env_values(

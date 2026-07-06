@@ -1,11 +1,26 @@
 import type { SessionDef } from "./marketSessionDefs";
+import type { TimeFormat } from "./generalSettings";
+import {
+  FOREX_SCHEDULE_ZONE,
+  FOREX_WEEKLY_CLOSE,
+  FOREX_WEEKLY_OPEN,
+} from "./forexSchedule";
 
 export type TimeFormatOptions = {
   showUtc: boolean;
   timeZone: string;
+  timeFormat: TimeFormat;
 };
 
 export type AppInstantStyle = "full" | "short" | "compact";
+
+function hasExplicitOffset(value: string): boolean {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim());
+}
+
+function normalizeIsoFractionalSeconds(value: string): string {
+  return value.replace(/(\.\d{3})\d+(?=(?:Z|[+-]|$))/i, "$1");
+}
 
 function parseInstant(value: string | number | Date): Date | null {
   if (value instanceof Date) {
@@ -26,12 +41,22 @@ function parseInstant(value: string | number | Date): Date | null {
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  const date = new Date(trimmed);
+  const normalized = normalizeIsoFractionalSeconds(trimmed.replace(" ", "T"));
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(normalized) && !hasExplicitOffset(normalized)) {
+    const date = new Date(`${normalized}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function effectiveTimeZone(options: TimeFormatOptions): string {
   return options.showUtc ? "UTC" : options.timeZone;
+}
+
+function useHour12(options: TimeFormatOptions): boolean {
+  return options.timeFormat === "12h";
 }
 
 function timezoneSuffix(options: TimeFormatOptions): string {
@@ -58,6 +83,7 @@ export function formatAppInstant(
   if (!date) return typeof value === "string" ? value : "—";
 
   const timeZone = effectiveTimeZone(options);
+  const hour12 = useHour12(options);
 
   if (style === "short") {
     const formatted = new Intl.DateTimeFormat(undefined, {
@@ -67,6 +93,7 @@ export function formatAppInstant(
       year: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      hour12,
     }).format(date);
     return `${formatted}${timezoneSuffix(options)}`;
   }
@@ -80,7 +107,7 @@ export function formatAppInstant(
       hour: "numeric",
       minute: "2-digit",
       second: "2-digit",
-      hour12: true,
+      hour12,
       timeZoneName: options.showUtc ? undefined : "short",
     }).formatToParts(date);
 
@@ -88,7 +115,8 @@ export function formatAppInstant(
       parts.find((entry) => entry.type === type)?.value ?? "";
 
     const tz = options.showUtc ? "UTC" : part("timeZoneName");
-    return `${part("month")}-${part("day")}-${part("year")} at ${part("hour")}:${part("minute")}:${part("second")} ${part("dayPeriod")}${tz ? ` ${tz}` : ""}`;
+    const dayPeriod = hour12 ? ` ${part("dayPeriod")}` : "";
+    return `${part("month")}-${part("day")}-${part("year")} at ${part("hour")}:${part("minute")}:${part("second")}${dayPeriod}${tz ? ` ${tz}` : ""}`;
   }
 
   const formatted = new Intl.DateTimeFormat(undefined, {
@@ -99,6 +127,7 @@ export function formatAppInstant(
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit",
+    hour12,
   }).format(date);
   return `${formatted}${timezoneSuffix(options)}`;
 }
@@ -112,11 +141,12 @@ export function formatAppTimeOfDay(
   if (!date) return "—";
 
   const timeZone = effectiveTimeZone(options);
+  const hour12 = useHour12(options);
   const time = new Intl.DateTimeFormat("en-GB", {
     timeZone,
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    hour12,
   }).format(date);
 
   if (!includeWeekday) {
@@ -130,38 +160,44 @@ export function formatAppTimeOfDay(
   return `${weekday} ${time}${timezoneSuffix(options)}`;
 }
 
-function utcTimeOnReference(
-  hour: number,
-  minute: number,
-  reference: Date,
-): Date {
-  return new Date(
-    Date.UTC(
-      reference.getUTCFullYear(),
-      reference.getUTCMonth(),
-      reference.getUTCDate(),
-      hour,
-      minute,
-    ),
-  );
-}
-
 export function formatSessionHours(
-  def: Pick<SessionDef, "startHour" | "startMinute" | "endHour" | "endMinute">,
+  def: Pick<
+    SessionDef,
+    "timezone" | "startHour" | "startMinute" | "endHour" | "endMinute" | "hours" | "coverage"
+  >,
   options: TimeFormatOptions,
   reference = new Date(),
 ): string {
-  const start = utcTimeOnReference(def.startHour, def.startMinute, reference);
-  const end = utcTimeOnReference(def.endHour, def.endMinute, reference);
+  const start = clockInZone(def.timezone, reference, def.startHour, def.startMinute);
+  const end = clockInZone(def.timezone, reference, def.endHour, def.endMinute);
 
   const startLabel = formatAppTimeOfDay(start, options).replace(/\s*(UTC|[A-Z]{2,5})$/i, "");
   const endLabel = formatAppTimeOfDay(end, options).replace(/\s*(UTC|[A-Z]{2,5})$/i, "");
   const suffix = timezoneSuffix(options);
-
   return `${startLabel}–${endLabel}${suffix}`;
 }
 
-const FOREX_SCHEDULE_ZONE = "America/New_York";
+/** OANDA forex/metals weekly session (Sun open – Fri close, America/New_York). */
+export function formatForexWeeklyHoursLabel(
+  options: TimeFormatOptions,
+  reference = new Date(),
+): string {
+  const open = clockInZone(
+    FOREX_SCHEDULE_ZONE,
+    reference,
+    FOREX_WEEKLY_OPEN.hour,
+    FOREX_WEEKLY_OPEN.minute,
+  );
+  const close = clockInZone(
+    FOREX_SCHEDULE_ZONE,
+    reference,
+    FOREX_WEEKLY_CLOSE.hour,
+    FOREX_WEEKLY_CLOSE.minute,
+  );
+  const openLabel = formatAppTimeOfDay(open, options).replace(/\s*(UTC|[A-Z]{2,5})$/i, "");
+  const closeLabel = formatAppTimeOfDay(close, options).replace(/\s*(UTC|[A-Z]{2,5})$/i, "");
+  return `Sun ${openLabel} – Fri ${closeLabel}${timezoneSuffix(options)}`;
+}
 
 function calendarDateInZone(
   timeZone: string,
@@ -245,6 +281,7 @@ export function parseAppInstant(value: string | number | Date | null | undefined
 
 export function createChartTimeFormatter(options: TimeFormatOptions) {
   const timeZone = effectiveTimeZone(options);
+  const hour12 = useHour12(options);
 
   return (timestamp: number) => {
     const date = new Date(timestamp * 1000);
@@ -252,7 +289,7 @@ export function createChartTimeFormatter(options: TimeFormatOptions) {
       timeZone,
       hour: "2-digit",
       minute: "2-digit",
-      hour12: false,
+      hour12,
     }).format(date);
     return options.showUtc ? `${formatted} UTC` : formatted;
   };

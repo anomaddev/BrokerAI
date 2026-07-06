@@ -8,6 +8,11 @@ from brokerai.bots.researcher.news import test_newsapi
 from brokerai.integrations.massive import test_massive
 from brokerai.integrations.massive_cache import clear_market_status_cache
 from brokerai.provider_capabilities import supports_capability
+from brokerai.config_backup.change_labels import (
+    describe_api_connection_change,
+    describe_model_capabilities_change,
+)
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.ai_models import AiModelsRepository, mask_api_key
 from brokerai.db.repositories.data_connections import DataConnectionsRepository
 from brokerai.web.routes.auth import require_auth
@@ -86,6 +91,18 @@ async def save_newsapi(body: NewsApiBody, _username: str = Depends(require_auth)
     repo = DataConnectionsRepository()
     existing = await repo.get_newsapi()
     api_key = body.api_key.strip() if body.api_key.strip() else existing.get("api_key", "")
+    api_key_changed = bool(body.api_key.strip() and body.api_key.strip() != existing.get("api_key", ""))
+    change_label = describe_api_connection_change(
+        "NewsAPI",
+        existing,
+        enabled=body.enabled,
+        api_key_changed=api_key_changed,
+    )
+    await auto_backup_before(
+        trigger="data_connections.newsapi",
+        summary="NewsAPI connection",
+        change_label=change_label or "NewsAPI connection",
+    )
     doc = await repo.save_newsapi(api_key=api_key, enabled=body.enabled)
     return JSONResponse(_public_newsapi(doc))
 
@@ -93,6 +110,18 @@ async def save_newsapi(body: NewsApiBody, _username: str = Depends(require_auth)
 @router.delete("/newsapi")
 async def delete_newsapi(_username: str = Depends(require_auth)) -> JSONResponse:
     repo = DataConnectionsRepository()
+    existing = await repo.get_newsapi()
+    await auto_backup_before(
+        trigger="data_connections.newsapi.delete",
+        summary="Remove NewsAPI connection",
+        change_label=describe_api_connection_change(
+            "NewsAPI",
+            existing,
+            enabled=False,
+            api_key_changed=False,
+            removed=True,
+        ),
+    )
     doc = await repo.delete_newsapi()
     return JSONResponse(_public_newsapi(doc))
 
@@ -102,6 +131,18 @@ async def save_massive(body: MassiveBody, _username: str = Depends(require_auth)
     repo = DataConnectionsRepository()
     existing = await repo.get_massive()
     api_key = body.api_key.strip() if body.api_key.strip() else existing.get("api_key", "")
+    api_key_changed = bool(body.api_key.strip() and body.api_key.strip() != existing.get("api_key", ""))
+    change_label = describe_api_connection_change(
+        "Massive",
+        existing,
+        enabled=body.enabled,
+        api_key_changed=api_key_changed,
+    )
+    await auto_backup_before(
+        trigger="data_connections.massive",
+        summary="Massive connection",
+        change_label=change_label or "Massive connection",
+    )
     doc = await repo.save_massive(api_key=api_key, enabled=body.enabled)
     clear_market_status_cache()
     return JSONResponse(_public_massive(doc))
@@ -110,6 +151,18 @@ async def save_massive(body: MassiveBody, _username: str = Depends(require_auth)
 @router.delete("/massive")
 async def delete_massive(_username: str = Depends(require_auth)) -> JSONResponse:
     repo = DataConnectionsRepository()
+    existing = await repo.get_massive()
+    await auto_backup_before(
+        trigger="data_connections.massive.delete",
+        summary="Remove Massive connection",
+        change_label=describe_api_connection_change(
+            "Massive",
+            existing,
+            enabled=False,
+            api_key_changed=False,
+            removed=True,
+        ),
+    )
     doc = await repo.delete_massive()
     clear_market_status_cache()
     return JSONResponse(_public_massive(doc))
@@ -127,6 +180,19 @@ async def save_model_capabilities(
     model = await models_repo.find_by_id(model_id)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
+
+    before_caps = await connections_repo.get_model_capabilities_map()
+    before = dict(before_caps.get(model_id, {}))
+    change_label = describe_model_capabilities_change(
+        before,
+        body.capabilities,
+        model_title=str(model.get("title") or model_id),
+    )
+    await auto_backup_before(
+        trigger=f"data_connections.model_capabilities:{model_id}",
+        summary=f"Model capabilities: {model.get('title') or model_id}",
+        change_label=change_label or f"Model capabilities: {model.get('title') or model_id}",
+    )
 
     provider_type = str(model.get("type") or "")
     for key in body.capabilities:

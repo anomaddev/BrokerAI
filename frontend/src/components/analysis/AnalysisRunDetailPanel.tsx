@@ -10,6 +10,8 @@ import {
   filterDetails,
   gateReasonLabel,
   isExecutorEligible,
+  runSourceClassName,
+  runSourceLabel,
   signalLabel,
 } from "../../lib/strategyAnalysis";
 import { TIMEFRAME_LABELS, type Timeframe } from "../../lib/strategyParams";
@@ -104,6 +106,12 @@ export default function AnalysisRunDetailPanel({ run }: AnalysisRunDetailPanelPr
       <AnalysisDetailSection title="Summary">
         <dl className="analysis-detail-list">
           <DetailRow label="Strategy" value={run.strategy_name} />
+          <DetailRow
+            label="Source"
+            value={
+              <span className={runSourceClassName(run)}>{runSourceLabel(run)}</span>
+            }
+          />
           <DetailRow label="Pair" value={run.pair} />
           <DetailRow label="Timeframe" value={timeframeLabel(run.timeframe)} />
           <DetailRow

@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from brokerai.config_backup.change_labels import describe_strategy_update
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.strategies import StrategiesRepository, clean_instrument_selection
 from brokerai.strategies.params import ParamsValidationError
 from brokerai.strategies.registry import get_preset, list_presets, serialize_preset
@@ -68,6 +70,12 @@ async def create_strategy(
     if not selection:
         raise HTTPException(status_code=400, detail="Select at least one instrument")
 
+    await auto_backup_before(
+        trigger="strategies.create",
+        summary=f"Create strategy: {body.name.strip()}",
+        change_label=f"Added strategy: {body.name.strip()}",
+    )
+
     repo = StrategiesRepository()
     try:
         doc = await repo.create(
@@ -105,6 +113,24 @@ async def update_strategy(
             raise HTTPException(status_code=400, detail="Select at least one instrument")
 
     repo = StrategiesRepository()
+    existing = await repo.get_by_id(strategy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    change_label = describe_strategy_update(
+        existing,
+        name=body.name,
+        description=body.description,
+        params=body.params,
+        instrument_selection=selection,
+        enabled=body.enabled,
+    )
+    await auto_backup_before(
+        trigger=f"strategies.patch:{strategy_id}",
+        summary=f"Update strategy: {existing.get('name') or strategy_id}",
+        change_label=change_label or f"Updated strategy: {existing.get('name') or strategy_id}",
+    )
+
     try:
         doc = await repo.update(
             strategy_id,
@@ -130,6 +156,17 @@ async def delete_strategy(
     _username: str = Depends(require_auth),
 ) -> JSONResponse:
     repo = StrategiesRepository()
+    existing = await repo.get_by_id(strategy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    strategy_name = str(existing.get("name") or strategy_id)
+    await auto_backup_before(
+        trigger=f"strategies.delete:{strategy_id}",
+        summary=f"Delete strategy: {strategy_name}",
+        change_label=f"Removed strategy: {strategy_name}",
+    )
+
     deleted = await repo.delete(strategy_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Strategy not found")

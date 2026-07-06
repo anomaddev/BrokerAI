@@ -1,11 +1,14 @@
 /** OANDA forex/metals schedule — keep in sync with `market_calendar.py`. */
 
-const FOREX_SCHEDULE_ZONE = "America/New_York";
+export const FOREX_SCHEDULE_ZONE = "America/New_York";
 
-const FOREX_OPEN = { hour: 17, minute: 5 };
-const FOREX_CLOSE = { hour: 16, minute: 59 };
+export const FOREX_WEEKLY_OPEN = { hour: 17, minute: 5 };
+export const FOREX_WEEKLY_CLOSE = { hour: 16, minute: 59 };
 const DAILY_BREAK_START = { hour: 16, minute: 59 };
 const DAILY_BREAK_END = { hour: 17, minute: 5 };
+
+const FOREX_OPEN = FOREX_WEEKLY_OPEN;
+const FOREX_CLOSE = FOREX_WEEKLY_CLOSE;
 
 const WEEKDAY_TO_PYTHON: Record<string, number> = {
   Mon: 0,

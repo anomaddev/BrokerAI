@@ -18,6 +18,7 @@ import type { ChartOverlayItem } from "../../lib/chart/chartOverlayState";
 import {
   CANDLESTICK_SERIES_OPTIONS,
   createBrokerChartOptions,
+  initialVisibleLogicalRange,
 } from "../../lib/chart/brokerChartOptions";
 import {
   computeExploreOverlays,
@@ -401,7 +402,7 @@ export default function TradeCandleChart({
           const { from, to } = tradeChartVisibleTimeRange(candleWindow);
           applyVisibleTimeRange(charts, from, to);
         } else {
-          applyClampedRange(charts, maxLogicalRangeRef.current);
+          applyClampedRange(charts, initialVisibleLogicalRange(data.length));
         }
 
         requestAnimationFrame(() => {

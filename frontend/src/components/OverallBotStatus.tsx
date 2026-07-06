@@ -3,90 +3,170 @@ import { createPortal } from "react-dom";
 import {
   api,
   type BotActivityEvent,
+  type NextCandlePreviewResponse,
   type ResearchSettings,
 } from "../api/client";
 import {
-  activityTimelineLabel,
+  loadAssetClassStatuses,
+  type AssetClassStatus,
+} from "../lib/assetClassStatus";
+import {
   formatActivityRelative,
+  normalizeActivityTimeline,
 } from "../lib/botActivity";
 import {
   computeOverallStatus,
   overallStatusLabel,
   overallStatusTone,
-  resolveOverallStatusTooltip,
   sortBots,
   type BotStatusItem,
   type OverallBotStatus,
 } from "../lib/bots";
 import {
-  DEFAULT_MARKET_INDICATORS,
-  DISPLAY_SETTINGS_UPDATED,
-  normalizeMarketIndicators,
-  type MarketIndicators,
-} from "../lib/displaySettings";
+  DEFAULT_FOREX_TRADING_SESSIONS,
+  FOREX_TRADING_SESSIONS_UPDATED,
+  normalizeForexTradingSessions,
+  type ForexTradingSessions,
+} from "../lib/forexTradingSessions";
+import { CONFIG_RESTORED } from "../lib/configBackup";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import { useMarketStatus } from "../hooks/useMarketStatus";
-import { anyEnabledMarketOpen } from "../lib/marketSessions";
 import {
   computeNextAction,
   computeProgress,
   formatCountdown,
   formatNextActionDisplay,
   formatNextActionTargetUtc,
+  resolveMarketStatusBadge,
+  resolveNextActionTooltipExplainer,
   resolveOverallStatusExplainer,
   type NextActionState,
 } from "../lib/nextAction";
+import { TIMEFRAME_LABELS } from "../lib/strategyParams/types";
+import type { Timeframe } from "../lib/strategyParams/types";
 
 const POLL_INTERVAL_MS = 15_000;
 const COUNTDOWN_REFRESH_MS = 1_000;
-const TIMELINE_LIMIT = 8;
+const TIMELINE_LIMIT = 5;
 
 type TooltipCoords = {
   top: number;
   left: number;
 };
 
-export default function OverallBotStatus() {
-  const { timeOptions } = useGeneralSettings();
-  const panelRef = useRef<HTMLDivElement>(null);
+function useHoverTooltipCoords<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
   const [hovered, setHovered] = useState(false);
   const [coords, setCoords] = useState<TooltipCoords | null>(null);
+
+  useEffect(() => {
+    if (!hovered) {
+      setCoords(null);
+      return;
+    }
+
+    function updatePosition() {
+      const node = ref.current;
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      setCoords({
+        top: rect.bottom + 8,
+        left: rect.left + rect.width / 2,
+      });
+    }
+
+    updatePosition();
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [hovered]);
+
+  return { ref, hovered, setHovered, coords };
+}
+
+function enabledAssetClassLabels(statuses: AssetClassStatus[]): string {
+  return statuses
+    .filter((row) => row.enabled)
+    .map((row) => row.label)
+    .join(", ");
+}
+
+export default function OverallBotStatus() {
+  const { timeOptions } = useGeneralSettings();
+  const {
+    ref: pillRef,
+    hovered: pillHovered,
+    setHovered: setPillHovered,
+    coords: pillCoords,
+  } = useHoverTooltipCoords<HTMLDivElement>();
+  const {
+    ref: nextRef,
+    hovered: nextHovered,
+    setHovered: setNextHovered,
+    coords: nextCoords,
+  } = useHoverTooltipCoords<HTMLSpanElement>();
+
   const [loaded, setLoaded] = useState(false);
   const [orchestratorRunning, setOrchestratorRunning] = useState<boolean | null>(null);
   const [bots, setBots] = useState<BotStatusItem[]>([]);
   const marketStatus = useMarketStatus();
   const [researchSettings, setResearchSettings] = useState<ResearchSettings | null>(null);
   const [activityEvents, setActivityEvents] = useState<BotActivityEvent[]>([]);
-  const [indicators, setIndicators] = useState<MarketIndicators>(DEFAULT_MARKET_INDICATORS);
+  const [enabledTradingSessions, setEnabledTradingSessions] = useState<ForexTradingSessions>(
+    DEFAULT_FOREX_TRADING_SESSIONS,
+  );
+  const [assetClassStatuses, setAssetClassStatuses] = useState<AssetClassStatus[]>([]);
+  const [candlePreview, setCandlePreview] = useState<NextCandlePreviewResponse | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const marketStatusRef = useRef(marketStatus);
+  marketStatusRef.current = marketStatus;
 
   useEffect(() => {
     let cancelled = false;
 
-    api
-      .getDisplaySettings()
-      .then((data) => {
+    async function loadForexTradingSessions() {
+      try {
+        const forexSettings = await api.getForexPairs();
         if (!cancelled) {
-          setIndicators(normalizeMarketIndicators(data.market_indicators));
+          setEnabledTradingSessions(normalizeForexTradingSessions(forexSettings.enabled_sessions));
         }
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) {
-          setIndicators(DEFAULT_MARKET_INDICATORS);
+          setEnabledTradingSessions(DEFAULT_FOREX_TRADING_SESSIONS);
         }
-      });
-
-    function handleSettingsUpdated() {
-      api
-        .getDisplaySettings()
-        .then((data) => setIndicators(normalizeMarketIndicators(data.market_indicators)))
-        .catch(() => setIndicators(DEFAULT_MARKET_INDICATORS));
+      }
     }
 
-    window.addEventListener(DISPLAY_SETTINGS_UPDATED, handleSettingsUpdated);
+    function handleForexSessionsUpdated() {
+      void loadForexTradingSessions();
+    }
+
+    function handleConfigRestored() {
+      void (async () => {
+        await loadForexTradingSessions();
+        try {
+          const researchData = await api.getResearchSettings();
+          if (!cancelled) {
+            setResearchSettings(researchData);
+          }
+        } catch {
+          if (!cancelled) {
+            setResearchSettings(null);
+          }
+        }
+      })();
+    }
+
+    window.addEventListener(FOREX_TRADING_SESSIONS_UPDATED, handleForexSessionsUpdated);
+    window.addEventListener(CONFIG_RESTORED, handleConfigRestored);
     return () => {
       cancelled = true;
-      window.removeEventListener(DISPLAY_SETTINGS_UPDATED, handleSettingsUpdated);
+      window.removeEventListener(FOREX_TRADING_SESSIONS_UPDATED, handleForexSessionsUpdated);
+      window.removeEventListener(CONFIG_RESTORED, handleConfigRestored);
     };
   }, []);
 
@@ -96,17 +176,53 @@ export default function OverallBotStatus() {
 
     async function load() {
       try {
-        const [health, botData, researchData, activityData] = await Promise.all([
-          api.health(),
-          api.bots(),
-          api.getResearchSettings().catch(() => null),
-          api.getBotActivity(TIMELINE_LIMIT).catch(() => ({ events: [], latest: null })),
-        ]);
+        const [health, botData, researchData, activityData, forexSettings, assetStatuses] =
+          await Promise.all([
+            api.health(),
+            api.bots(),
+            api.getResearchSettings().catch(() => null),
+            api.getBotActivity(TIMELINE_LIMIT).catch(() => ({ events: [], latest: null })),
+            api.getForexPairs().catch(() => null),
+            loadAssetClassStatuses().catch(() => []),
+          ]);
         if (cancelled) return;
         setOrchestratorRunning(Boolean(health.orchestrator_running));
         setBots(sortBots(botData.bots));
         setResearchSettings(researchData);
         setActivityEvents(activityData.events);
+        setAssetClassStatuses(assetStatuses);
+        if (forexSettings) {
+          setEnabledTradingSessions(normalizeForexTradingSessions(forexSettings.enabled_sessions));
+        }
+
+        const currentMarket = marketStatusRef.current;
+        const statusForPreview = computeOverallStatus({
+          orchestratorRunning: Boolean(health.orchestrator_running),
+          bots: sortBots(botData.bots),
+          marketSessions: currentMarket?.sessions ?? [],
+          enabledTradingSessions: forexSettings
+            ? normalizeForexTradingSessions(forexSettings.enabled_sessions)
+            : DEFAULT_FOREX_TRADING_SESSIONS,
+          marketAvailable: currentMarket?.available !== false,
+          marketServerTime: currentMarket?.server_time,
+        });
+        const previewNext =
+          statusForPreview === "running" && Boolean(health.orchestrator_running);
+        if (previewNext) {
+          try {
+            const preview = await api.getNextCandlePreview();
+            if (!cancelled) {
+              setCandlePreview(preview);
+            }
+          } catch {
+            if (!cancelled) {
+              setCandlePreview(null);
+            }
+          }
+        } else if (!cancelled) {
+          setCandlePreview(null);
+        }
+
         setLoaded(true);
       } catch {
         if (!cancelled) {
@@ -114,6 +230,8 @@ export default function OverallBotStatus() {
           setBots([]);
           setResearchSettings(null);
           setActivityEvents([]);
+          setAssetClassStatuses([]);
+          setCandlePreview(null);
           setLoaded(true);
         }
       }
@@ -144,71 +262,41 @@ export default function OverallBotStatus() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (!hovered) {
-      setCoords(null);
-      return;
-    }
-
-    function updatePosition() {
-      const node = panelRef.current;
-      if (!node) return;
-      const rect = node.getBoundingClientRect();
-      setCoords({
-        top: rect.bottom + 8,
-        left: rect.left + rect.width / 2,
-      });
-    }
-
-    updatePosition();
-    window.addEventListener("scroll", updatePosition, true);
-    window.addEventListener("resize", updatePosition);
-
-    return () => {
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("resize", updatePosition);
-    };
-  }, [hovered]);
-
   if (!loaded || orchestratorRunning === null) {
     return null;
   }
 
   const marketSessions = marketStatus?.sessions ?? [];
   const marketAvailable = marketStatus?.available !== false;
-  const marketsOpen = anyEnabledMarketOpen(marketSessions, indicators, {
-    marketAvailable,
-    serverTime: marketStatus?.server_time,
-  });
 
   const status: OverallBotStatus = computeOverallStatus({
     orchestratorRunning,
     bots,
     marketSessions,
-    marketIndicators: indicators,
+    enabledTradingSessions,
     marketAvailable,
     marketServerTime: marketStatus?.server_time,
   });
 
   const tone = overallStatusTone(status);
   const label = overallStatusLabel(status);
-  const tooltip = resolveOverallStatusTooltip({ status, bots });
+  const marketBadge = resolveMarketStatusBadge(status);
 
-  const showNextAction = status === "running" || status === "sleeping";
-  const dataManager = bots.find((bot) => bot.name === "data_manager");
+  const showNextAction = status === "running" || status === "waiting" || status === "sleeping";
+  const secretary = bots.find((bot) => bot.name === "secretary");
   let nextAction: NextActionState | null = null;
 
   if (showNextAction) {
     nextAction = computeNextAction({
-      marketsOpen,
+      status,
       orchestratorRunning,
       researchSettings,
       marketSessions,
-      marketIndicators: indicators,
+      enabledTradingSessions,
       marketAvailable,
       marketServerTime: marketStatus?.server_time,
       now: new Date(now),
-      nextCandleFetches: dataManager?.next_candle_fetches,
+      nextCandleFetches: secretary?.next_candle_fetches,
     });
   }
 
@@ -226,69 +314,135 @@ export default function OverallBotStatus() {
       ? formatNextActionTargetUtc(nextAction.targetAt, now, timeOptions)
       : null;
 
-  const latestActivity = activityEvents[0] ?? null;
-  const lastActionLabel = latestActivity ? activityTimelineLabel(latestActivity) : null;
+  const timelineEvents = normalizeActivityTimeline(activityEvents, TIMELINE_LIMIT);
+  const watchingLabel = enabledAssetClassLabels(assetClassStatuses);
 
-  const tooltipNode =
-    hovered && coords
-      ? createPortal(
-          <div
-            id="overall-bot-status-tip"
-            className="overall-bot-status-tooltip"
-            role="tooltip"
-            style={{ top: coords.top, left: coords.left }}
-          >
-            <p className="overall-bot-status-tooltip__title">{tooltip.title}</p>
-            <p className="overall-bot-status-tooltip__summary">{explainer}</p>
-            {lastActionLabel && latestActivity ? (
-              <p className="overall-bot-status-tooltip__line">
-                Last: {lastActionLabel} · {formatActivityRelative(latestActivity.occurred_at, now)}
-              </p>
+  const mainTooltipNode =
+    pillHovered && pillCoords ? (
+      createPortal(
+        <div
+          id="overall-bot-status-tip"
+          className="overall-bot-status-tooltip"
+          role="tooltip"
+          style={{ top: pillCoords.top, left: pillCoords.left }}
+        >
+          <div className="overall-bot-status-tooltip__title-row">
+            <p className="overall-bot-status-tooltip__title">Bot: {label}</p>
+            {marketBadge ? (
+              <span className="overall-bot-status-tooltip__market-badge">{marketBadge}</span>
             ) : null}
-            {nextAction ? (
-              <p className="overall-bot-status-tooltip__line">
-                Next: {formatNextActionDisplay(nextAction)} at{" "}
-                {formatNextActionTargetUtc(nextAction.targetAt, now, timeOptions)} in{" "}
-                {formatCountdown(nextAction.remainingMs)}
-              </p>
-            ) : null}
-            {tooltip.lines.length > 0 ? (
-              <ul className="overall-bot-status-tooltip__modules">
-                {tooltip.lines.map((line, index) => (
-                  <li key={`${index}-${line}`}>{line}</li>
-                ))}
-              </ul>
-            ) : null}
-            {activityEvents.length > 0 ? (
-              <ol className="overall-bot-status-tooltip__timeline">
-                {activityEvents.map((event) => (
-                  <li key={event.id}>
-                    <span>{activityTimelineLabel(event)}</span>
-                    <span>{formatActivityRelative(event.occurred_at, now)}</span>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
-          </div>,
-          document.body,
-        )
-      : null;
+          </div>
+          {nextAction && nextAction.kind !== "none" ? (
+            <p className="overall-bot-status-tooltip__line">
+              {formatNextActionDisplay(nextAction)}
+              {nextActionUtcLabel ? ` · ${nextActionUtcLabel}` : null}
+            </p>
+          ) : null}
+          {watchingLabel ? (
+            <p className="overall-bot-status-tooltip__watching">Watching: {watchingLabel}</p>
+          ) : null}
+          {timelineEvents.length > 0 ? (
+            <ol className="overall-bot-status-tooltip__timeline">
+              {timelineEvents.map((event) => (
+                <li key={event.id}>
+                  <span>{event.label}</span>
+                  <span>{formatActivityRelative(event.occurred_at, now)}</span>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>,
+        document.body,
+      )
+    ) : null;
+
+  const nextTooltipContent = (() => {
+    if (!nextAction || nextAction.kind === "none") {
+      return resolveNextActionTooltipExplainer(
+        nextAction ?? {
+          kind: "none",
+          label: "No upcoming action",
+          targetAt: now,
+          windowStartAt: now,
+          remainingMs: 0,
+          progress: 0,
+        },
+      );
+    }
+
+    if (nextAction.kind === "candle_update") {
+      const timeframe = nextAction.timeframe;
+      const tfLabel = timeframe ? TIMEFRAME_LABELS[timeframe as Timeframe] : null;
+      const assetSections =
+        candlePreview?.asset_sections?.filter((section) => section.symbols.length > 0) ?? [];
+      const hasSymbols =
+        assetSections.length > 0 || (candlePreview?.symbols?.length ?? 0) > 0;
+      if (!hasSymbols) {
+        return "No symbols scheduled for this candle close.";
+      }
+      const sections =
+        assetSections.length > 0
+          ? assetSections
+          : [{ asset_class: "forex", label: "Forex", symbols: candlePreview?.symbols ?? [] }];
+      return (
+        <>
+          {tfLabel ? (
+            <p className="overall-bot-status-tooltip__next-heading">
+              Symbols on {tfLabel} close
+            </p>
+          ) : null}
+          <div className="overall-bot-status-tooltip__asset-sections">
+            {sections.map((section) => (
+              <div
+                key={section.asset_class}
+                className="overall-bot-status-tooltip__asset-section"
+              >
+                <p className="overall-bot-status-tooltip__asset-label">{section.label}</p>
+                <p className="overall-bot-status-tooltip__symbols">
+                  {section.symbols.join(", ")}
+                </p>
+              </div>
+            ))}
+          </div>
+        </>
+      );
+    }
+
+    return resolveNextActionTooltipExplainer(nextAction);
+  })();
+
+  const nextTooltipNode =
+    nextHovered && nextCoords && nextActionLabel ? (
+      createPortal(
+        <div
+          id="overall-bot-status-next-tip"
+          className="overall-bot-status-tooltip overall-bot-status-tooltip--next"
+          role="tooltip"
+          style={{ top: nextCoords.top, left: nextCoords.left }}
+        >
+          {typeof nextTooltipContent === "string" ? (
+            <p className="overall-bot-status-tooltip__summary">{nextTooltipContent}</p>
+          ) : (
+            nextTooltipContent
+          )}
+        </div>,
+        document.body,
+      )
+    ) : null;
 
   return (
     <>
-      <div
-        ref={panelRef}
-        className="overall-bot-status-wrap"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        onFocus={() => setHovered(true)}
-        onBlur={() => setHovered(false)}
-        tabIndex={0}
-        aria-describedby={hovered ? "overall-bot-status-tip" : undefined}
-      >
+      <div className="overall-bot-status-wrap">
         <div
+          ref={pillRef}
           className={`overall-bot-status overall-bot-status--${tone}`}
           aria-label="Overall bot status"
+          onMouseEnter={() => setPillHovered(true)}
+          onMouseLeave={() => setPillHovered(false)}
+          onFocus={() => setPillHovered(true)}
+          onBlur={() => setPillHovered(false)}
+          tabIndex={0}
+          aria-describedby={pillHovered ? "overall-bot-status-tip" : undefined}
         >
           <div className="overall-bot-status__status">
             <span className="overall-bot-status__dot" aria-hidden="true" />
@@ -327,7 +481,28 @@ export default function OverallBotStatus() {
         </div>
 
         {nextActionLabel ? (
-          <span className="overall-bot-status__next">
+          <span
+            ref={nextRef}
+            className="overall-bot-status__next"
+            onMouseEnter={(event) => {
+              event.stopPropagation();
+              setNextHovered(true);
+            }}
+            onMouseLeave={(event) => {
+              event.stopPropagation();
+              setNextHovered(false);
+            }}
+            onFocus={(event) => {
+              event.stopPropagation();
+              setNextHovered(true);
+            }}
+            onBlur={(event) => {
+              event.stopPropagation();
+              setNextHovered(false);
+            }}
+            tabIndex={0}
+            aria-describedby={nextHovered ? "overall-bot-status-next-tip" : undefined}
+          >
             Next: {nextActionLabel}
             {nextActionUtcLabel ? (
               <span className="overall-bot-status__next-utc"> · {nextActionUtcLabel}</span>
@@ -335,7 +510,8 @@ export default function OverallBotStatus() {
           </span>
         ) : null}
       </div>
-      {tooltipNode}
+      {mainTooltipNode}
+      {nextTooltipNode}
     </>
   );
 }

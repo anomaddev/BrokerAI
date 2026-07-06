@@ -1,3 +1,6 @@
+import { SESSION_BY_ID } from "../../lib/marketSessionDefs";
+import { useGeneralSettings } from "../../hooks/useGeneralSettings";
+
 type CreateStrategySessionFieldsProps = {
   value: string[];
   sessionOptions: readonly string[];
@@ -9,6 +12,8 @@ export default function CreateStrategySessionFields({
   sessionOptions,
   onChange,
 }: CreateStrategySessionFieldsProps) {
+  const { formatSessionHours } = useGeneralSettings();
+
   return (
     <div className="create-strategy-field create-strategy-sessions">
       <div className="strategy-asset-tree-header">
@@ -23,18 +28,24 @@ export default function CreateStrategySessionFields({
       <div className="create-strategy-session-grid">
         {sessionOptions.map((session) => {
           const active = value.includes(session);
+          const def = Object.values(SESSION_BY_ID).find((entry) => entry.name === session);
+          const hoursLabel = def ? formatSessionHours(def) : null;
           return (
             <button
               key={session}
               type="button"
               className={`create-strategy-session-chip${active ? " create-strategy-session-chip--active" : ""}`}
               aria-pressed={active}
+              title={hoursLabel ?? undefined}
               onClick={() => {
                 const next = active ? value.filter((s) => s !== session) : [...value, session];
                 onChange(next);
               }}
             >
-              {session}
+              <span className="create-strategy-session-chip-label">{session}</span>
+              {hoursLabel ? (
+                <span className="settings-muted create-strategy-session-chip-hours">{hoursLabel}</span>
+              ) : null}
             </button>
           );
         })}

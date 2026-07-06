@@ -8,6 +8,10 @@ import {
   type StrategyAnalysisRun,
 } from "../api/client";
 import AnalysisRunDetailPanel from "../components/analysis/AnalysisRunDetailPanel";
+import {
+  AnalysisRunDetailSkeleton,
+  AnalysisRunHeaderSkeleton,
+} from "../components/analysis/AnalysisRunViewSkeleton";
 import ExploreCandleChart from "../components/explore/ExploreCandleChart";
 import { ROUTES } from "../lib/routes";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
@@ -41,8 +45,8 @@ export default function StrategyAnalysisRunView() {
     displaySince: string;
     displayUntil: string;
   } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [candlesLoading, setCandlesLoading] = useState(false);
+  const [runLoading, setRunLoading] = useState(true);
+  const [candlesLoading, setCandlesLoading] = useState(true);
   const [strategyLoading, setStrategyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [candlesError, setCandlesError] = useState<string | null>(null);
@@ -53,59 +57,50 @@ export default function StrategyAnalysisRunView() {
   useEffect(() => {
     if (!runId) {
       setError("No analysis run specified");
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    api
-      .getStrategyAnalysisRun(runId)
-      .then((data) => setRun(data))
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load analysis run"),
-      )
-      .finally(() => setLoading(false));
-  }, [runId]);
-
-  useEffect(() => {
-    if (!run?.strategy_id) {
-      setStrategy(null);
-      setStrategyLoading(false);
+      setRunLoading(false);
+      setCandlesLoading(false);
       return;
     }
 
     let cancelled = false;
-    setStrategyLoading(true);
+
+    setRun(null);
+    setStrategy(null);
+    setCandles([]);
+    setCandleWindowBounds(null);
+    setRunLoading(true);
+    setCandlesLoading(true);
+    setStrategyLoading(false);
+    setError(null);
+    setCandlesError(null);
+
     void api
-      .getStrategy(run.strategy_id)
-      .then((loaded) => {
-        if (!cancelled) setStrategy(loaded);
+      .getStrategyAnalysisRun(runId)
+      .then((data) => {
+        if (cancelled) return;
+        setRun(data);
+        if (!data.strategy_id) return;
+        setStrategyLoading(true);
+        return api
+          .getStrategy(data.strategy_id)
+          .then((loaded) => {
+            if (!cancelled) setStrategy(loaded);
+          })
+          .catch(() => {
+            if (!cancelled) setStrategy(null);
+          })
+          .finally(() => {
+            if (!cancelled) setStrategyLoading(false);
+          });
       })
-      .catch(() => {
-        if (!cancelled) setStrategy(null);
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load analysis run");
+        setRun(null);
       })
       .finally(() => {
-        if (!cancelled) setStrategyLoading(false);
+        if (!cancelled) setRunLoading(false);
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [run?.strategy_id]);
-
-  useEffect(() => {
-    if (!runId || !run) {
-      setCandles([]);
-      setCandleWindowBounds(null);
-      setCandlesLoading(false);
-      setCandlesError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setCandlesLoading(true);
-    setCandlesError(null);
-    setCandleWindowBounds(null);
 
     void api
       .getStrategyAnalysisRunCandles(runId)
@@ -123,10 +118,12 @@ export default function StrategyAnalysisRunView() {
         }
       })
       .catch((err) => {
-        if (!cancelled) {
-          setCandles([]);
-          setCandlesError(err instanceof Error ? err.message : "Failed to load chart data");
-        }
+        if (cancelled) return;
+        setCandles([]);
+        setCandleWindowBounds(null);
+        setCandlesError(
+          err instanceof Error ? err.message : "Failed to load chart data",
+        );
       })
       .finally(() => {
         if (!cancelled) setCandlesLoading(false);
@@ -135,7 +132,7 @@ export default function StrategyAnalysisRunView() {
     return () => {
       cancelled = true;
     };
-  }, [runId, run]);
+  }, [runId]);
 
   const timeframe = useMemo(
     () => analysisChartTimeframe(run?.timeframe),
@@ -170,7 +167,8 @@ export default function StrategyAnalysisRunView() {
     };
   }, [run]);
 
-  const chartLoading = candlesLoading || (Boolean(run?.strategy_id) && strategyLoading);
+  const showInitialSkeleton = runLoading && !run && !error;
+  const showChartSkeleton = candlesLoading && candles.length === 0 && !candlesError;
 
   function stopDialogActivation(event: SyntheticEvent) {
     event.stopPropagation();
@@ -200,7 +198,9 @@ export default function StrategyAnalysisRunView() {
           Back to analysis
         </Link>
 
-        {run && !loading && !error && (
+        {showInitialSkeleton ? (
+          <AnalysisRunHeaderSkeleton />
+        ) : run && !error ? (
           <div className="analysis-run-view-title-row">
             <div className="analysis-run-view-title-block">
               <h1 className="page-title analysis-run-view-title">
@@ -229,45 +229,46 @@ export default function StrategyAnalysisRunView() {
               Delete
             </button>
           </div>
-        )}
+        ) : null}
       </header>
 
-      {loading && <p className="settings-muted analysis-run-view-status">Loading analysis run…</p>}
-      {error && !loading && <p className="settings-error analysis-run-view-status">{error}</p>}
+      {error && !runLoading && (
+        <p className="settings-error analysis-run-view-status">{error}</p>
+      )}
 
-      {run && !loading && !error && (
-        <div className="analysis-run-detail-layout">
-          <div
-            className={`analysis-run-chart-col${
-              chartLoading ? " analysis-run-chart-col--loading" : ""
-            }`}
-          >
-            {chartLoading ? (
-              <div
-                className="analysis-run-chart-loading explore-chart-status explore-chart-status--loading"
-                role="status"
-                aria-live="polite"
-              >
-                Loading chart…
-              </div>
+      {showInitialSkeleton ? (
+        <AnalysisRunDetailSkeleton />
+      ) : run && !error ? (
+        <div className="analysis-run-detail-layout analysis-run-detail-layout--ready">
+          <div className="analysis-run-chart-col">
+            {strategyLoading && candles.length > 0 ? (
+              <p className="analysis-run-chart-hint settings-muted" aria-live="polite">
+                Loading strategy overlays…
+              </p>
             ) : null}
-            <ExploreCandleChart
-              symbol={run.pair}
-              timeframe={timeframe}
-              candles={candles}
-              loading={candlesLoading}
-              error={candlesError}
-              overlayItems={overlayItems}
-              focusWindow={focusWindow}
-              pinnedSignals={pinnedSignals}
-              signalLookback={signalLookback}
-            />
+            {showChartSkeleton ? (
+              <div className="analysis-run-chart-skeleton" aria-busy="true" aria-label="Loading chart">
+                <span className="skeleton analysis-run-skeleton-chart" />
+              </div>
+            ) : (
+              <ExploreCandleChart
+                symbol={run.pair}
+                timeframe={timeframe}
+                candles={candles}
+                loading={candlesLoading}
+                error={candlesError}
+                overlayItems={overlayItems}
+                focusWindow={focusWindow}
+                pinnedSignals={pinnedSignals}
+                signalLookback={signalLookback}
+              />
+            )}
           </div>
           <aside className="analysis-run-panel-col">
             <AnalysisRunDetailPanel run={run} />
           </aside>
         </div>
-      )}
+      ) : null}
 
       {deleteConfirmOpen && run && (
         <div

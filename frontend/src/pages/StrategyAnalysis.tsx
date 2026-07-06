@@ -15,6 +15,8 @@ import {
   executionOutcomeClassName,
   executionOutcomeLabel,
   filterSummary,
+  runSourceClassName,
+  runSourceLabel,
   signalLabel,
   sortAnalysisRunsForTable,
   type AnalysisSortColumn,
@@ -34,6 +36,7 @@ const DIRECTION_FILTERS = [
 
 const SORTABLE_COLUMNS: { key: AnalysisSortColumn; label: string }[] = [
   { key: "time", label: "Time" },
+  { key: "source", label: "Source" },
   { key: "strategy", label: "Strategy" },
   { key: "pair", label: "Pair" },
   { key: "timeframe", label: "TF" },
@@ -435,6 +438,9 @@ export default function StrategyAnalysis() {
                         </label>
                       </td>
                       <td className="settings-muted">{formatInstant(run.analyzed_at)}</td>
+                      <td>
+                        <span className={runSourceClassName(run)}>{runSourceLabel(run)}</span>
+                      </td>
                       <td>{run.strategy_name}</td>
                       <td>{run.pair}</td>
                       <td className="settings-muted">{timeframeLabel(run.timeframe)}</td>

@@ -268,6 +268,12 @@ async def _analyze_forex_group(
             messages,
             model.get("api_key") or None,
             reasoning_effort=reasoning_effort,
+            cost_context={
+                "operation": "forex_analysis",
+                "source": "daily_report",
+                "forex_group": primary,
+                "model_id": model.get("id"),
+            },
         )
     except Exception as exc:
         logger.exception(

@@ -35,6 +35,17 @@ export function confidencePercent(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
+/** Human label for how an analysis run was created (`run_type` from the API). */
+export function runSourceLabel(run: StrategyAnalysisRun): string {
+  return run.run_type === "manual" ? "User" : "Bot";
+}
+
+export function runSourceClassName(run: StrategyAnalysisRun): string {
+  return run.run_type === "manual"
+    ? "analysis-source analysis-source--user"
+    : "analysis-source analysis-source--bot";
+}
+
 export function signalLabel(run: StrategyAnalysisRun): string {
   const raw = run.metadata.signal;
   if (typeof raw === "string") {
@@ -128,6 +139,7 @@ export function exploreHref(run: StrategyAnalysisRun): string {
 
 export type AnalysisSortColumn =
   | "time"
+  | "source"
   | "strategy"
   | "pair"
   | "timeframe"
@@ -181,6 +193,10 @@ export function executionOutcomeSortKey(run: StrategyAnalysisRun): number {
   return 4;
 }
 
+function runSourceSortKey(run: StrategyAnalysisRun): number {
+  return run.run_type === "manual" ? 0 : 1;
+}
+
 function compareAnalysisRunsByColumn(
   a: StrategyAnalysisRun,
   b: StrategyAnalysisRun,
@@ -197,6 +213,8 @@ function compareAnalysisRunsByColumn(
       if (!bValid) return -1;
       return aMs - bMs;
     }
+    case "source":
+      return runSourceSortKey(a) - runSourceSortKey(b);
     case "strategy":
       return compareNullableStrings(a.strategy_name, b.strategy_name);
     case "pair":

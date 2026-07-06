@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from brokerai.bots.researcher.llm import test_model
+from brokerai.config_backup.change_labels import describe_ai_model_update
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.ai_models import AiModelsRepository, mask_api_key
 from brokerai.web.routes.auth import require_auth
 
@@ -49,6 +51,11 @@ async def list_models(_username: str = Depends(require_auth)) -> JSONResponse:
 
 @router.post("")
 async def create_model(body: CreateModelBody, _username: str = Depends(require_auth)) -> JSONResponse:
+    await auto_backup_before(
+        trigger="ai_models.create",
+        summary=f"Create AI model: {body.title.strip()}",
+        change_label=f"Added AI model: {body.title.strip()}",
+    )
     repo = AiModelsRepository()
     doc = await repo.create(
         title=body.title,
@@ -71,6 +78,25 @@ async def update_model(
     existing = await repo.find_by_id(model_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Model not found")
+
+    api_key_changed = bool(
+        body.api_key is not None
+        and body.api_key.strip()
+        and body.api_key != existing.get("api_key", "")
+    )
+    change_label = describe_ai_model_update(
+        existing,
+        title=body.title,
+        base_url=body.base_url,
+        model_name=body.model_name,
+        enabled=body.enabled,
+        api_key_changed=api_key_changed,
+    )
+    await auto_backup_before(
+        trigger=f"ai_models.update:{model_id}",
+        summary=f"Update AI model: {existing.get('title') or model_id}",
+        change_label=change_label or f"Updated AI model: {existing.get('title') or model_id}",
+    )
 
     api_key = body.api_key
     if api_key == "":
@@ -96,6 +122,25 @@ async def toggle_model(
     _username: str = Depends(require_auth),
 ) -> JSONResponse:
     repo = AiModelsRepository()
+    existing = await repo.find_by_id(model_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    model_title = str(existing.get("title") or model_id)
+    change_label = describe_ai_model_update(
+        existing,
+        title=None,
+        base_url=None,
+        model_name=None,
+        enabled=body.enabled,
+        api_key_changed=False,
+    )
+    await auto_backup_before(
+        trigger=f"ai_models.toggle:{model_id}",
+        summary=f"Toggle AI model: {model_title}",
+        change_label=change_label or f"Updated AI model: {model_title}",
+    )
+
     doc = await repo.set_enabled(model_id, body.enabled)
     if not doc:
         raise HTTPException(status_code=404, detail="Model not found")
@@ -132,6 +177,17 @@ async def test_saved_model(model_id: str, _username: str = Depends(require_auth)
 @router.delete("/{model_id}")
 async def delete_model(model_id: str, _username: str = Depends(require_auth)) -> JSONResponse:
     repo = AiModelsRepository()
+    existing = await repo.find_by_id(model_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    model_title = str(existing.get("title") or model_id)
+    await auto_backup_before(
+        trigger=f"ai_models.delete:{model_id}",
+        summary=f"Delete AI model: {model_title}",
+        change_label=f"Removed AI model: {model_title}",
+    )
+
     ok = await repo.delete_with_cleanup(model_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Model not found")

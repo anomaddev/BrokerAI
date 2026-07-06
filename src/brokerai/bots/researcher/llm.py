@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
+from typing import Any
 
 import httpx
+
+from brokerai.cost.categories import LLM
+from brokerai.cost.ledger import record_cost_entry_task
+from brokerai.cost.llm_pricing import estimate_llm_cost_usd
+from brokerai.cost.llm_usage import parse_llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +21,14 @@ _RESEARCH_MAX_OUTPUT_TOKENS = 8192
 _GROK_RESPONSES_TIMEOUT = 300.0
 _RATE_LIMIT_MAX_RETRIES = 3
 _RATE_LIMIT_INITIAL_DELAY = 2.0
+
+CostContext = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class LlmCallResult:
+    content: str
+    usage: dict[str, Any] | None
 
 
 def _auth_headers(api_key: str | None) -> dict[str, str]:
@@ -81,6 +96,86 @@ def _grok_effort_payload(reasoning_effort: str | None) -> dict:
     if not reasoning_effort:
         return {}
     return {"effort": reasoning_effort}
+
+
+def _operation_label(operation: str) -> str:
+    labels = {
+        "forex_analysis": "Forex analysis",
+        "synthesis": "Report synthesis",
+        "web_search": "Web search",
+        "x_search": "X search",
+        "weekly_brief": "Weekly brief",
+        "weekly_debrief": "Weekly debrief",
+        "connection_test": "Connection test",
+        "llm_call": "LLM call",
+    }
+    return labels.get(operation, operation.replace("_", " ").title())
+
+
+def _build_cost_description(
+    operation: str,
+    model_name: str,
+    context: dict[str, Any],
+) -> str:
+    label = _operation_label(operation)
+    forex_group = context.get("forex_group")
+    if forex_group:
+        return f"{label} — {forex_group} ({model_name})"
+    return f"{label} ({model_name})"
+
+
+def _schedule_llm_cost_record(
+    usage_raw: dict[str, Any] | None,
+    *,
+    provider_type: str | None,
+    model_name: str,
+    cost_context: CostContext | None,
+) -> None:
+    usage = parse_llm_usage(usage_raw)
+    if usage is None and not cost_context:
+        return
+
+    ctx = dict(cost_context or {})
+    billable = bool(ctx.pop("billable", True))
+    operation = str(ctx.get("operation") or "llm_call")
+    source = ctx.get("source")
+    if isinstance(source, str):
+        source = source.strip() or None
+    else:
+        source = None
+
+    amount_usd: float | None = None
+    estimated = False
+    if usage is not None:
+        amount_usd, estimated = estimate_llm_cost_usd(provider_type, model_name, usage)
+
+    metadata: dict[str, Any] = {
+        "provider": provider_type,
+        "model_name": model_name,
+        "billable": billable,
+        "estimated": estimated,
+        "operation": operation,
+        **ctx,
+    }
+    if usage is not None:
+        metadata.update(
+            {
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "total_tokens": usage.total_tokens,
+            }
+        )
+        if usage.raw_usage:
+            metadata["raw_usage"] = usage.raw_usage
+
+    description = _build_cost_description(operation, model_name, ctx)
+    record_cost_entry_task(
+        LLM,
+        amount_usd,
+        description,
+        source=source,
+        metadata=metadata,
+    )
 
 
 async def _post_with_retry(
@@ -250,6 +345,18 @@ async def _test_openai_compatible_chat(
             if hint:
                 msg = f"{msg}. {hint}"
             return False, msg
+        data = response.json()
+        usage = data.get("usage") if isinstance(data, dict) else None
+        _schedule_llm_cost_record(
+            usage if isinstance(usage, dict) else None,
+            provider_type=provider_type,
+            model_name=model_name,
+            cost_context={
+                "operation": "connection_test",
+                "source": "connection_test",
+                "billable": False,
+            },
+        )
         return True, f"{provider_label} chat successful (model: {model_name})"
     except httpx.HTTPError as exc:
         return False, f"{provider_label} chat failed: {exc}"
@@ -262,6 +369,7 @@ async def analyze_with_open_webui(
     api_key: str | None = None,
     *,
     reasoning_effort: str | None = None,
+    cost_context: CostContext | None = None,
 ) -> str:
     base = base_url.rstrip("/")
     url = f"{base}/api/chat/completions"
@@ -273,6 +381,8 @@ async def analyze_with_open_webui(
         messages=messages,
         provider_label="Open WebUI",
         reasoning_effort=reasoning_effort,
+        provider_type="open_webui",
+        cost_context=cost_context,
     )
 
 
@@ -285,6 +395,7 @@ async def analyze_openai_compatible(
     provider_label: str = "API",
     reasoning_effort: str | None = None,
     provider_type: str | None = None,
+    cost_context: CostContext | None = None,
 ) -> str:
     if not api_key:
         raise RuntimeError(f"{provider_label} API key is required")
@@ -300,6 +411,7 @@ async def analyze_openai_compatible(
         provider_label=provider_label,
         reasoning_effort=reasoning_effort,
         provider_type=provider_type,
+        cost_context=cost_context,
     )
 
 
@@ -312,6 +424,7 @@ async def _request_chat_completion(
     provider_label: str,
     reasoning_effort: str | None = None,
     provider_type: str | None = None,
+    cost_context: CostContext | None = None,
 ) -> str:
     payload: dict = {
         "model": model_name,
@@ -343,10 +456,17 @@ async def _request_chat_completion(
             )
         if not response.is_success:
             _raise_for_status_with_detail(response, provider_label=provider_label)
-        return _parse_chat_completion(response.json(), provider_label)
+        result = _parse_chat_completion(response.json(), provider_label)
+        _schedule_llm_cost_record(
+            result.usage,
+            provider_type=provider_type,
+            model_name=model_name,
+            cost_context=cost_context,
+        )
+        return result.content
 
 
-def _parse_chat_completion(data: dict, provider_label: str) -> str:
+def _parse_chat_completion(data: dict, provider_label: str) -> LlmCallResult:
     choices = data.get("choices") or []
     if not choices:
         raise RuntimeError(f"{provider_label} returned no choices")
@@ -354,10 +474,12 @@ def _parse_chat_completion(data: dict, provider_label: str) -> str:
     content = message.get("content") or ""
     if not content.strip():
         raise RuntimeError(f"{provider_label} returned empty content")
-    return content.strip()
+    usage = data.get("usage")
+    usage_dict = usage if isinstance(usage, dict) else None
+    return LlmCallResult(content=content.strip(), usage=usage_dict)
 
 
-def _parse_responses_output(data: dict) -> str:
+def _parse_responses_output(data: dict) -> LlmCallResult:
     parts: list[str] = []
     for item in data.get("output") or []:
         for content in item.get("content") or []:
@@ -367,7 +489,9 @@ def _parse_responses_output(data: dict) -> str:
                     parts.append(text.strip())
     if not parts:
         raise RuntimeError("Grok Responses API returned no output text")
-    return "\n".join(parts)
+    usage = data.get("usage")
+    usage_dict = usage if isinstance(usage, dict) else None
+    return LlmCallResult(content="\n".join(parts), usage=usage_dict)
 
 
 async def grok_web_search(
@@ -377,6 +501,7 @@ async def grok_web_search(
     messages: list[dict[str, str]],
     *,
     reasoning_effort: str | None = None,
+    cost_context: CostContext | None = None,
 ) -> str:
     """Call xAI Responses API with web_search enabled."""
     if not api_key:
@@ -408,7 +533,16 @@ async def grok_web_search(
             )
         if not response.is_success:
             _raise_for_status_with_detail(response, provider_label="Grok")
-        return _parse_responses_output(response.json())
+        result = _parse_responses_output(response.json())
+        ctx = dict(cost_context or {})
+        ctx.setdefault("operation", "web_search")
+        _schedule_llm_cost_record(
+            result.usage,
+            provider_type="grok",
+            model_name=model_name,
+            cost_context=ctx,
+        )
+        return result.content
 
 
 async def grok_x_search(
@@ -418,6 +552,7 @@ async def grok_x_search(
     messages: list[dict[str, str]],
     *,
     reasoning_effort: str | None = None,
+    cost_context: CostContext | None = None,
 ) -> str:
     """Call xAI Responses API with X (formerly Twitter) search enabled."""
     if not api_key:
@@ -449,7 +584,16 @@ async def grok_x_search(
             )
         if not response.is_success:
             _raise_for_status_with_detail(response, provider_label="Grok")
-        return _parse_responses_output(response.json())
+        result = _parse_responses_output(response.json())
+        ctx = dict(cost_context or {})
+        ctx.setdefault("operation", "x_search")
+        _schedule_llm_cost_record(
+            result.usage,
+            provider_type="grok",
+            model_name=model_name,
+            cost_context=ctx,
+        )
+        return result.content
 
 
 async def test_model(
@@ -480,6 +624,7 @@ async def analyze_with_model(
     api_key: str | None = None,
     *,
     reasoning_effort: str | None = None,
+    cost_context: CostContext | None = None,
 ) -> str:
     if model_type == "open_webui":
         return await analyze_with_open_webui(
@@ -488,6 +633,7 @@ async def analyze_with_model(
             messages,
             api_key,
             reasoning_effort=reasoning_effort,
+            cost_context=cost_context,
         )
     if model_type in _OPENAI_COMPAT_TYPES:
         label = _PROVIDER_LABELS.get(model_type, model_type)
@@ -499,5 +645,6 @@ async def analyze_with_model(
             provider_label=label,
             reasoning_effort=reasoning_effort,
             provider_type=model_type,
+            cost_context=cost_context,
         )
     raise RuntimeError(f"Provider type '{model_type}' is not supported yet")

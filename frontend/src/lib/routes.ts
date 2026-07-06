@@ -9,7 +9,8 @@ export const ROUTES = {
     strategyNew: (presetId: string) => `/research/strategies/new/${presetId}`,
     strategyEdit: (id: string) => `/research/strategies/${encodeURIComponent(id)}/edit`,
     analysis: "/research/analysis",
-    analysisRun: (runId: string) => `/research/analysis/${encodeURIComponent(runId)}`,
+    analysisRun: (runId: string) =>
+      `/research/analysis/run/${encodeURIComponent(runId)}`,
     backtest: "/research/backtest",
   },
   trading: {
@@ -17,5 +18,6 @@ export const ROUTES = {
     explore: "/trading/explore",
   },
   activity: "/activity",
+  costLedger: "/cost-ledger",
   settings: "/settings",
 } as const;

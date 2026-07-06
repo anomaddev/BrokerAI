@@ -191,6 +191,24 @@ class DataManagerService:
             symbol, timeframe, since, until, price=price
         )
 
+    async def fetch_live_candles_from_oanda(
+        self,
+        symbol: str,
+        timeframe: str,
+        bar_count: int,
+        *,
+        until: datetime | None = None,
+        price: str = "M",
+    ) -> list[dict[str, Any]]:
+        """Return ``bar_count`` closed candles from OANDA for live strategy analysis."""
+        return await self._cache.fetch_count_from_oanda(
+            symbol,
+            timeframe,
+            bar_count,
+            until=until,
+            price=price,
+        )
+
     async def verify(
         self,
         symbol: str,

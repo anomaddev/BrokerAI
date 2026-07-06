@@ -42,6 +42,21 @@ function addCalendarDays(parts: { y: number; m: number; d: number }, days: numbe
   return { y: date.getUTCFullYear(), m: date.getUTCMonth() + 1, d: date.getUTCDate() };
 }
 
+export function nextDailyMarketRunUtc(
+  market: ResearchScheduleMarket,
+  offsetHours: number,
+  ref = new Date(),
+): Date {
+  const runToday = scheduledRunUtc(market, offsetHours, ref);
+  if (ref.getTime() < runToday.getTime()) {
+    return runToday;
+  }
+  const tomorrow = addCalendarDays(marketLocalDateParts(market.timezone, ref), 1);
+  const [openHour, openMinute] = market.open_time_local.split(":").map(Number);
+  const openUtc = localInstantUtc(market, openHour, openMinute, tomorrow);
+  return new Date(openUtc.getTime() + offsetHours * 3_600_000);
+}
+
 function marketLocalWeekday(timezone: string, ref = new Date()): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
@@ -109,6 +124,20 @@ function localOpenInstantUtc(market: ResearchScheduleMarket, ref = new Date()): 
   const [openHour, openMinute] = market.open_time_local.split(":").map(Number);
   const dateParts = marketLocalDateParts(market.timezone, ref);
   return localInstantUtc(market, openHour, openMinute, dateParts);
+}
+
+/** Market dropdown label with open time in UTC or the market timezone. */
+export function formatScheduleMarketOptionLabel(
+  market: ResearchScheduleMarket,
+  timeOptions: TimeFormatOptions,
+  ref = new Date(),
+): string {
+  const openUtc = localOpenInstantUtc(market, ref);
+  const displayOptions: TimeFormatOptions = timeOptions.showUtc
+    ? { ...timeOptions, showUtc: true, timeZone: "UTC" }
+    : { ...timeOptions, showUtc: false, timeZone: market.timezone };
+  const openTime = formatAppTimeOfDay(openUtc, displayOptions);
+  return `${market.label} · opens ${openTime}`;
 }
 
 /** Friday (week end) for the weekly debrief in the market's local calendar. */

@@ -9,6 +9,7 @@ import useAutoSave from "../hooks/useAutoSave";
 import { formatBotName, sortBots } from "../lib/bots";
 import AssetClassTab from "./settings/AssetClassTab";
 import AccountTab from "./settings/AccountTab";
+import BackupTab from "./settings/BackupTab";
 import DisplayTab from "./settings/DisplayTab";
 import BrokerGeneralTab from "./settings/BrokerGeneralTab";
 import GeneralTab from "./settings/GeneralTab";
@@ -65,7 +66,10 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
   },
   {
     label: "System",
-    items: [{ path: "system", label: "System" }],
+    items: [
+      { path: "system", label: "System" },
+      { path: "backup", label: "Backup" },
+    ],
   },
 ];
 
@@ -1048,6 +1052,7 @@ export default function Settings() {
             <Route path="broker/options" element={<AssetClassTab assetClass="options" label="Options" />} />
             <Route path="broker" element={<Navigate to="/settings/broker/general" replace />} />
             <Route path="system" element={<SystemTab />} />
+            <Route path="backup" element={<BackupTab />} />
             <Route path="*" element={<GeneralTab />} />
           </Routes>
         </div>

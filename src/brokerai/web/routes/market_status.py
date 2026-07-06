@@ -8,7 +8,7 @@ from brokerai.integrations.massive_cache import (
     build_cached_session_snapshot,
     fetch_market_status_cached,
 )
-from brokerai.market_sessions import TRADING_SESSIONS, session_hours_label
+from brokerai.market_sessions import TRADING_SESSIONS, session_definition_payload
 from brokerai.web.routes.auth import require_auth
 
 router = APIRouter(prefix="/api/market-status", tags=["market-status"])
@@ -16,18 +16,7 @@ router = APIRouter(prefix="/api/market-status", tags=["market-status"])
 
 @router.get("/definitions")
 async def get_session_definitions(_username: str = Depends(require_auth)) -> JSONResponse:
-    sessions = [
-        {
-            "id": session.id,
-            "name": session.name,
-            "hours": session_hours_label(session),
-            "start_hour": session.start_hour,
-            "start_minute": session.start_minute,
-            "end_hour": session.end_hour,
-            "end_minute": session.end_minute,
-        }
-        for session in TRADING_SESSIONS
-    ]
+    sessions = [session_definition_payload(session) for session in TRADING_SESSIONS]
     return JSONResponse({"sessions": sessions})
 
 

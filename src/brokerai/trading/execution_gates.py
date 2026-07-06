@@ -7,10 +7,10 @@ from brokerai.trading.types import AnalysisResult, TradeIntent
 
 
 def is_executor_eligible(result: AnalysisResult) -> bool:
-    """Return whether broker/executor gates should run for this analysis.
+    """Return whether broker should evaluate trade intents for this analysis.
 
-    Zero-confidence or directionless runs are recorded only — they are not
-    submitted to the executor and keep ``execution`` unset in persistence.
+    Zero-confidence or directionless runs still receive a persisted execution
+    outcome (gate reasons only); they are never submitted to the associate.
     """
     return result.confidence > 0 and result.direction is not None
 

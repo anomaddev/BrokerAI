@@ -21,6 +21,7 @@ import {
   DEFAULT_WEEKLY_BRIEF_MARKET_OFFSET_HOURS,
   DEFAULT_WEEKLY_DEBRIEF_MARKET_OFFSET_HOURS,
   findScheduleMarket,
+  formatScheduleMarketOptionLabel,
   MARKET_OFFSET_OPTIONS,
   offsetLabel,
   schedulePreviewParts,
@@ -403,7 +404,7 @@ export default function ReportsTab() {
             >
               {scheduleMarkets.map((market) => (
                 <option key={market.id} value={market.id}>
-                  {market.label} · opens {market.open_time_local}
+                  {formatScheduleMarketOptionLabel(market, timeOptions)}
                 </option>
               ))}
             </select>

@@ -26,6 +26,7 @@ class UserRecord:
     timezone_auto: bool | None = None
     timezone: str | None = None
     show_utc_times: bool | None = None
+    time_format: str | None = None
 
     def replace(self, **changes: object) -> UserRecord:
         return UserRecord(
@@ -41,6 +42,7 @@ class UserRecord:
             timezone_auto=changes["timezone_auto"] if "timezone_auto" in changes else self.timezone_auto,  # type: ignore[assignment]
             timezone=changes["timezone"] if "timezone" in changes else self.timezone,  # type: ignore[assignment]
             show_utc_times=changes["show_utc_times"] if "show_utc_times" in changes else self.show_utc_times,  # type: ignore[assignment]
+            time_format=changes["time_format"] if "time_format" in changes else self.time_format,  # type: ignore[assignment]
         )
 
     def resolved_market_indicators(self) -> dict[str, bool]:
@@ -52,6 +54,7 @@ class UserRecord:
                 "timezone_auto": self.timezone_auto,
                 "timezone": self.timezone,
                 "show_utc_times": self.show_utc_times,
+                "time_format": self.time_format,
             }
         )
 
@@ -65,6 +68,7 @@ class UserRecord:
             "timezone_auto": general["timezone_auto"],
             "timezone": general["timezone"],
             "show_utc_times": general["show_utc_times"],
+            "time_format": general["time_format"],
         }
         if self.profile_photo:
             payload["profile_photo"] = self.profile_photo
@@ -90,6 +94,7 @@ class UserRecord:
             timezone_auto=data.get("timezone_auto") if "timezone_auto" in data else None,
             timezone=str(data["timezone"]) if data.get("timezone") else None,
             show_utc_times=data.get("show_utc_times") if "show_utc_times" in data else None,
+            time_format=str(data["time_format"]) if data.get("time_format") else None,
         )
 
 
@@ -198,6 +203,7 @@ class AuthStore:
         timezone_auto: bool,
         timezone: str | None,
         show_utc_times: bool,
+        time_format: str,
     ) -> UserRecord:
         user = self.get_user()
         if user is None:
@@ -206,12 +212,14 @@ class AuthStore:
             timezone_auto=timezone_auto,
             timezone=timezone,
             show_utc_times=show_utc_times,
+            time_format=time_format,
         )
         return self._save_user(
             user.replace(
                 timezone_auto=bool(normalized["timezone_auto"]),
                 timezone=str(normalized["timezone"]) if normalized["timezone"] else None,
                 show_utc_times=bool(normalized["show_utc_times"]),
+                time_format=str(normalized["time_format"]),
             )
         )
 

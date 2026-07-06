@@ -92,6 +92,13 @@ export default function GeneralTab() {
     });
   }
 
+  function setTimeFormat(timeFormat: GeneralSettings["time_format"]) {
+    updateSettings({
+      ...settingsRef.current,
+      time_format: timeFormat,
+    });
+  }
+
   const displayedTimezone = settings.timezone_auto
     ? browserTimezone
     : settings.timezone ?? browserTimezone;
@@ -110,7 +117,8 @@ export default function GeneralTab() {
                   <h3 className="settings-subsection-title">Timezone &amp; time display</h3>
                   <p className="settings-panel-desc">
                     Choose how market and trade times are shown. When UTC display is off, times
-                    convert using your automatic or selected timezone.
+                    convert using your automatic or selected timezone. Use 12-hour or 24-hour clock
+                    format across the dashboard.
                   </p>
                 </div>
                 {saveStatus === "saving" ? (
@@ -127,13 +135,36 @@ export default function GeneralTab() {
               <div className="general-settings-group">
                 <h4 className="general-settings-group-title">Time display</h4>
                 <div className="research-source-row">
-                  <span className="research-source-name">Show UTC times for Markets &amp; Trades</span>
+                  <span className="research-source-name">Always Show UTC times for Charts &amp; Trades</span>
                   <ToggleSwitch
-                    label="Show UTC times for Markets and Trades"
+                    label="Always Show UTC times for Charts and Trades"
                     checked={settings.show_utc_times}
                     disabled={saving}
                     onChange={setShowUtcTimes}
                   />
+                </div>
+                <div className="research-source-row">
+                  <span className="research-source-name">Time format</span>
+                  <div className="settings-segmented" role="tablist" aria-label="Time format">
+                    {(
+                      [
+                        { value: "12h", label: "12-hour" },
+                        { value: "24h", label: "24-hour" },
+                      ] as const
+                    ).map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="tab"
+                        aria-selected={settings.time_format === option.value}
+                        className={`settings-segmented-btn${settings.time_format === option.value ? " settings-segmented-btn--active" : ""}`}
+                        disabled={saving}
+                        onClick={() => setTimeFormat(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

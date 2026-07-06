@@ -4,12 +4,10 @@ import logging
 
 from brokerai.bots.base import EphemeralBot, WorkerResult
 from brokerai.bots.data_manager.candle_requirements import strategy_params
-from brokerai.bots.data_manager.candles import OANDA_SOURCE
 from brokerai.bots.data_manager.service import require_data_manager_service
 from brokerai.bots.secretary.types import PipelineContext
-from brokerai.core.pipeline_candle_cache import get_pipeline_candle_cache
 from brokerai.db.repositories.strategy_analysis_runs import StrategyAnalysisRunsRepository
-from brokerai.trading.candle_context import load_candles_for_unit
+from brokerai.trading.candle_context import fetch_live_candles_for_unit
 from brokerai.trading.indicator_cache import IndicatorCache
 from brokerai.trading.pipeline import log_analysis_result, run_strategy_analysis
 from brokerai.trading.types import AnalysisResult, WorkUnit
@@ -38,30 +36,18 @@ class ForexDataAnalystWorker(EphemeralBot[PipelineContext, list[AnalysisResult]]
             strategies=request.strategies,
         )
 
-        candles: list[dict] | None = None
-        if request.candles_ref:
-            candles = get_pipeline_candle_cache().get(request.candles_ref)
-
-        if not candles:
-            candles = await load_candles_for_unit(
-                unit,
-                service=service,
-                requester="forex_data_analyst_worker",
-            )
+        try:
+            candles = await fetch_live_candles_for_unit(unit, service=service)
+        except ValueError as exc:
+            return WorkerResult(ok=False, error=str(exc))
 
         if not candles:
             return WorkerResult(
                 ok=False,
-                error=f"No candles for {request.symbol} {request.timeframe}",
+                error=f"No candles from OANDA for {request.symbol} {request.timeframe}",
             )
 
-        latest_time = request.latest_candle_time
-        if not latest_time:
-            latest_time = await service.latest_candle_time(
-                request.symbol,
-                request.timeframe,
-                source=OANDA_SOURCE,
-            )
+        latest_time = str(candles[-1].get("time") or "") or request.latest_candle_time
 
         logger.info(
             "Data Analyst — analyzing %d strateg%s for %s %s through %s",

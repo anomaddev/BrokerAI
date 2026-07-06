@@ -5,6 +5,20 @@ from brokerai.bots.data_manager.service import DataManagerService, require_data_
 from brokerai.trading.types import WorkUnit
 
 
+async def fetch_live_candles_for_unit(
+    unit: WorkUnit,
+    *,
+    service: DataManagerService | None = None,
+) -> list[dict]:
+    """Fetch closed candles directly from OANDA for strategy analysis."""
+    data_manager = service or require_data_manager_service()
+    return await data_manager.fetch_live_candles_from_oanda(
+        unit.pair,
+        unit.timeframe,
+        unit.bar_count,
+    )
+
+
 async def load_candles_for_unit(
     unit: WorkUnit,
     *,

@@ -1,7 +1,10 @@
 import type { MarketSessionStatus } from "../api/client";
-import type { MarketIndicators } from "./displaySettings";
+import type { ForexTradingSessions } from "./forexTradingSessions";
 import { formatAppInstant, type TimeFormatOptions } from "./formatTime";
-import { anyEnabledMarketOpen } from "./marketSessions";
+import {
+  anyEnabledTradingSessionOpen,
+  isForexMarketOpen,
+} from "./marketSessions";
 
 export const SUB_BOT_ORDER = [
   "brokers",
@@ -79,29 +82,44 @@ export function resolveBotTooltip(
   return { title, state, detail: null };
 }
 
-export type OverallBotStatus = "running" | "sleeping" | "stopped" | "error";
+export type OverallBotStatus = "running" | "waiting" | "sleeping" | "stopped" | "error";
 
 export function computeOverallStatus(input: {
   orchestratorRunning: boolean;
   bots: BotStatusItem[];
   marketSessions: MarketSessionStatus[];
-  marketIndicators: MarketIndicators;
+  enabledTradingSessions: ForexTradingSessions;
   marketAvailable: boolean;
   marketServerTime?: string;
 }): OverallBotStatus {
   if (!input.orchestratorRunning) return "stopped";
   if (input.bots.some((bot) => bot.state === "error")) return "error";
 
-  const marketsOpen = anyEnabledMarketOpen(input.marketSessions, input.marketIndicators, {
+  const sessionOptions = {
     marketAvailable: input.marketAvailable,
     serverTime: input.marketServerTime,
-  });
+  };
 
-  return marketsOpen ? "running" : "sleeping";
+  if (
+    anyEnabledTradingSessionOpen(
+      input.marketSessions,
+      input.enabledTradingSessions,
+      sessionOptions,
+    )
+  ) {
+    return "running";
+  }
+
+  if (isForexMarketOpen(input.marketSessions, sessionOptions)) {
+    return "waiting";
+  }
+
+  return "sleeping";
 }
 
 export function overallStatusLabel(status: OverallBotStatus): string {
   if (status === "running") return "Running";
+  if (status === "waiting") return "Waiting";
   if (status === "sleeping") return "Sleeping";
   if (status === "stopped") return "Stopped";
   return "Error";
@@ -119,9 +137,11 @@ export function resolveOverallStatusTooltip(input: {
   const lines: string[] = [];
 
   if (input.status === "sleeping") {
-    lines.push("All tracked markets are closed.");
+    lines.push("Forex markets are closed.");
+  } else if (input.status === "waiting") {
+    lines.push("Forex is open — no enabled trading session is active.");
   } else if (input.status === "running") {
-    lines.push("At least one tracked market is open.");
+    lines.push("At least one enabled trading session is active.");
   } else if (input.status === "stopped") {
     lines.push("Orchestrator is offline.");
   }

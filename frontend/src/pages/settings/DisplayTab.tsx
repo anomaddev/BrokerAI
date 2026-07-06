@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type MarketIndicators } from "../../api/client";
 import SettingsPanelHeader from "../../components/SettingsPanelHeader";
+import TradingSessionCheckboxGrid from "../../components/settings/TradingSessionCheckboxGrid";
 import useAutoSave from "../../hooks/useAutoSave";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
 import {
@@ -79,8 +80,8 @@ export default function DisplayTab() {
                 <div>
                   <h3 className="settings-subsection-title">Show market indicators</h3>
                   <p className="settings-panel-desc">
-                    Trading session pills in the top bar show whether Asia, London, and NY sessions
-                    are open. Requires a configured Massive connection.
+                    Trading session pills in the top bar show whether Sydney, Asia, London, and NY
+                    sessions are open. Requires a configured Massive connection.
                   </p>
                 </div>
                 {saveStatus === "saving" ? (
@@ -93,29 +94,13 @@ export default function DisplayTab() {
 
             {error ? <p className="settings-error">{error}</p> : null}
 
-            <div
-              className="forex-pairs-grid"
-              style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
-            >
-              {MARKET_SESSION_DEFS.map((session) => {
-                const checked = indicators[session.id] ?? true;
-                return (
-                  <label
-                    key={session.id}
-                    className={`forex-pair-checkbox${checked ? " forex-pair-checkbox--checked" : ""}`}
-                    title={formatSessionHours(session)}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={saving}
-                      onChange={(e) => toggleIndicator(session.id, e.target.checked)}
-                    />
-                    <span className="forex-pair-label">{session.name}</span>
-                  </label>
-                );
-              })}
-            </div>
+            <TradingSessionCheckboxGrid
+              sessions={MARKET_SESSION_DEFS}
+              values={indicators}
+              onChange={toggleIndicator}
+              disabled={saving}
+              formatSessionHours={formatSessionHours}
+            />
           </section>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { formatForexDailyBreakNote, type TimeFormatOptions } from "./formatTime";
+import { formatForexDailyBreakNote, formatForexWeeklyHoursLabel, type TimeFormatOptions } from "./formatTime";
 import { isForexDailyBreakSession, isForexOpen } from "./forexSchedule";
 
 export type AssetClassMarketId = "forex" | "metals" | "crypto";
@@ -10,6 +10,9 @@ export type AssetClassMarketStatus = {
   hours: string;
 };
 
+/** Fallback when user time-display prefs are unavailable (precise OANDA ET wall clock). */
+export const FOREX_METALS_HOURS_LABEL = "Sun 17:05 – Fri 16:59 ET";
+
 export const ASSET_CLASS_MARKET_DEFS: Array<{
   id: AssetClassMarketId;
   name: string;
@@ -18,12 +21,12 @@ export const ASSET_CLASS_MARKET_DEFS: Array<{
   {
     id: "forex",
     name: "Forex",
-    hours: "Sun 22:00 – Fri 22:00 UTC",
+    hours: FOREX_METALS_HOURS_LABEL,
   },
   {
     id: "metals",
     name: "Metals",
-    hours: "Sun 22:00 – Fri 22:00 UTC",
+    hours: FOREX_METALS_HOURS_LABEL,
   },
   {
     id: "crypto",
@@ -99,7 +102,9 @@ export function resolveAssetClassTooltip(
 
   return {
     name: assetClass.name,
-    hours: assetClass.hours,
+    hours: timeOptions
+      ? formatForexWeeklyHoursLabel(timeOptions, reference)
+      : assetClass.hours,
     timingLabel: timeOptions
       ? formatForexDailyBreakNote(timeOptions, reference)
       : "Daily break 16:59–17:05 ET",

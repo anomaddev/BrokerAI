@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -31,14 +31,23 @@ ANALYSIS_RUN = {
     "execution": None,
 }
 
-CANDLE_ROW = {
-    "time": "2026-01-01T00:15:00.000000000Z",
-    "open": 1.1,
-    "high": 1.2,
-    "low": 1.0,
-    "close": 1.15,
-    "volume": 42,
-}
+
+def _m15_candles(count: int, *, end: datetime) -> list[dict]:
+    bar_duration = timeframe_to_duration("M15")
+    rows: list[dict] = []
+    for offset in range(count):
+        opened = end - (bar_duration * (count - 1 - offset))
+        rows.append(
+            {
+                "time": opened.strftime("%Y-%m-%dT%H:%M:%S.000000000Z"),
+                "open": 1.1,
+                "high": 1.2,
+                "low": 1.0,
+                "close": 1.15,
+                "volume": 42,
+            }
+        )
+    return rows
 
 
 @pytest.fixture
@@ -67,8 +76,14 @@ def test_get_strategy_analysis_run_candles_returns_payload(
     mock_repo_cls.return_value = repo
     repo.get_by_id.return_value = ANALYSIS_RUN
 
+    candle_time = datetime.fromisoformat("2026-01-01T00:15:00+00:00")
+    warmup_bars = 63
+    display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
+    fetch_bars = display_bars_before + warmup_bars + ANALYSIS_DISPLAY_BARS_AFTER + 2
+    candles = _m15_candles(fetch_bars, end=candle_time)
+
     dm = AsyncMock()
-    dm.fetch_candles_from_oanda = AsyncMock(return_value=[CANDLE_ROW])
+    dm.fetch_live_candles_from_oanda = AsyncMock(return_value=candles)
     mock_require_service.return_value = dm
 
     response = client.get("/api/strategy-analysis-runs/run-1/candles")
@@ -79,26 +94,27 @@ def test_get_strategy_analysis_run_candles_returns_payload(
     assert body["timeframe"] == "M15"
     assert body["source"] == "oanda"
     assert body["price_side"] == "M"
-    assert len(body["candles"]) == 1
+    assert len(body["candles"]) == fetch_bars
     assert body["warmup_bars"] == 63
 
-    candle_time = datetime.fromisoformat("2026-01-01T00:15:00+00:00")
     bar_duration = timeframe_to_duration("M15")
     display_since = datetime.fromisoformat(body["display_since"])
     display_until = datetime.fromisoformat(body["display_until"])
     fetch_since = datetime.fromisoformat(body["since"])
     fetch_until = datetime.fromisoformat(body["until"])
 
-    assert display_since == candle_time - (bar_duration * 63)
-    assert display_until == candle_time + (bar_duration * (ANALYSIS_DISPLAY_BARS_AFTER + 1))
-    assert fetch_since == candle_time - (bar_duration * (63 + 63))
-    assert fetch_until == display_until + bar_duration
+    assert display_since == candle_time - (bar_duration * display_bars_before)
+    assert display_until == candle_time
+    assert fetch_since == datetime.fromisoformat(candles[0]["time"].replace("Z", "+00:00"))
+    assert fetch_until == datetime.fromisoformat(candles[-1]["time"].replace("Z", "+00:00")) + bar_duration
 
-    dm.fetch_candles_from_oanda.assert_awaited_once()
-    args = dm.fetch_candles_from_oanda.await_args.args
-    assert args[0] == "EUR/USD"
-    assert args[1] == "M15"
-    assert dm.fetch_candles_from_oanda.await_args.kwargs["price"] == "M"
+    dm.ensure_coverage.assert_not_called()
+    dm.fetch_live_candles_from_oanda.assert_awaited_once()
+    call = dm.fetch_live_candles_from_oanda.await_args
+    assert call.args[0] == "EUR/USD"
+    assert call.args[1] == "M15"
+    assert call.args[2] == fetch_bars
+    assert call.kwargs["until"] == candle_time
 
 
 @patch("brokerai.web.routes.strategy_analysis_runs.require_data_manager_service")
@@ -123,8 +139,12 @@ def test_get_strategy_analysis_run_candles_resolves_warmup_from_strategy(
         "params": {"min_candles": 63, "timeframe": "M15"},
     }
 
+    candle_time = datetime.fromisoformat("2026-01-01T00:15:00+00:00")
+    fetch_bars = max(ANALYSIS_DISPLAY_BARS_BEFORE, 63) + 63 + ANALYSIS_DISPLAY_BARS_AFTER + 2
+    candles = _m15_candles(fetch_bars, end=candle_time)
+
     dm = AsyncMock()
-    dm.fetch_candles_from_oanda = AsyncMock(return_value=[CANDLE_ROW])
+    dm.fetch_live_candles_from_oanda = AsyncMock(return_value=candles)
     mock_require_service.return_value = dm
 
     response = client.get("/api/strategy-analysis-runs/run-1/candles")
@@ -133,10 +153,49 @@ def test_get_strategy_analysis_run_candles_resolves_warmup_from_strategy(
     body = response.json()
     assert body["warmup_bars"] >= 63
 
-    candle_time = datetime.fromisoformat("2026-01-01T00:15:00+00:00")
     bar_duration = timeframe_to_duration("M15")
     display_since = datetime.fromisoformat(body["display_since"])
     assert display_since == candle_time - (bar_duration * body["warmup_bars"])
+
+
+@patch("brokerai.web.routes.strategy_analysis_runs.require_data_manager_service")
+@patch("brokerai.web.routes.strategy_analysis_runs.StrategyAnalysisRunsRepository")
+def test_get_strategy_analysis_run_candles_spans_weekend_by_bar_count(
+    mock_repo_cls,
+    mock_require_service,
+    client: TestClient,
+) -> None:
+    """Display window uses bar indices, not wall-clock hours across forex closures."""
+    repo = AsyncMock()
+    mock_repo_cls.return_value = repo
+    run = {
+        **ANALYSIS_RUN,
+        "pair": "USD/JPY",
+        "min_candles": 100,
+        "candle_time": "2026-07-05T21:30:00.000000000Z",
+    }
+    repo.get_by_id.return_value = run
+
+    candle_time = datetime(2026, 7, 5, 21, 30, tzinfo=timezone.utc)
+    warmup_bars = 100
+    display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
+    fetch_bars = display_bars_before + warmup_bars + ANALYSIS_DISPLAY_BARS_AFTER + 2
+    candles = _m15_candles(fetch_bars, end=candle_time)
+
+    dm = AsyncMock()
+    dm.fetch_live_candles_from_oanda = AsyncMock(return_value=candles)
+    mock_require_service.return_value = dm
+
+    response = client.get("/api/strategy-analysis-runs/run-1/candles")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["candles"]) == fetch_bars
+    assert body["warmup_bars"] == 100
+
+    display_since = datetime.fromisoformat(body["display_since"])
+    bar_duration = timeframe_to_duration("M15")
+    assert display_since == candle_time - (bar_duration * display_bars_before)
 
 
 @patch("brokerai.web.routes.strategy_analysis_runs.StrategyAnalysisRunsRepository")
@@ -165,7 +224,7 @@ def test_get_strategy_analysis_run_candles_returns_503_when_empty(
     repo.get_by_id.return_value = ANALYSIS_RUN
 
     dm = AsyncMock()
-    dm.fetch_candles_from_oanda = AsyncMock(return_value=[])
+    dm.fetch_live_candles_from_oanda = AsyncMock(return_value=[])
     mock_require_service.return_value = dm
 
     response = client.get("/api/strategy-analysis-runs/run-1/candles")

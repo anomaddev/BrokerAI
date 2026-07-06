@@ -15,8 +15,10 @@ from brokerai.core.control import ControlClient, ControlTimeout
 from brokerai.db import ping_db
 from brokerai.db.client import get_db
 from brokerai.web.routes.bot_activity import router as bot_activity_router
+from brokerai.web.routes.cost_ledger import router as cost_ledger_router
 from brokerai.web.routes.assets_settings import router as assets_settings_router
 from brokerai.web.routes.auth import require_auth, router as auth_router
+from brokerai.web.routes.backups_settings import router as backups_settings_router
 from brokerai.web.routes.data_connections_settings import router as data_connections_router
 from brokerai.web.routes.exchange_connections_settings import router as exchange_connections_router
 from brokerai.web.routes.market_data import router as market_data_router
@@ -86,6 +88,21 @@ async def _trade_sync_loop() -> None:
         await asyncio.sleep(interval)
 
 
+async def _backup_schedule_loop() -> None:
+    """Create scheduled full backups when due."""
+    from brokerai.config_backup.service import ConfigBackupService
+
+    while True:
+        try:
+            service = ConfigBackupService()
+            await service.run_scheduled_backup_if_due()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Backup schedule loop failed", exc_info=True)
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
     _configure_app_logging()
@@ -104,9 +121,11 @@ async def _app_lifespan(_app: FastAPI):
     except Exception:
         logger.warning("Background task reconciliation failed", exc_info=True)
     trade_sync_task = asyncio.create_task(_trade_sync_loop())
+    backup_schedule_task = asyncio.create_task(_backup_schedule_loop())
     yield
     trade_sync_task.cancel()
-    await asyncio.gather(trade_sync_task, return_exceptions=True)
+    backup_schedule_task.cancel()
+    await asyncio.gather(trade_sync_task, backup_schedule_task, return_exceptions=True)
     from brokerai.integrations.oanda_client import close_oanda_client
 
     await close_oanda_client()
@@ -131,12 +150,14 @@ app.include_router(exchange_connections_router)
 app.include_router(research_settings_router)
 app.include_router(rss_feeds_router)
 app.include_router(assets_settings_router)
+app.include_router(backups_settings_router)
 app.include_router(research_router)
 app.include_router(strategies_router)
 app.include_router(strategy_analysis_runs_router)
 app.include_router(trades_router)
 app.include_router(system_router)
 app.include_router(bot_activity_router)
+app.include_router(cost_ledger_router)
 app.include_router(tasks_router)
 
 if STATIC_DIR.exists():
@@ -254,6 +275,7 @@ async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
             "strategy_analysis_runs",
             "trades",
             "bot_activity",
+            "cost_ledger",
         ):
             counts[name] = await handle.db[name].count_documents({})
         return JSONResponse(
@@ -280,6 +302,23 @@ async def list_bots(_username: str = Depends(require_auth)) -> JSONResponse:
             for name in settings.enabled_bot_names
         ]
     return JSONResponse({"bots": bots})
+
+
+@app.get("/api/bots/next-candle-preview")
+async def next_candle_preview(_username: str = Depends(require_auth)) -> JSONResponse:
+    from brokerai.bots.secretary.candle_preview import preview_next_candle_watch
+
+    heartbeat = _read_heartbeat()
+    next_candle_fetches: dict[str, str] | None = None
+    for bot in heartbeat.get("bots", []):
+        if bot.get("name") == "secretary":
+            raw = bot.get("next_candle_fetches")
+            if isinstance(raw, dict):
+                next_candle_fetches = {str(k): str(v) for k, v in raw.items()}
+            break
+
+    payload = await preview_next_candle_watch(next_candle_fetches=next_candle_fetches)
+    return JSONResponse(payload)
 
 
 @app.get("/api/pipeline/status")

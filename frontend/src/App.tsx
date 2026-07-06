@@ -12,11 +12,13 @@ import Backtesting from "./pages/Backtesting";
 import StrategyBuilderPage from "./pages/strategies/StrategyBuilderPage";
 import StrategyEditPage from "./pages/strategies/StrategyEditPage";
 import Activity from "./pages/Activity";
+import CostLedger from "./pages/CostLedger";
 import StrategyAnalysis from "./pages/StrategyAnalysis";
 import StrategyAnalysisRunView from "./pages/StrategyAnalysisRunView";
 import Trades from "./pages/Trades";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
+import { ROUTES } from "./lib/routes";
 
 function LegacyReportRedirect() {
   const params = useParams();
@@ -26,7 +28,18 @@ function LegacyReportRedirect() {
 
 function LegacyAnalysisRunRedirect() {
   const { runId } = useParams();
-  return <Navigate to={`/research/analysis/${runId ?? ""}`} replace />;
+  if (!runId) {
+    return <Navigate to={ROUTES.research.analysis} replace />;
+  }
+  return <Navigate to={ROUTES.research.analysisRun(runId)} replace />;
+}
+
+function LegacyAnalysisRunFlatRedirect() {
+  const { runId } = useParams();
+  if (!runId) {
+    return <Navigate to={ROUTES.research.analysis} replace />;
+  }
+  return <Navigate to={ROUTES.research.analysisRun(runId)} replace />;
 }
 
 function LegacyStrategyNewRedirect() {
@@ -93,11 +106,16 @@ export default function App() {
           <Route path="/research/strategies/new/:presetId" element={<StrategyBuilderPage />} />
           <Route path="/research/strategies/:id/edit" element={<StrategyEditPage />} />
           <Route path="/research/analysis" element={<StrategyAnalysis />} />
-          <Route path="/research/analysis/:runId" element={<StrategyAnalysisRunView />} />
+          <Route path="/research/analysis/run/:runId" element={<StrategyAnalysisRunView />} />
+          <Route
+            path="/research/analysis/:runId"
+            element={<LegacyAnalysisRunFlatRedirect />}
+          />
           <Route path="/research/backtest" element={<Backtesting />} />
           <Route path="/trading/forex" element={<Trades />} />
           <Route path="/trading/explore" element={<Explore />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/cost-ledger" element={<CostLedger />} />
           <Route path="/settings/*" element={<Settings />} />
           <Route path="/daily-reports" element={<Navigate to="/research/reports" replace />} />
           <Route path="/daily-reports/r/*" element={<LegacyReportRedirect />} />

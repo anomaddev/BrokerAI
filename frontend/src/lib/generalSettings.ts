@@ -1,13 +1,17 @@
+export type TimeFormat = "12h" | "24h";
+
 export type GeneralSettings = {
   timezone_auto: boolean;
   timezone: string | null;
   show_utc_times: boolean;
+  time_format: TimeFormat;
 };
 
 export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   timezone_auto: true,
   timezone: null,
   show_utc_times: false,
+  time_format: "24h",
 };
 
 export const GENERAL_SETTINGS_UPDATED = "brokerai:general-settings-updated";
@@ -24,11 +28,17 @@ export function getBrowserTimezone(): string {
   }
 }
 
+export function normalizeTimeFormat(value: unknown): TimeFormat {
+  if (value === "12h" || value === "24h") return value;
+  return DEFAULT_GENERAL_SETTINGS.time_format;
+}
+
 export function normalizeGeneralSettings(raw: Partial<GeneralSettings> | null | undefined): GeneralSettings {
   if (!raw) return { ...DEFAULT_GENERAL_SETTINGS };
 
   const timezoneAuto = raw.timezone_auto ?? DEFAULT_GENERAL_SETTINGS.timezone_auto;
   const showUtcTimes = raw.show_utc_times ?? DEFAULT_GENERAL_SETTINGS.show_utc_times;
+  const timeFormat = normalizeTimeFormat(raw.time_format);
   const timezone =
     typeof raw.timezone === "string" && raw.timezone.trim() ? raw.timezone.trim() : null;
 
@@ -37,6 +47,7 @@ export function normalizeGeneralSettings(raw: Partial<GeneralSettings> | null | 
       timezone_auto: true,
       timezone,
       show_utc_times: showUtcTimes,
+      time_format: timeFormat,
     };
   }
 
@@ -44,6 +55,7 @@ export function normalizeGeneralSettings(raw: Partial<GeneralSettings> | null | 
     timezone_auto: false,
     timezone: timezone && isValidTimezone(timezone) ? timezone : "UTC",
     show_utc_times: showUtcTimes,
+    time_format: timeFormat,
   };
 }
 

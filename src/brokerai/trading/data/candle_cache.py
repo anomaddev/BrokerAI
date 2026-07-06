@@ -410,6 +410,53 @@ class CandleCache:
 
         return start_str, end_str
 
+    async def fetch_count_from_oanda(
+        self,
+        symbol: str,
+        timeframe: str,
+        bar_count: int,
+        *,
+        until: datetime | None = None,
+        price: str = "M",
+    ) -> list[dict[str, Any]]:
+        """Fetch ``bar_count`` closed candles directly from OANDA (never reads MongoDB).
+
+        When ``until`` is set it must be the analyzed candle **open** time; OANDA's
+        exclusive ``to`` bound is derived as ``until + one bar`` so the anchor bar
+        is included. When ``until`` is omitted, returns the latest ``bar_count`` bars.
+        """
+        granularity = timeframe_to_granularity(timeframe)
+        if granularity is None:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+        count = max(1, int(bar_count))
+        token, environment = await self._oanda_credentials()
+        instrument = forex_pair_to_instrument(symbol)
+
+        if until is None:
+            raw = await fetch_candles(
+                token,
+                environment,
+                instrument,
+                granularity,
+                count,
+                price=price,
+            )
+        else:
+            anchor = until.astimezone(timezone.utc) if until.tzinfo else until.replace(tzinfo=timezone.utc)
+            to_exclusive = format_oanda_time(anchor + timeframe_to_duration(timeframe))
+            raw = await fetch_candles_to(
+                token,
+                environment,
+                instrument,
+                granularity,
+                to_exclusive,
+                count=count,
+                price=price,
+            )
+
+        return enrich_candles(raw)
+
     async def fetch_range_from_oanda(
         self,
         symbol: str,

@@ -170,12 +170,18 @@ async def _fetch_via_search(
         file=sys.stderr,
     )
 
+    operation = "web_search" if label == "Web search" else "x_search"
     text = await search_fn(
         base_url,
         model_name,
         api_key,
         [{"role": "user", "content": prompt}],
         reasoning_effort=reasoning_effort,
+        cost_context={
+            "operation": operation,
+            "source": "daily_report",
+            "forex_group": primary,
+        },
     )
     data = _parse_json_object(text)
     articles = data.get("articles") if isinstance(data, dict) else None

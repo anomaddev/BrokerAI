@@ -23,6 +23,40 @@ def serialize_intent(intent: TradeIntent | None) -> dict | None:
     }
 
 
+async def record_execution_outcomes(
+    analyses: list[AnalysisResult],
+    strategies_by_id: dict[str, dict],
+    *,
+    trade_counts: dict,
+    asset_enabled_sessions: list | None,
+    when: datetime,
+) -> None:
+    """Persist gate outcomes for analyses that will not enter intent dispatch."""
+    for analysis in analyses:
+        if not analysis.run_id or is_executor_eligible(analysis):
+            continue
+        strategy = strategies_by_id.get(analysis.strategy_id)
+        if strategy is None:
+            continue
+        params = strategy_params(strategy)
+        _passed, reasons = passes_execution_gates(
+            analysis,
+            params,
+            trade_counts,
+            when=when,
+            asset_enabled_sessions=asset_enabled_sessions,
+        )
+        await persist_execution_outcome(
+            analysis,
+            processed_at=when,
+            gates_passed=False,
+            gate_reasons=reasons,
+            priority_winner=False,
+            intent_queued=False,
+            intent=None,
+        )
+
+
 async def persist_execution_outcome(
     analysis: AnalysisResult,
     *,

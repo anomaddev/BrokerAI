@@ -294,6 +294,12 @@ async def run_weekly_brief(
             messages,
             model.get("api_key") or None,
             reasoning_effort=reasoning,
+            cost_context={
+                "operation": "weekly_brief",
+                "source": "weekly_report",
+                "week_key": week_key,
+                "model_id": model.get("id"),
+            },
         )
     except Exception as exc:
         logger.exception("Weekly brief failed")
@@ -363,6 +369,12 @@ async def run_weekly_debrief(
             messages,
             model.get("api_key") or None,
             reasoning_effort=reasoning,
+            cost_context={
+                "operation": "weekly_debrief",
+                "source": "weekly_report",
+                "week_key": week_key,
+                "model_id": model.get("id"),
+            },
         )
     except Exception as exc:
         logger.exception("Weekly debrief failed")

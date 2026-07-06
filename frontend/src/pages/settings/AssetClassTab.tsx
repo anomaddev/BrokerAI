@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api, type AssetClass } from "../../api/client";
 import ForexPairPriorityList from "../../components/ForexPairPriorityList";
@@ -13,9 +13,12 @@ import {
 import {
   DEFAULT_FOREX_TRADING_SESSIONS,
   normalizeForexTradingSessions,
+  notifyForexTradingSessionsUpdated,
   type ForexTradingSessions,
 } from "../../lib/forexTradingSessions";
+import { formatSessionHours } from "../../lib/formatTime";
 import { MARKET_SESSION_DEFS } from "../../lib/marketSessionDefs";
+import TradingSessionCheckboxGrid from "../../components/settings/TradingSessionCheckboxGrid";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
 import {
   connectedExchangesForAssetClass,
@@ -93,8 +96,38 @@ function PrimaryExchangeField({
   );
 }
 
+function forexHeaderAction(
+  showForexUtc: boolean,
+  onShowForexUtcChange: (next: boolean) => void,
+  saveStatus: "idle" | "saving" | "saved" | "error",
+): ReactNode {
+  const saveStatusLabel =
+    saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : null;
+
+  return (
+    <div className="settings-panel-header-actions">
+      <div className="settings-panel-header-actions-row settings-panel-header-actions-row--title">
+        <div className="settings-header-toggle">
+          <span className="settings-header-toggle-label">Show UTC</span>
+          <ToggleSwitch label="Show UTC" checked={showForexUtc} onChange={onShowForexUtcChange} />
+        </div>
+      </div>
+      <div className="settings-panel-header-actions-row settings-panel-header-actions-row--desc">
+        {saveStatusLabel ? (
+          <span
+            className={`settings-save-status${saveStatus === "saved" ? " settings-save-status--saved" : ""}`}
+          >
+            {saveStatusLabel}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function AssetClassTab({ assetClass, label }: AssetClassTabProps) {
-  const { formatSessionHours } = useGeneralSettings();
+  const { effectiveTimezone, settings } = useGeneralSettings();
+  const [showForexUtc, setShowForexUtc] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [primaryExchange, setPrimaryExchange] = useState("");
   const [exchangeConnections, setExchangeConnections] = useState<
@@ -128,6 +161,9 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
       enabled_sessions: snapshot.assetClass === "forex" ? snapshot.enabledSessions : undefined,
       primary_exchange: snapshot.primaryExchange || null,
     });
+    if (snapshot.assetClass === "forex") {
+      notifyForexTradingSessionsUpdated();
+    }
   }, []);
 
   const { saveStatus, saveNow, scheduleSave, markReady, markNotReady, error: saveError } =
@@ -252,6 +288,22 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
   const allSelected = catalog.length > 0 && enabledPairs.length === catalog.length;
   const noneSelected = enabledPairs.length === 0;
   const headerError = error ?? saveError;
+  const showForexUtcToggle = assetClass === "forex" && effectiveTimezone !== "UTC";
+
+  const forexTimeOptions = useMemo(
+    () => ({
+      showUtc: showForexUtc,
+      timeZone: effectiveTimezone,
+      timeFormat: settings.time_format,
+    }),
+    [showForexUtc, effectiveTimezone, settings.time_format],
+  );
+
+  const formatForexSessionHours = useCallback(
+    (def: Parameters<typeof formatSessionHours>[0], reference?: Date) =>
+      formatSessionHours(def, forexTimeOptions, reference),
+    [forexTimeOptions],
+  );
 
   return (
     <div className="settings-panel">
@@ -259,7 +311,12 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
         title={label}
         description={`Enable ${label.toLowerCase()} for research and trading bots.`}
         error={headerError}
-        saveStatus={saveStatus}
+        saveStatus={showForexUtcToggle ? undefined : saveStatus}
+        action={
+          showForexUtcToggle
+            ? forexHeaderAction(showForexUtc, setShowForexUtc, saveStatus)
+            : undefined
+        }
       />
 
       <div className="settings-panel-body">
@@ -286,32 +343,16 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
                 <div className="settings-section-intro">
                   <h3 className="settings-subtitle">Trading sessions</h3>
                   <p className="settings-muted forex-pairs-hint">
-                    Choose which forex market sessions the bot may open new trades during. Strategy
-                    session filters still apply on top of this setting.
+                    Choose which liquidity sessions the bot may open new trades during (Sydney,
+                    Asia, London, NY). Strategy session filters still apply on top of this setting.
                   </p>
                 </div>
-                <div
-                  className="forex-pairs-grid"
-                  style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
-                >
-                  {MARKET_SESSION_DEFS.map((session) => {
-                    const checked = enabledSessions[session.id] ?? true;
-                    return (
-                      <label
-                        key={session.id}
-                        className={`forex-pair-checkbox${checked ? " forex-pair-checkbox--checked" : ""}`}
-                        title={formatSessionHours(session)}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => toggleTradingSession(session.id, e.target.checked)}
-                        />
-                        <span className="forex-pair-label">{session.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
+                <TradingSessionCheckboxGrid
+                  sessions={MARKET_SESSION_DEFS}
+                  values={enabledSessions}
+                  onChange={toggleTradingSession}
+                  formatSessionHours={formatForexSessionHours}
+                />
                 {allSessionsDisabled && (
                   <p className="param-helper param-helper--warn">
                     Select at least one session to allow forex trading.

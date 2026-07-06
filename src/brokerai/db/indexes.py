@@ -8,6 +8,78 @@ from brokerai.db.market_data_timeseries import ensure_market_data_timeseries
 logger = logging.getLogger(__name__)
 
 
+async def _dedupe_strategy_analysis_runs(db) -> None:
+    """Collapse duplicate rows for the same strategy, pair, and analyzed candle."""
+    pipeline = [
+        {
+            "$match": {
+                "candle_time": {"$type": "date"},
+                "strategy_id": {"$type": "string"},
+                "pair": {"$type": "string"},
+            }
+        },
+        {
+            "$group": {
+                "_id": {
+                    "strategy_id": "$strategy_id",
+                    "pair": "$pair",
+                    "candle_time": "$candle_time",
+                },
+                "docs": {
+                    "$push": {
+                        "id": "$id",
+                        "run_type": "$run_type",
+                        "execution": "$execution",
+                        "analyzed_at": "$analyzed_at",
+                    }
+                },
+                "count": {"$sum": 1},
+            }
+        },
+        {"$match": {"count": {"$gt": 1}}},
+    ]
+    duplicate_groups = await db.strategy_analysis_runs.aggregate(pipeline).to_list(length=None)
+    if not duplicate_groups:
+        return
+
+    for group in duplicate_groups:
+        docs = group["docs"]
+
+        def _rank(doc: dict) -> tuple:
+            execution = doc.get("execution")
+            has_execution = 1 if execution else 0
+            is_manual = 1 if doc.get("run_type") == "manual" else 0
+            analyzed_at = doc.get("analyzed_at")
+            return (is_manual, has_execution, analyzed_at)
+
+        keeper = max(docs, key=_rank)
+        keeper_id = keeper["id"]
+        for doc in docs:
+            run_id = doc["id"]
+            if run_id == keeper_id:
+                continue
+            execution = doc.get("execution")
+            if execution and not keeper.get("execution"):
+                await db.strategy_analysis_runs.update_one(
+                    {"id": keeper_id},
+                    {"$set": {"execution": execution}},
+                )
+                keeper["execution"] = execution
+            if doc.get("run_type") == "manual":
+                await db.strategy_analysis_runs.update_one(
+                    {"id": keeper_id},
+                    {"$set": {"run_type": "manual"}},
+                )
+            await db.strategy_analysis_runs.delete_one({"id": run_id})
+            logger.info(
+                "Removed duplicate strategy analysis run %s (kept %s for %s %s)",
+                run_id,
+                keeper_id,
+                group["_id"]["pair"],
+                group["_id"]["candle_time"],
+            )
+
+
 async def ensure_indexes() -> None:
     handle = await get_db()
     db = handle.db
@@ -72,6 +144,12 @@ async def ensure_indexes() -> None:
     )
     await db.strategies.create_index("preset_id", name="strategies_preset_id")
     await db.bot_activity.create_index([("occurred_at", -1)], name="bot_activity_occurred_at")
+    await db.cost_ledger.create_index([("occurred_at", -1)], name="cost_ledger_occurred_at")
+    await db.cost_ledger.create_index("id", unique=True, name="cost_ledger_id")
+    await db.cost_ledger.create_index(
+        [("category", 1), ("occurred_at", -1)],
+        name="cost_ledger_category_occurred_at",
+    )
     await db.broker_lots.create_index("id", unique=True, name="broker_lots_id")
     await db.broker_lots.create_index(
         [("exchange_id", 1), ("account_id", 1), ("broker_lot_id", 1)],
@@ -137,5 +215,30 @@ async def ensure_indexes() -> None:
     await db.strategy_analysis_runs.create_index(
         [("analyzed_at", -1)],
         name="strategy_analysis_runs_analyzed_at",
+    )
+    await _dedupe_strategy_analysis_runs(db)
+    await db.strategy_analysis_runs.create_index(
+        [("strategy_id", 1), ("pair", 1), ("candle_time", 1)],
+        unique=True,
+        partialFilterExpression={"candle_time": {"$type": "date"}},
+        name="strategy_analysis_runs_strategy_pair_candle",
+    )
+    await db.config_backups.create_index(
+        [("created_at", -1)],
+        name="config_backups_created_at",
+    )
+    await db.config_backups.create_index(
+        "id",
+        unique=True,
+        name="config_backups_id",
+    )
+    await db.config_backups.create_index(
+        [("kind", 1), ("created_at", -1)],
+        name="config_backups_kind_created_at",
+    )
+    await db.backup_settings.create_index(
+        "id",
+        unique=True,
+        name="backup_settings_id",
     )
     logger.info("MongoDB indexes ensured")

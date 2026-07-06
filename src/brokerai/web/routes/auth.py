@@ -4,11 +4,17 @@ import asyncio
 import logging
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from brokerai.config_backup.change_labels import (
+    describe_general_settings_change,
+    describe_market_indicators_change,
+)
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.auth import (
     AuthStore,
     PasswordValidationError,
@@ -26,7 +32,7 @@ from brokerai.auth.profile_photo import (
     save_profile_photo,
 )
 from brokerai.config.settings import get_settings
-from brokerai.market_sessions import TRADING_SESSIONS, normalize_market_indicators, session_hours_label
+from brokerai.market_sessions import TRADING_SESSIONS, normalize_market_indicators, session_definition_payload
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +68,7 @@ class UpdateGeneralSettingsRequest(BaseModel):
     timezone_auto: bool
     timezone: str | None = None
     show_utc_times: bool
+    time_format: Literal["12h", "24h"] = "24h"
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -296,14 +303,7 @@ async def get_display_settings(_username: str = Depends(require_auth)) -> dict[s
     indicators = user.resolved_market_indicators()
     return {
         "market_indicators": indicators,
-        "markets": [
-            {
-                "id": session.id,
-                "name": session.name,
-                "hours": session_hours_label(session),
-            }
-            for session in TRADING_SESSIONS
-        ],
+        "markets": [session_definition_payload(session) for session in TRADING_SESSIONS],
     }
 
 
@@ -313,8 +313,18 @@ async def update_display_settings(
     _username: str = Depends(require_auth),
 ) -> dict[str, object]:
     store = AuthStore()
-    if store.get_user() is None:
+    user = store.get_user()
+    if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    change_label = describe_market_indicators_change(
+        user.resolved_market_indicators(),
+        body.market_indicators,
+    )
+    await auto_backup_before(
+        trigger="account.display",
+        summary="Display settings",
+        change_label=change_label or "Display settings",
+    )
     try:
         record = store.update_market_indicators(body.market_indicators)
     except ValueError as exc:
@@ -340,13 +350,27 @@ async def update_general_settings(
     _username: str = Depends(require_auth),
 ) -> dict[str, object]:
     store = AuthStore()
-    if store.get_user() is None:
+    user = store.get_user()
+    if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    change_label = describe_general_settings_change(
+        user.resolved_general_settings(),
+        timezone_auto=body.timezone_auto,
+        timezone=body.timezone,
+        show_utc_times=body.show_utc_times,
+        time_format=body.time_format,
+    )
+    await auto_backup_before(
+        trigger="account.general",
+        summary="General settings",
+        change_label=change_label or "General settings",
+    )
     try:
         record = store.update_general_settings(
             timezone_auto=body.timezone_auto,
             timezone=body.timezone,
             show_utc_times=body.show_utc_times,
+            time_format=body.time_format,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

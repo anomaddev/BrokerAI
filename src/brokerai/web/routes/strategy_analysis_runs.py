@@ -47,6 +47,29 @@ def _parse_instant(value: object) -> datetime | None:
         return None
 
 
+def _candle_open_time(candle: dict[str, Any]) -> datetime | None:
+    return _parse_instant(candle.get("time"))
+
+
+def _resolve_anchor_candle_index(candles: list[dict[str, Any]], candle_time: datetime) -> int:
+    """Return the analyzed bar index, or the last bar at/before ``candle_time``."""
+    if not candles:
+        return 0
+
+    anchor_key = int(candle_time.timestamp() * 1000)
+    best_idx = len(candles) - 1
+    for idx, candle in enumerate(candles):
+        opened = _candle_open_time(candle)
+        if opened is None:
+            continue
+        bar_key = int(opened.timestamp() * 1000)
+        if bar_key == anchor_key:
+            return idx
+        if bar_key <= anchor_key:
+            best_idx = idx
+    return best_idx
+
+
 async def _resolve_analysis_warmup_bars(run: dict[str, Any]) -> int:
     """Bars of history before the analyzed candle required for indicator warmup."""
     stored = int(run.get("min_candles") or 0)
@@ -172,23 +195,16 @@ async def get_strategy_analysis_run_candles(
     bar_duration = timeframe_to_duration(timeframe)
     warmup_bars = await _resolve_analysis_warmup_bars(run)
     display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
-    display_since_dt = candle_time - (bar_duration * display_bars_before)
-    display_until_dt = candle_time + (bar_duration * (ANALYSIS_DISPLAY_BARS_AFTER + 1))
-
-    since_dt = display_since_dt
-    if warmup_bars > 0:
-        # Match trade charts: fetch bars before the visible window so EMA/ADX seeding
-        # aligns with live analysis (which runs on the full cached history).
-        analysis_anchor_start = candle_time - (bar_duration * warmup_bars)
-        seed_start = display_since_dt - (bar_duration * warmup_bars)
-        since_dt = min(since_dt, analysis_anchor_start, seed_start)
-
-    until_dt = display_until_dt + bar_duration
+    fetch_bars = display_bars_before + warmup_bars + ANALYSIS_DISPLAY_BARS_AFTER + 2
 
     service = require_data_manager_service()
     try:
-        candles = await service.fetch_candles_from_oanda(
-            pair, timeframe, since_dt, until_dt, price="M"
+        candles = await service.fetch_live_candles_from_oanda(
+            pair,
+            timeframe,
+            fetch_bars,
+            until=candle_time,
+            price="M",
         )
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -204,6 +220,19 @@ async def get_strategy_analysis_run_candles(
             status_code=503,
             detail="Candle data unavailable. Check your OANDA connection in Settings.",
         )
+
+    anchor_idx = _resolve_anchor_candle_index(candles, candle_time)
+    display_start_idx = max(0, anchor_idx - display_bars_before)
+    display_end_idx = min(len(candles) - 1, anchor_idx + ANALYSIS_DISPLAY_BARS_AFTER)
+
+    since_dt = _candle_open_time(candles[0])
+    display_since_dt = _candle_open_time(candles[display_start_idx])
+    display_until_dt = _candle_open_time(candles[display_end_idx])
+    last_dt = _candle_open_time(candles[-1])
+    until_dt = (last_dt + bar_duration) if last_dt is not None else candle_time + bar_duration
+
+    if since_dt is None or display_since_dt is None or display_until_dt is None:
+        raise HTTPException(status_code=503, detail="Candle data unavailable for this analysis window.")
 
     return JSONResponse(
         {

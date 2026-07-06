@@ -4,7 +4,7 @@ import logging
 import time
 
 from brokerai.bots.associate.worker import AssociateWorker
-from brokerai.bots.broker.gates import apply_execution_gates
+from brokerai.bots.broker.gates import apply_execution_gates, record_execution_outcomes
 from brokerai.bots.broker.monitor import BrokerMonitor
 from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_strategies
 from brokerai.bots.data_manager.service import DataManagerService, require_data_manager_service
@@ -45,8 +45,24 @@ async def run_broker_execution(
     if not results:
         return []
 
+    ensure_trading_registries()
+    dm = data_manager or require_data_manager_service()
+    strategies_by_id = await _strategies_by_id_for_context(context)
+    trade_counts = await BrokerLotsRepository().daily_lot_counts()
+    asset_settings = await AssetSettingsRepository().get(context.asset_class)
+    now = utc_now()
+
+    ineligible = [analysis for analysis in results if not is_executor_eligible(analysis)]
+    await record_execution_outcomes(
+        ineligible,
+        strategies_by_id,
+        trade_counts=trade_counts,
+        asset_enabled_sessions=asset_settings.get("enabled_sessions"),
+        when=now,
+    )
+
     actionable = [analysis for analysis in results if is_executor_eligible(analysis)]
-    skipped = len(results) - len(actionable)
+    skipped = len(ineligible)
     if not actionable:
         logger.info(
             "Broker execution skipped for %s %s — %d result(s) not executor-eligible",
@@ -55,13 +71,6 @@ async def run_broker_execution(
             len(results),
         )
         return []
-
-    ensure_trading_registries()
-    dm = data_manager or require_data_manager_service()
-    strategies_by_id = await _strategies_by_id_for_context(context)
-    trade_counts = await BrokerLotsRepository().daily_lot_counts()
-    asset_settings = await AssetSettingsRepository().get(context.asset_class)
-    now = utc_now()
 
     unit = WorkUnit(
         pair=context.symbol,

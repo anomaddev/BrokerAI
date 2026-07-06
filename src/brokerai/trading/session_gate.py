@@ -14,10 +14,19 @@ SESSION_ALIASES: dict[str, str] = {
     "London": "london",
     "NY": "ny",
     "Asia": "asia",
-    "Sydney": "asia",
+    "Sydney": "sydney",
+    "Tokyo": "asia",
+    "Singapore": "asia",
+    "Hong Kong": "asia",
+    "China": "asia",
     "london": "london",
     "ny": "ny",
     "asia": "asia",
+    "sydney": "sydney",
+    "tokyo": "asia",
+    "singapore": "asia",
+    "hong_kong": "asia",
+    "china": "asia",
 }
 
 _SESSION_BY_ID = {session.id: session for session in TRADING_SESSIONS}
@@ -70,3 +79,5 @@ def is_asset_trading_session_active(
         if session and is_session_active(session, when):
             return True
     return False
+
+

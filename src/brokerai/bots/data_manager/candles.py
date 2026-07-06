@@ -20,11 +20,11 @@ class CandleFetchResult:
     candles_upserted: int = 0
 
 
-async def requirement_needs_bootstrap(
+async def requirement_needs_warmup(
     requirement: CandleRequirement,
     service: DataManagerService,
 ) -> bool:
-    """True when cache lacks bars or latest stored bar is behind the expected close."""
+    """True when cache lacks the minimum bar count required for analysis."""
     for pair in requirement.pairs:
         count = await service.cache._market_repo.count_candles(
             pair,
@@ -33,6 +33,17 @@ async def requirement_needs_bootstrap(
         )
         if count < requirement.bar_count:
             return True
+    return False
+
+
+async def requirement_needs_bootstrap(
+    requirement: CandleRequirement,
+    service: DataManagerService,
+) -> bool:
+    """True when cache lacks bars or latest stored bar is behind the expected close."""
+    if await requirement_needs_warmup(requirement, service):
+        return True
+    for pair in requirement.pairs:
         complete = await service.cache.is_cache_complete_up_to(
             pair,
             requirement.timeframe,

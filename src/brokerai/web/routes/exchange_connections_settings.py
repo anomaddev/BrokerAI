@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from brokerai.config_backup.change_labels import describe_oanda_connection_change
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
 from brokerai.db.repositories.oanda_account_snapshots import OandaAccountSnapshotsRepository
 from brokerai.integrations.oanda import test_connection as oanda_test_connection
@@ -56,6 +58,22 @@ async def save_oanda_connection(
     if not access_token:
         raise HTTPException(status_code=400, detail="An access token is required")
 
+    access_token_changed = bool(
+        body.access_token.strip()
+        and body.access_token.strip() != existing.get("access_token", "")
+    )
+    change_label = describe_oanda_connection_change(
+        existing,
+        environment=body.environment,
+        account_id=body.account_id,
+        access_token_changed=access_token_changed,
+    )
+    await auto_backup_before(
+        trigger="exchange_connections.oanda",
+        summary="OANDA connection settings",
+        change_label=change_label or "OANDA connection settings",
+    )
+
     doc = await repo.save_oanda(
         access_token=access_token,
         environment=body.environment,
@@ -66,6 +84,11 @@ async def save_oanda_connection(
 
 @router.delete("/oanda")
 async def delete_oanda_connection(_username: str = Depends(require_auth)) -> JSONResponse:
+    await auto_backup_before(
+        trigger="exchange_connections.oanda.delete",
+        summary="Remove OANDA connection",
+        change_label="OANDA connection removed",
+    )
     repo = ExchangeConnectionsRepository()
     await repo.delete_oanda()
     return JSONResponse({"ok": True})

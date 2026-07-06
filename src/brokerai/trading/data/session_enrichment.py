@@ -3,15 +3,18 @@ from __future__ import annotations
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
+from brokerai.market_sessions import TRADING_SESSIONS, is_session_active
+
 UTC = timezone.utc
-LONDON = ZoneInfo("Europe/London")
 NY = ZoneInfo("America/New_York")
 
-# Approximate liquid session windows in UTC (bar open time).
-_LONDON_START = time(8, 0)
-_LONDON_END = time(17, 0)
-_NY_START = time(13, 0)
-_NY_END = time(22, 0)
+# Overlap windows in America/New_York wall clock.
+_ASIA_LONDON_OVERLAP_START = time(3, 0)
+_ASIA_LONDON_OVERLAP_END = time(5, 0)
+_LONDON_NY_OVERLAP_START = time(8, 0)
+_LONDON_NY_OVERLAP_END = time(12, 0)
+
+_SESSION_BY_ID = {session.id: session for session in TRADING_SESSIONS}
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -20,17 +23,31 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _et_clock(when: datetime) -> time:
+    return when.astimezone(NY).time()
+
+
 def sessions_for_bar(bar_open: datetime) -> list[str]:
-    """Tag a bar open time with active FX session labels (UTC-based windows)."""
+    """Tag a bar open time with active FX liquidity session labels."""
     when = _as_utc(bar_open)
-    clock = when.time()
     sessions: list[str] = []
 
-    if _LONDON_START <= clock < _LONDON_END:
-        sessions.append("london")
-    if _NY_START <= clock < _NY_END:
-        sessions.append("ny")
-    if "london" in sessions and "ny" in sessions:
+    for session in TRADING_SESSIONS:
+        if is_session_active(session, when):
+            sessions.append(session.id)
+
+    clock = _et_clock(when)
+    if (
+        _ASIA_LONDON_OVERLAP_START <= clock < _ASIA_LONDON_OVERLAP_END
+        and "asia" in sessions
+        and "london" in sessions
+    ):
+        sessions.append("asia_london_overlap")
+    if (
+        _LONDON_NY_OVERLAP_START <= clock < _LONDON_NY_OVERLAP_END
+        and "london" in sessions
+        and "ny" in sessions
+    ):
         sessions.append("london_ny_overlap")
 
     return sessions

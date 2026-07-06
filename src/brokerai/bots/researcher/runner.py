@@ -543,6 +543,12 @@ async def _build_final_forex(
             messages,
             synthesis_model.get("api_key") or None,
             reasoning_effort=synthesis_reasoning,
+            cost_context={
+                "operation": "synthesis",
+                "source": "daily_report",
+                "report_date": report_date,
+                "model_id": synthesis_model.get("id"),
+            },
         )
         return synthesized, None
     except Exception as exc:

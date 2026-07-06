@@ -56,6 +56,27 @@ def test_london_ny_overlap_tagged():
     assert "london_ny_overlap" in sessions
 
 
+def test_asia_london_overlap_tagged():
+    when = datetime(2026, 1, 7, 8, 30, tzinfo=timezone.utc)  # 3:30 AM ET
+    sessions = sessions_for_bar(when)
+    assert "asia" in sessions
+    assert "london" in sessions
+    assert "asia_london_overlap" in sessions
+
+
+def test_asia_session_tagged_outside_london():
+    when = datetime(2026, 1, 7, 6, 0, tzinfo=timezone.utc)  # 1:00 AM ET
+    sessions = sessions_for_bar(when)
+    assert "asia" in sessions
+    assert "london" not in sessions
+
+
+def test_sydney_session_tagged_evening_et():
+    when = datetime(2026, 1, 7, 23, 0, tzinfo=timezone.utc)  # 6:00 PM ET
+    sessions = sessions_for_bar(when)
+    assert "sydney" in sessions
+
+
 def test_expected_latest_closed_bar_during_open_market():
     as_of = datetime(2026, 1, 7, 15, 30, tzinfo=timezone.utc)
     latest = expected_latest_closed_bar("M15", as_of=as_of)

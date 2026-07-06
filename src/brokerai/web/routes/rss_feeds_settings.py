@@ -5,6 +5,8 @@ from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from brokerai.bots.researcher.rss_feeds import feeds_for_api, feeds_to_opml, normalize_rss_categories
+from brokerai.config_backup.change_labels import describe_rss_feeds_change
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
 from brokerai.web.routes.auth import require_auth
 
@@ -34,6 +36,16 @@ async def save_rss_feeds(
     repo = ResearchSettingsRepository()
     current = await repo.get()
     sources = dict(current.get("data_sources") or {})
+    change_label = describe_rss_feeds_change(
+        sources,
+        rss_enabled=body.rss_enabled,
+        rss_categories=body.rss_categories,
+    )
+    await auto_backup_before(
+        trigger="research_settings.rss_feeds",
+        summary="RSS feed settings",
+        change_label=change_label or "RSS feed settings",
+    )
 
     if body.rss_enabled is not None:
         sources["rss_enabled"] = body.rss_enabled

@@ -59,6 +59,14 @@ RESEARCH_MARKETS: tuple[ResearchMarket, ...] = (
         close_time=time(16, 0),
     ),
     ResearchMarket(
+        id="singapore",
+        name="Singapore",
+        label="Singapore (SGX)",
+        timezone="Asia/Singapore",
+        open_time=time(9, 0),
+        close_time=time(17, 0),
+    ),
+    ResearchMarket(
         id="frankfurt",
         name="Frankfurt",
         label="Frankfurt (Xetra)",

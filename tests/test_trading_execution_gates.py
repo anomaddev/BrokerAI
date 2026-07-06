@@ -5,13 +5,22 @@ from brokerai.trading.execution_gates import (
     passes_execution_gates,
     resolve_priority_conflicts,
 )
-from brokerai.trading.session_gate import normalize_strategy_session
+from brokerai.trading.session_gate import normalize_strategy_session, normalize_strategy_sessions
 from brokerai.trading.types import AnalysisResult
 
 
 def test_normalize_strategy_session_aliases():
     assert normalize_strategy_session("London") == "london"
-    assert normalize_strategy_session("Sydney") == "asia"
+    assert normalize_strategy_session("Tokyo") == "asia"
+    assert normalize_strategy_session("Singapore") == "asia"
+    assert normalize_strategy_session("Hong Kong") == "asia"
+    assert normalize_strategy_session("Asia") == "asia"
+    assert normalize_strategy_session("Sydney") == "sydney"
+
+
+def test_normalize_strategy_sessions_maps_legacy_names():
+    assert normalize_strategy_sessions(["Tokyo", "Singapore"]) == ["asia"]
+    assert normalize_strategy_sessions(["Asia"]) == ["asia"]
 
 
 def test_is_executor_eligible_requires_signal_and_confidence():

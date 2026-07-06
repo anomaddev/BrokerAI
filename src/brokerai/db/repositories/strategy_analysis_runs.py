@@ -3,13 +3,85 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from brokerai.db.client import get_db
-from brokerai.trading.analysis_runs import analysis_result_to_document, serialize_analysis_run
+from brokerai.trading.analysis_runs import (
+    analysis_result_to_document,
+    normalize_candle_time,
+    serialize_analysis_run,
+)
 from brokerai.trading.types import AnalysisResult
 
 
 class StrategyAnalysisRunsRepository:
     COLLECTION = "strategy_analysis_runs"
+
+    @staticmethod
+    def _dedupe_filter(
+        *,
+        strategy_id: str,
+        pair: str,
+        candle_time: datetime,
+    ) -> dict[str, Any]:
+        return {
+            "strategy_id": strategy_id,
+            "pair": pair,
+            "candle_time": candle_time,
+        }
+
+    @staticmethod
+    def _merge_fields(existing: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
+        update_fields: dict[str, Any] = {}
+        if existing.get("run_type") != "manual":
+            update_fields.update(
+                {
+                    "strategy_name": doc["strategy_name"],
+                    "timeframe": doc["timeframe"],
+                    "direction": doc["direction"],
+                    "confidence": doc["confidence"],
+                    "signal_type": doc["signal_type"],
+                    "min_candles": doc["min_candles"],
+                    "metadata": doc["metadata"],
+                    "analyzed_at": doc["analyzed_at"],
+                }
+            )
+        if doc.get("run_type") == "manual" or existing.get("run_type") == "manual":
+            update_fields["run_type"] = "manual"
+        return update_fields
+
+    async def find_by_strategy_pair_candle(
+        self,
+        *,
+        strategy_id: str,
+        pair: str,
+        candle_time: datetime | str,
+    ) -> dict[str, Any] | None:
+        """Return an existing run for the same strategy, pair, and analyzed candle."""
+        when = normalize_candle_time(candle_time)
+        if when is None:
+            return None
+        handle = await get_db()
+        doc = await handle.db[self.COLLECTION].find_one(
+            self._dedupe_filter(strategy_id=strategy_id, pair=pair, candle_time=when),
+            {"_id": 0},
+        )
+        if doc is None:
+            return None
+        return serialize_analysis_run(doc)
+
+    async def _merge_existing(
+        self,
+        collection,
+        existing: dict[str, Any],
+        doc: dict[str, Any],
+    ) -> dict[str, Any]:
+        run_id = existing["id"]
+        update_fields = self._merge_fields(existing, doc)
+        if update_fields:
+            await collection.update_one({"id": run_id}, {"$set": update_fields})
+            return {**existing, **update_fields}
+        return existing
 
     async def insert_from_result(
         self,
@@ -19,7 +91,33 @@ class StrategyAnalysisRunsRepository:
     ) -> dict[str, Any]:
         doc = analysis_result_to_document(result, candle_time=candle_time)
         handle = await get_db()
-        await handle.db[self.COLLECTION].insert_one(doc)
+        collection = handle.db[self.COLLECTION]
+
+        candle_dt = doc.get("candle_time")
+        strategy_id = str(doc.get("strategy_id") or "")
+        pair = str(doc.get("pair") or "")
+        if candle_dt is not None and strategy_id and pair:
+            filter_doc = self._dedupe_filter(
+                strategy_id=strategy_id,
+                pair=pair,
+                candle_time=candle_dt,
+            )
+            existing = await collection.find_one(filter_doc)
+            if existing is not None:
+                merged = await self._merge_existing(collection, existing, doc)
+                return serialize_analysis_run(merged)
+
+            try:
+                await collection.insert_one(doc)
+            except DuplicateKeyError:
+                existing = await collection.find_one(filter_doc)
+                if existing is None:
+                    raise
+                merged = await self._merge_existing(collection, existing, doc)
+                return serialize_analysis_run(merged)
+            return serialize_analysis_run(doc)
+
+        await collection.insert_one(doc)
         return serialize_analysis_run(doc)
 
     async def list_recent(

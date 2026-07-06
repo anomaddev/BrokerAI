@@ -9,7 +9,9 @@ import {
   type MarketIndicators,
 } from "../lib/displaySettings";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import { useMarketBarAssets } from "../hooks/useMarketBarAssets";
 import { useMarketStatus } from "../hooks/useMarketStatus";
+import { assetClassesForOpenSession, openAssetClasses } from "../lib/marketBarAssets";
 import { resolveSessionTooltip } from "../lib/marketSessions";
 import {
   assetClassLabel,
@@ -175,13 +177,37 @@ function buildInactiveIndicatorEntries(
   return entries;
 }
 
+type MarketTooltipContentProps = {
+  title: string;
+  hours: string;
+  timingLabel: string | null;
+  assetClasses?: string[];
+};
+
+function MarketTooltipContent({ title, hours, timingLabel, assetClasses }: MarketTooltipContentProps) {
+  return (
+    <>
+      <p className="market-session-tooltip-title">{title}</p>
+      <p className="market-session-tooltip-hours">{hours}</p>
+      {timingLabel ? <p className="market-session-tooltip-timing">{timingLabel}</p> : null}
+      {assetClasses && assetClasses.length > 0 ? (
+        <div className="market-session-tooltip-assets">
+          <p className="market-session-tooltip-assets-label">Trading</p>
+          <p className="market-session-tooltip-assets-list">{assetClasses.join(" · ")}</p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 type SessionPillProps = {
   session: MarketSessionStatus;
   serverTime?: string;
   timeOptions: TimeFormatOptions;
+  assetClasses: string[];
 };
 
-function SessionPill({ session, serverTime, timeOptions }: SessionPillProps) {
+function SessionPill({ session, serverTime, timeOptions, assetClasses }: SessionPillProps) {
   const pillRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
   const [coords, setCoords] = useState<TooltipCoords | null>(null);
@@ -223,11 +249,12 @@ function SessionPill({ session, serverTime, timeOptions }: SessionPillProps) {
             role="tooltip"
             style={{ top: coords.top, left: coords.left }}
           >
-            <p className="market-session-tooltip-title">{tooltip.name}</p>
-            <p className="market-session-tooltip-hours">{tooltip.hours}</p>
-            {tooltip.timingLabel ? (
-              <p className="market-session-tooltip-timing">{tooltip.timingLabel}</p>
-            ) : null}
+            <MarketTooltipContent
+              title={tooltip.name}
+              hours={tooltip.hours}
+              timingLabel={tooltip.timingLabel}
+              assetClasses={session.status === "open" ? assetClasses : undefined}
+            />
           </div>,
           document.body,
         )
@@ -262,9 +289,10 @@ type AssetClassPillProps = {
   assetClass: AssetClassMarketStatus;
   serverTime?: string;
   timeOptions: TimeFormatOptions;
+  assetClasses: string[];
 };
 
-function AssetClassPill({ assetClass, serverTime, timeOptions }: AssetClassPillProps) {
+function AssetClassPill({ assetClass, serverTime, timeOptions, assetClasses }: AssetClassPillProps) {
   const pillRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
   const [coords, setCoords] = useState<TooltipCoords | null>(null);
@@ -306,11 +334,12 @@ function AssetClassPill({ assetClass, serverTime, timeOptions }: AssetClassPillP
             role="tooltip"
             style={{ top: coords.top, left: coords.left }}
           >
-            <p className="market-session-tooltip-title">{tooltip.name}</p>
-            <p className="market-session-tooltip-hours">{tooltip.hours}</p>
-            {tooltip.timingLabel ? (
-              <p className="market-session-tooltip-timing">{tooltip.timingLabel}</p>
-            ) : null}
+            <MarketTooltipContent
+              title={tooltip.name}
+              hours={tooltip.hours}
+              timingLabel={tooltip.timingLabel}
+              assetClasses={assetClass.status === "open" ? assetClasses : undefined}
+            />
           </div>,
           document.body,
         )
@@ -344,6 +373,7 @@ function AssetClassPill({ assetClass, serverTime, timeOptions }: AssetClassPillP
 export default function MarketSessionsBar() {
   const { timeOptions } = useGeneralSettings();
   const status = useMarketStatus();
+  const assetContext = useMarketBarAssets();
   const [indicators, setIndicators] = useState<MarketIndicators>(DEFAULT_MARKET_INDICATORS);
 
   useEffect(() => {
@@ -402,6 +432,7 @@ export default function MarketSessionsBar() {
     { fxOpen: status.fx_open },
   );
   const activeAssetClasses = allAssetClasses.filter(isAssetClassIndicatorVisible);
+  const openTradingAssetClasses = openAssetClasses(assetContext);
   const inactiveEntries = buildInactiveIndicatorEntries(
     status.sessions ?? [],
     allAssetClasses,
@@ -425,6 +456,7 @@ export default function MarketSessionsBar() {
           session={session}
           serverTime={status.server_time}
           timeOptions={timeOptions}
+          assetClasses={assetClassesForOpenSession(session.id, assetContext)}
         />
       ))}
       {activeAssetClasses.map((assetClass) => (
@@ -433,6 +465,7 @@ export default function MarketSessionsBar() {
           assetClass={assetClass}
           serverTime={status.server_time}
           timeOptions={timeOptions}
+          assetClasses={openTradingAssetClasses}
         />
       ))}
     </div>

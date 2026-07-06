@@ -6,7 +6,11 @@ import {
   type ChartOptions,
   type DeepPartial,
   type IChartApi,
+  type LogicalRange,
 } from "lightweight-charts";
+
+/** Default number of candles shown on first load; user can scroll or zoom out for more. */
+export const MAX_VISIBLE_CANDLES = 80;
 
 export const CANDLESTICK_SERIES_OPTIONS: CandlestickSeriesPartialOptions = {
   upColor: "#22c55e",
@@ -77,10 +81,26 @@ export function createBrokerChartOptions({
   };
 }
 
+/** Right-aligned viewport showing at most ``maxVisible`` most recent bars. */
+export function initialVisibleLogicalRange(
+  barCount: number,
+  maxVisible: number = MAX_VISIBLE_CANDLES,
+): LogicalRange {
+  if (barCount < 1) {
+    return { from: 0, to: 0 };
+  }
+  const lastIndex = barCount - 1;
+  const span = Math.min(maxVisible, barCount);
+  return {
+    from: Math.max(0, lastIndex - span + 1),
+    to: lastIndex,
+  };
+}
+
 export function fitTimeScaleToBounds(
   chart: IChartApi,
   barCount: number,
-  options: { fixEdges?: boolean } = {},
+  options: { fixEdges?: boolean; maxVisible?: number } = {},
 ) {
   if (barCount < 1) return;
   const timeScale = chart.timeScale();
@@ -91,8 +111,7 @@ export function fitTimeScaleToBounds(
       fixRightEdge: true,
     });
   }
-  timeScale.setVisibleLogicalRange({
-    from: 0,
-    to: Math.max(barCount - 1, 0),
-  });
+  timeScale.setVisibleLogicalRange(
+    initialVisibleLogicalRange(barCount, options.maxVisible ?? MAX_VISIBLE_CANDLES),
+  );
 }

@@ -1,5 +1,6 @@
 import type { AssetClass } from "../../../../api/client";
 import type { StrategyAssignmentMode } from "../../../../lib/strategies/instruments";
+import { SESSION_OPTIONS } from "../../../../lib/marketSessionDefs";
 import { TIMEFRAME_OPTIONS, type Timeframe, type TakeProfitMode, type TrailMode } from "../../../../lib/strategyParams";
 import { computeBuilderMinCandles } from "../../../../lib/strategyParams/helpers";
 
@@ -110,4 +111,4 @@ export const DEFAULT_EMA_CROSSOVER_PARAMS: EmaCrossoverParams = {
   }),
 };
 
-export const SESSION_OPTIONS = ["London", "NY", "Asia", "Sydney"] as const;
+export { SESSION_OPTIONS };

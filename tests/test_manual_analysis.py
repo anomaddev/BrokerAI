@@ -81,6 +81,7 @@ async def test_manual_analysis_runs_broker_execution(
         symbol="EUR/USD",
     )
 
+    mock_run_analyst.assert_awaited_once()
     mock_run_broker_execution.assert_awaited_once()
     mock_dispatch_intents.assert_awaited_once()
     dispatch_kwargs = mock_dispatch_intents.await_args.kwargs

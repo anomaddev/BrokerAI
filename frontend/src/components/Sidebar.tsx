@@ -5,6 +5,7 @@ import {
   Activity,
   BarChart3,
   CalendarClock,
+  CircleDollarSign,
   Coins,
   Compass,
   Database,
@@ -74,6 +75,7 @@ const NAV_SECTIONS: NavSection[] = [
 
 const SYSTEM_ITEMS: NavItem[] = [
   { to: ROUTES.activity, label: "Activity", icon: Activity },
+  { to: ROUTES.costLedger, label: "Cost Ledger", icon: CircleDollarSign },
   { to: ROUTES.settings, label: "Settings", icon: Settings },
 ];
 
@@ -123,6 +125,13 @@ function NavItemContent({
   );
 }
 
+function isNavItemPathActive(pathname: string, to: string, end?: boolean): boolean {
+  if (end) {
+    return pathname === to;
+  }
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
 function NavItemLink({
   item,
   collapsed,
@@ -151,7 +160,9 @@ function NavItemLink({
   return (
     <NavLink
       to={item.to}
-      end={item.end}
+      isActive={({ location }) =>
+        isNavItemPathActive(location.pathname, item.to, item.end)
+      }
       className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
       title={title}
     >

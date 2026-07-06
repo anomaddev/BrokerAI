@@ -43,12 +43,12 @@ export function findMarketBoundariesForCandles(
     boundaries.push({
       time: prevSec,
       kind: "close",
-      label: weekly ? "Weekly close" : "Market close",
+      label: weekly ? "Close" : "Close",
     });
     boundaries.push({
       time: currSec,
       kind: "open",
-      label: weekly ? "Weekly open" : "Market open",
+      label: weekly ? "Open" : "Open",
     });
   }
 

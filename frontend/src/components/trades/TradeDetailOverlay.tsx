@@ -40,7 +40,7 @@ export default function TradeDetailOverlay({
   reconciliation,
   onClose,
 }: TradeDetailOverlayProps) {
-  const { showUtc: globalShowUtc, effectiveTimezone } = useGeneralSettings();
+  const { showUtc: globalShowUtc, effectiveTimezone, timeFormat } = useGeneralSettings();
   const [viewUtc, setViewUtc] = useState(globalShowUtc);
   const [trade, setTrade] = useState(initialTrade);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
@@ -69,8 +69,9 @@ export default function TradeDetailOverlay({
     () => ({
       showUtc: viewUtc,
       timeZone: effectiveTimezone,
+      timeFormat,
     }),
-    [viewUtc, effectiveTimezone],
+    [viewUtc, effectiveTimezone, timeFormat],
   );
 
   const formatTradeInstant = useCallback(

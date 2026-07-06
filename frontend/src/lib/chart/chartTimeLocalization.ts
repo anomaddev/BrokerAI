@@ -56,11 +56,12 @@ export function createChartTickMarkFormatter(options: TimeFormatOptions) {
           day: "numeric",
         }).format(date);
       case TickMarkType.Time: {
+        const hour12 = options.timeFormat === "12h";
         const formatted = new Intl.DateTimeFormat(undefined, {
           timeZone,
           hour: "2-digit",
           minute: "2-digit",
-          hour12: false,
+          hour12,
         }).format(date);
         return options.showUtc ? `${formatted}` : formatted;
       }
@@ -70,7 +71,7 @@ export function createChartTickMarkFormatter(options: TimeFormatOptions) {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
-          hour12: false,
+          hour12: options.timeFormat === "12h",
         }).format(date);
       default:
         return null;

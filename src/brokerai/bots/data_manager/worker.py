@@ -9,7 +9,6 @@ from brokerai.bots.data_manager.candles import OANDA_SOURCE, fetch_and_cache_for
 from brokerai.bots.data_manager.service import DataManagerService, require_data_manager_service
 from brokerai.bots.secretary.types import FetchStatus, PipelineContext
 from brokerai.config.settings import get_settings
-from brokerai.core.pipeline_candle_cache import get_pipeline_candle_cache
 
 logger = logging.getLogger(__name__)
 
@@ -60,23 +59,6 @@ class DataManagerWorker(EphemeralBot[PipelineContext, PipelineContext]):
                 )
         else:
             request.fetch_status = FetchStatus.OK if fetch_result.candles_upserted or latest else FetchStatus.SKIPPED
-
-        if latest:
-            candles = await service.request_candles(
-                request.symbol,
-                request.timeframe,
-                bar_count=request.bar_count,
-                source=OANDA_SOURCE,
-                requester="data_manager_worker",
-            )
-            if candles:
-                cache = get_pipeline_candle_cache()
-                request.candles_ref = cache.store(
-                    request.symbol,
-                    request.timeframe,
-                    latest,
-                    candles,
-                )
 
         return WorkerResult(
             ok=True,

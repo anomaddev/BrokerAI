@@ -361,6 +361,36 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  listBackups: () =>
+    request<BackupListResponse>("/api/settings/backups"),
+  exportCurrentBackup: () => request<ConfigBackupRecord>("/api/settings/backups/export"),
+  getBackupSchedule: () => request<BackupScheduleSettings>("/api/settings/backups/schedule"),
+  saveBackupSchedule: (data: Partial<BackupScheduleSettingsInput>) =>
+    request<BackupScheduleSettings>("/api/settings/backups/schedule", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  createBackup: (data?: { label?: string }) =>
+    request<ConfigBackupSummary>("/api/settings/backups", {
+      method: "POST",
+      body: JSON.stringify(data ?? {}),
+    }),
+  importBackup: (file: File, options?: { label?: string; restore?: boolean }) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (options?.label?.trim()) form.append("label", options.label.trim());
+    if (options?.restore) form.append("restore", "true");
+    return requestForm<ConfigBackupImportResult>("/api/settings/backups/import", form);
+  },
+  getBackup: (backupId: string) => request<ConfigBackupRecord>(`/api/settings/backups/${backupId}`),
+  restoreBackup: (backupId: string, options?: { scope?: ConfigBackupRestoreScope }) =>
+    request<ConfigBackupRestoreResult>(`/api/settings/backups/${backupId}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ scope: options?.scope ?? "full" }),
+    }),
+  deleteBackup: (backupId: string) =>
+    request<{ ok: boolean }>(`/api/settings/backups/${backupId}`, { method: "DELETE" }),
+
   getRssFeeds: () => request<RssFeedsCatalog>("/api/settings/rss-feeds"),
   saveRssFeeds: (data: Partial<RssFeedsSettings>) =>
     request<RssFeedsCatalog>("/api/settings/rss-feeds", {
@@ -483,6 +513,34 @@ export const api = {
   getBotActivity: (limit = 20) =>
     request<BotActivityResponse>(`/api/bot/activity?limit=${limit}`),
 
+  getCostLedger: (params?: { limit?: number; before?: string; category?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.before) search.set("before", params.before);
+    if (params?.category) search.set("category", params.category);
+    const query = search.toString();
+    return request<CostLedgerResponse>(`/api/cost-ledger${query ? `?${query}` : ""}`);
+  },
+
+  getCostLedgerSummary: (params?: {
+    since?: string;
+    until?: string;
+    category?: string;
+    billable_only?: boolean;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.since) search.set("since", params.since);
+    if (params?.until) search.set("until", params.until);
+    if (params?.category) search.set("category", params.category);
+    if (params?.billable_only === false) search.set("billable_only", "false");
+    const query = search.toString();
+    return request<CostLedgerSummary>(
+      `/api/cost-ledger/summary${query ? `?${query}` : ""}`,
+    );
+  },
+
+  getNextCandlePreview: () => request<NextCandlePreviewResponse>("/api/bots/next-candle-preview"),
+
   listStrategyAnalysisRuns: (params?: {
     limit?: number;
     before?: string;
@@ -584,6 +642,48 @@ export type BotActivityEvent = {
 export type BotActivityResponse = {
   events: BotActivityEvent[];
   latest: BotActivityEvent | null;
+};
+
+export type CostLedgerEntry = {
+  id: string;
+  category: string;
+  amount_usd: number | null;
+  description: string;
+  source: string | null;
+  metadata: Record<string, unknown>;
+  occurred_at: string;
+};
+
+export type CostLedgerResponse = {
+  items: CostLedgerEntry[];
+  latest: CostLedgerEntry | null;
+};
+
+export type CostLedgerCategoryTotal = {
+  category: string;
+  amount_usd: number;
+  count: number;
+};
+
+export type CostLedgerSummary = {
+  totals: CostLedgerCategoryTotal[];
+  grand_total_usd: number;
+  since: string | null;
+  until: string | null;
+};
+
+export type NextCandlePreviewAssetSection = {
+  asset_class: string;
+  label: string;
+  symbols: string[];
+};
+
+export type NextCandlePreviewResponse = {
+  timeframe: string | null;
+  target_at: string | null;
+  symbols: string[];
+  asset_sections?: NextCandlePreviewAssetSection[];
+  skip_reason?: string | null;
 };
 
 export type StrategyAnalysisIntent = {
@@ -809,6 +909,7 @@ export type GeneralSettings = {
   timezone_auto: boolean;
   timezone: string | null;
   show_utc_times: boolean;
+  time_format: "12h" | "24h";
 };
 
 export type MarketSessionStatus = {
@@ -1194,6 +1295,76 @@ export type UpdateStrategyInput = {
   params?: StrategyParamsV1;
   instrument_selection?: StrategyInstrumentSelection;
   enabled?: boolean;
+};
+
+export type ConfigBackupKind = "change" | "full";
+export type ConfigBackupPayloadType = "full" | "incremental";
+export type ConfigBackupSource = "manual" | "scheduled" | "baseline" | "import";
+export type ConfigBackupRestoreScope = "setting" | "full";
+
+export type ConfigBackupSummary = {
+  id: string;
+  kind: ConfigBackupKind;
+  payload_type?: ConfigBackupPayloadType;
+  source?: ConfigBackupSource | null;
+  base_backup_id?: string | null;
+  label?: string | null;
+  trigger: string;
+  summary: string;
+  created_at: string;
+  schema_version: number;
+  category?: string;
+  change_label?: string;
+  included_areas?: string[];
+};
+
+export type ConfigBackupRecord = ConfigBackupSummary & {
+  payload: Record<string, unknown>;
+};
+
+export type ConfigBackupRestoreResult = {
+  restored_id: string;
+  safety_backup_id?: string | null;
+  safety_backup?: ConfigBackupSummary | null;
+  summary?: string | null;
+  scope?: ConfigBackupRestoreScope;
+};
+
+export type BackupScheduleSettingsInput = {
+  enabled?: boolean;
+  mode?: "daily" | "daily_time" | "interval";
+  daily_market_id?: string;
+  daily_offset_hours?: number;
+  daily_time?: string;
+  interval_hours?: number;
+  full_retention?: number;
+  change_retention?: number;
+};
+
+export type BackupScheduleSettings = BackupScheduleSettingsInput & {
+  last_scheduled_at?: string | null;
+  schedule_markets?: ResearchScheduleMarket[];
+  schedule_timezone?: string;
+};
+
+export type ConfigBackupTimeline = {
+  items: ConfigBackupSummary[];
+  total: number;
+};
+
+export type BackupListResponse = {
+  timeline: ConfigBackupTimeline;
+  full_retention: number;
+  change_retention: number;
+};
+
+export const BACKUP_TIMELINE_PAGE_SIZE = 25;
+
+export type ConfigBackupImportResult = {
+  backup: ConfigBackupSummary;
+  restored?: boolean;
+  safety_backup_id?: string | null;
+  safety_backup?: ConfigBackupSummary | null;
 };
 
 export type { StrategyParamsV1, StrategyPresetMeta, Timeframe };

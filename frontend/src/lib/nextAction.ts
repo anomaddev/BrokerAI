@@ -5,9 +5,9 @@ import {
   isKnownTimeframe,
   nextCandleCloseAtMs,
 } from "./candleSchedule";
-import type { MarketIndicators } from "./displaySettings";
+import { hasEnabledForexTradingSessions, type ForexTradingSessions } from "./forexTradingSessions";
 import { formatAppTimeOfDay, type TimeFormatOptions } from "./formatTime";
-import { findEarliestNextMarketOpen, type MarketOpenTarget } from "./marketSessions";
+import { findEarliestNextTradingSessionOpen, type MarketOpenTarget } from "./marketSessions";
 import type { Timeframe } from "./strategyParams/types";
 import { TIMEFRAME_LABELS } from "./strategyParams/types";
 
@@ -36,6 +36,8 @@ export type NextActionState = {
   windowStartAt: number;
   remainingMs: number;
   progress: number;
+  /** Set for candle_update — the timeframe driving the next close. */
+  timeframe?: Timeframe;
 };
 
 const FALLBACK_SCHEDULE_MARKETS: ResearchScheduleMarket[] = [
@@ -203,6 +205,7 @@ function buildActionState(
   targetAt: number,
   windowStartAt: number,
   nowMs: number,
+  timeframe?: Timeframe,
 ): NextActionState {
   const remainingMs = Math.max(0, targetAt - nowMs);
   return {
@@ -212,6 +215,7 @@ function buildActionState(
     windowStartAt,
     remainingMs,
     progress: computeProgress(nowMs, windowStartAt, targetAt),
+    ...(timeframe ? { timeframe } : {}),
   };
 }
 
@@ -266,13 +270,13 @@ function computeUpcomingDailyReportAction(
   return computeDailyReportAction(settings, now, reportDate);
 }
 
-function computeMarketOpenAction(
+function computeTradingSessionOpenAction(
   sessions: MarketSessionStatus[],
-  indicators: MarketIndicators,
+  enabledSessions: ForexTradingSessions,
   now: Date,
   options: { marketAvailable: boolean; serverTime?: string },
 ): NextActionState | null {
-  const nextOpen = findEarliestNextMarketOpen(sessions, indicators, now, options);
+  const nextOpen = findEarliestNextTradingSessionOpen(sessions, enabledSessions, now, options);
   if (!nextOpen) return null;
 
   const nowMs = now.getTime();
@@ -300,6 +304,7 @@ function computeCandleUpdateAction(now: Date, timeframe: Timeframe = PLACEHOLDER
     targetAt,
     windowStartAt,
     nowMs,
+    timeframe,
   );
 }
 
@@ -333,6 +338,7 @@ function resolveNextCandleUpdateAction(
       bestTargetAt,
       windowStartAt,
       nowMs,
+      bestTimeframe,
     );
   }
 
@@ -340,11 +346,11 @@ function resolveNextCandleUpdateAction(
 }
 
 export function computeNextAction(input: {
-  marketsOpen: boolean;
+  status: OverallBotStatus;
   orchestratorRunning: boolean;
   researchSettings: ResearchSettings | null;
   marketSessions: MarketSessionStatus[];
-  marketIndicators: MarketIndicators;
+  enabledTradingSessions: ForexTradingSessions;
   marketAvailable: boolean;
   marketServerTime?: string;
   now?: Date;
@@ -353,8 +359,12 @@ export function computeNextAction(input: {
 }): NextActionState | null {
   const now = input.now ?? new Date();
   const nowMs = now.getTime();
+  const sessionOptions = {
+    marketAvailable: input.marketAvailable,
+    serverTime: input.marketServerTime,
+  };
 
-  if (input.marketsOpen && input.orchestratorRunning) {
+  if (input.status === "running" && input.orchestratorRunning) {
     return resolveNextCandleUpdateAction(input.nextCandleFetches, now, input.candleTimeframe);
   }
 
@@ -365,14 +375,15 @@ export function computeNextAction(input: {
     }
   }
 
-  const marketOpenAction = computeMarketOpenAction(
+  if (!hasEnabledForexTradingSessions(input.enabledTradingSessions)) {
+    return buildActionState("none", "No trading sessions enabled", nowMs + 60_000, nowMs, nowMs);
+  }
+
+  const marketOpenAction = computeTradingSessionOpenAction(
     input.marketSessions,
-    input.marketIndicators,
+    input.enabledTradingSessions,
     now,
-    {
-      marketAvailable: input.marketAvailable,
-      serverTime: input.marketServerTime,
-    },
+    sessionOptions,
   );
   if (marketOpenAction) return marketOpenAction;
 
@@ -452,6 +463,10 @@ export function resolveOverallStatusExplainer(
     return "One or more modules reported an error.";
   }
 
+  if (nextAction?.kind === "none" && nextAction.label === "No trading sessions enabled") {
+    return "No trading sessions enabled.";
+  }
+
   if (nextAction?.kind === "daily_report") {
     return status === "running"
       ? "Daily report is due before the next scheduled action."
@@ -465,11 +480,50 @@ export function resolveOverallStatusExplainer(
     return "Markets open — monitoring for updates.";
   }
 
+  if (status === "waiting") {
+    if (nextAction?.kind === "market_open") {
+      return `Forex open — waiting for ${nextAction.label.toLowerCase()}.`;
+    }
+    return "Forex is open — no enabled trading session is active.";
+  }
+
   if (nextAction?.kind === "market_open") {
     return `Markets closed — waiting for ${nextAction.label.toLowerCase()}.`;
   }
 
   return "Markets closed — waiting for the next scheduled action.";
+}
+
+/** Market open/closed badge for the status tooltip header. */
+export function resolveMarketStatusBadge(status: OverallBotStatus): string | null {
+  if (status === "running" || status === "waiting") return "Market Open";
+  if (status === "sleeping") return "Market Closed";
+  return null;
+}
+
+/** Brief explainer for the "Next:" label hover tooltip. */
+export function resolveNextActionTooltipExplainer(nextAction: NextActionState): string {
+  if (nextAction.kind === "candle_update") {
+    const tf = nextAction.timeframe
+      ? TIMEFRAME_LABELS[nextAction.timeframe]
+      : "the next";
+    return `On candle close, enabled forex strategies are analyzed for each configured symbol on the ${tf} timeframe.`;
+  }
+
+  if (nextAction.kind === "daily_report") {
+    return "Generates the daily research report from configured models and market signals.";
+  }
+
+  if (nextAction.kind === "market_open") {
+    const sessionName = nextAction.label.replace(/\s+open$/i, "");
+    return `The ${sessionName} session opens next; the bot resumes active monitoring when an enabled trading session is active.`;
+  }
+
+  if (nextAction.label === "No trading sessions enabled") {
+    return "Enable at least one trading session in Settings → Broker → Forex.";
+  }
+
+  return "No upcoming scheduled action.";
 }
 
 export type { MarketOpenTarget };

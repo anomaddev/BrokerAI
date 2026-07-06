@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from brokerai.bots.data_manager.candle_requirements import CandleRequirement, collect_candle_requirements
 from brokerai.bots.data_manager.candle_schedule import is_candle_fetch_due, next_candle_close_at
 from brokerai.bots.data_manager.candle_watch import collect_watch_requirements
-from brokerai.bots.data_manager.candles import requirement_needs_bootstrap
+from brokerai.bots.data_manager.candles import requirement_needs_bootstrap, requirement_needs_warmup
 from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_strategies
 from brokerai.bots.data_manager.service import DataManagerService, require_data_manager_service
 from brokerai.bots.secretary.types import CandleJob
@@ -104,12 +104,6 @@ class CandleTimeline:
         due_units: list[tuple[str, str, int, bool, bool, bool]] = []
 
         for requirement in all_requirements:
-            needs_bootstrap = await requirement_needs_bootstrap(requirement, service)
-            if needs_bootstrap:
-                # Warm-up/backfill is handled once on Secretary startup — do not
-                # re-enter bootstrap on every tick while cache catches up.
-                continue
-
             next_at = self._next_fetch_at.get(requirement.timeframe)
             if next_at is None:
                 next_at = self._schedule_next_fetch(requirement.timeframe, now=when)
@@ -118,14 +112,16 @@ class CandleTimeline:
             if not fetch_due:
                 continue
 
+            needs_warmup = await requirement_needs_warmup(requirement, service)
+
             for pair in requirement.pairs:
                 due_units.append(
                     (
                         pair,
                         requirement.timeframe,
                         requirement.bar_count,
-                        False,
-                        True,
+                        needs_warmup,
+                        not needs_warmup,
                         True,
                     )
                 )

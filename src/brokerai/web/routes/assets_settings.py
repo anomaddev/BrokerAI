@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from brokerai.config_backup.change_labels import describe_asset_settings_change
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.asset_settings import ASSET_CLASSES, AssetSettingsRepository
-from brokerai.market_sessions import TRADING_SESSIONS, session_hours_label
+from brokerai.market_sessions import TRADING_SESSIONS, session_definition_payload
 from brokerai.web.routes.auth import require_auth
 
 router = APIRouter(prefix="/api/settings/assets", tags=["settings-assets"])
@@ -19,15 +21,8 @@ class AssetSettingsBody(BaseModel):
     primary_exchange: str | None = None
 
 
-def _forex_sessions_payload() -> list[dict[str, str]]:
-    return [
-        {
-            "id": session.id,
-            "name": session.name,
-            "hours": session_hours_label(session),
-        }
-        for session in TRADING_SESSIONS
-    ]
+def _forex_sessions_payload() -> list[dict[str, str | int | None]]:
+    return [session_definition_payload(session) for session in TRADING_SESSIONS]
 
 
 @router.get("/forex/pairs")
@@ -68,6 +63,22 @@ async def save_asset_settings(
         raise HTTPException(status_code=404, detail="Unknown asset class")
 
     repo = AssetSettingsRepository()
+    current = await repo.get(asset_class)
+    change_label = describe_asset_settings_change(
+        asset_class,
+        current,
+        enabled=body.enabled,
+        enabled_sessions=body.enabled_sessions,
+        enabled_pairs=body.enabled_pairs if asset_class == "forex" else None,
+        pair_order=body.pair_order if asset_class == "forex" else None,
+        primary_exchange=body.primary_exchange,
+    )
+    await auto_backup_before(
+        trigger=f"asset_settings.{asset_class}",
+        summary=f"{asset_class.title()} asset settings",
+        change_label=change_label or f"{asset_class.title()} asset settings",
+    )
+
     try:
         doc = await repo.save(
             asset_class,

@@ -22,6 +22,11 @@ from brokerai.research_markets import (
     normalize_market_offset_hours,
 )
 from brokerai.research_constants import DAILY_REPORT_REASONING_EFFORT, REASONING_EFFORT_OPTIONS
+from brokerai.config_backup.change_labels import (
+    describe_research_settings_change,
+    describe_weekly_research_settings_change,
+)
+from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.ai_models import AiModelsRepository
 from brokerai.db.repositories.data_connections import DataConnectionsRepository
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
@@ -191,6 +196,30 @@ async def save_research_settings(
         )
 
     repo = ResearchSettingsRepository()
+    before = await repo.get()
+
+    change_label = describe_research_settings_change(
+        before,
+        contributor_models=contributors,
+        synthesis_model_id=body.synthesis_model_id,
+        synthesis_reasoning_effort=body.synthesis_reasoning_effort,
+        data_sources=body.data_sources.model_dump() if body.data_sources else None,
+        daily_report_enabled=body.daily_report_enabled,
+        daily_report_market_id=normalize_market_id(body.daily_report_market_id)
+        if body.daily_report_market_id is not None
+        else None,
+        daily_report_market_offset_hours=normalize_market_offset_hours(
+            body.daily_report_market_offset_hours
+        )
+        if body.daily_report_market_offset_hours is not None
+        else None,
+    )
+    await auto_backup_before(
+        trigger="research_settings",
+        summary="Research settings",
+        change_label=change_label or "Research settings",
+    )
+
     settings = await repo.save(
         contributor_models=contributors,
         synthesis_model_id=body.synthesis_model_id,
@@ -241,6 +270,39 @@ async def save_weekly_research_settings(
     _check_offset(body.weekly_debrief_market_offset_hours, "weekly_debrief_market_offset_hours")
 
     repo = ResearchSettingsRepository()
+    before = await repo.get()
+
+    change_label = describe_weekly_research_settings_change(
+        before,
+        weekly_brief_enabled=body.weekly_brief_enabled,
+        weekly_brief_model_id=body.weekly_brief_model_id,
+        weekly_brief_reasoning_effort=body.weekly_brief_reasoning_effort,
+        weekly_brief_market_id=normalize_market_id(body.weekly_brief_market_id)
+        if body.weekly_brief_market_id is not None
+        else None,
+        weekly_brief_market_offset_hours=normalize_market_offset_hours(
+            body.weekly_brief_market_offset_hours
+        )
+        if body.weekly_brief_market_offset_hours is not None
+        else None,
+        weekly_debrief_enabled=body.weekly_debrief_enabled,
+        weekly_debrief_model_id=body.weekly_debrief_model_id,
+        weekly_debrief_reasoning_effort=body.weekly_debrief_reasoning_effort,
+        weekly_debrief_market_id=normalize_market_id(body.weekly_debrief_market_id)
+        if body.weekly_debrief_market_id is not None
+        else None,
+        weekly_debrief_market_offset_hours=normalize_market_offset_hours(
+            body.weekly_debrief_market_offset_hours
+        )
+        if body.weekly_debrief_market_offset_hours is not None
+        else None,
+    )
+    await auto_backup_before(
+        trigger="research_settings.weekly",
+        summary="Weekly research settings",
+        change_label=change_label or "Weekly research settings",
+    )
+
     settings = await repo.save(
         weekly_brief_enabled=body.weekly_brief_enabled,
         weekly_brief_model_id=body.weekly_brief_model_id,

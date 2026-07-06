@@ -20,6 +20,14 @@ def _coerce_utc(value: datetime | str | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def normalize_candle_time(value: datetime | str | None) -> datetime | None:
+    """Return a UTC naive datetime suitable for MongoDB candle-time keys."""
+    coerced = _coerce_utc(value)
+    if coerced is None:
+        return None
+    return coerced.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
 def _format_dt(value: datetime | str | None) -> str | None:
     coerced = _coerce_utc(value)
     return coerced.isoformat() if coerced else None
@@ -32,7 +40,7 @@ def analysis_result_to_document(
     run_id: str | None = None,
 ) -> dict[str, Any]:
     analyzed_at = _coerce_utc(result.analyzed_at) or datetime.now(timezone.utc)
-    candle_dt = _coerce_utc(candle_time)
+    candle_dt = normalize_candle_time(candle_time)
     return {
         "id": run_id or str(uuid4()),
         "strategy_id": result.strategy_id,
