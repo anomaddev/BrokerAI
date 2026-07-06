@@ -25,7 +25,10 @@ from brokerai.auth import (
     validate_password,
     verify_password,
 )
+from brokerai.auth.cookies import delete_session_cookie, set_session_cookie
 from brokerai.auth.general_settings import normalize_general_settings
+from brokerai.auth.mode import auth_mode, is_builtin_mode, is_oidc_mode
+from brokerai.auth.oidc_client import OidcClient
 from brokerai.auth.profile_photo import (
     clear_profile_photos,
     resolve_profile_photo_path,
@@ -71,16 +74,12 @@ class UpdateGeneralSettingsRequest(BaseModel):
     time_format: Literal["12h", "24h"] = "24h"
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
-    settings = get_settings()
-    response.set_cookie(
-        key=settings.session_cookie_name,
-        value=token,
-        httponly=True,
-        samesite="lax",
-        max_age=settings.session_max_age,
-        path="/",
-    )
+def _reject_when_oidc_enabled() -> None:
+    if is_oidc_mode():
+        raise HTTPException(
+            status_code=409,
+            detail="Built-in password authentication is disabled while OIDC auth is enabled",
+        )
 
 
 def get_current_username(request: Request) -> str | None:
@@ -88,18 +87,36 @@ def get_current_username(request: Request) -> str | None:
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
         return None
-    return SessionManager().verify_token(token)
+    verified = SessionManager().verify_token(token)
+    if verified is None:
+        return None
+    username, token_oidc_sub = verified
+    store = AuthStore()
+    user = store.get_user()
+    if user is None or user.username != username:
+        return None
+    if is_oidc_mode():
+        if user.oidc_sub is None:
+            return None
+        if token_oidc_sub and token_oidc_sub != user.oidc_sub:
+            return None
+    return username
 
 
 async def require_auth(request: Request) -> str:
     username = get_current_username(request)
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    store = AuthStore()
-    user = store.get_user()
-    if user is None or user.username != username:
-        raise HTTPException(status_code=401, detail="Not authenticated")
     return username
+
+
+@router.get("/config")
+async def auth_config() -> dict[str, str | bool]:
+    store = AuthStore()
+    return {
+        "mode": auth_mode(),
+        "setup_complete": store.is_setup_complete(),
+    }
 
 
 @router.get("/setup/status")
@@ -109,12 +126,14 @@ async def setup_status() -> dict[str, bool]:
 
 @router.post("/setup")
 async def setup(
+    request: Request,
     response: Response,
     username: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
     profile_photo: UploadFile | None = File(None),
 ) -> dict[str, str | bool]:
+    _reject_when_oidc_enabled()
     store = AuthStore()
     if store.is_setup_complete():
         raise HTTPException(status_code=409, detail="Setup already complete")
@@ -139,7 +158,7 @@ async def setup(
     await _provision_ssh_user(username, password)
 
     token = SessionManager().create_token(record.username)
-    _set_session_cookie(response, token)
+    set_session_cookie(response, token, request)
     return {
         "username": record.username,
         "status": "created",
@@ -148,26 +167,68 @@ async def setup(
 
 
 @router.post("/login")
-async def login(body: LoginRequest, response: Response) -> dict[str, str]:
+async def login(body: LoginRequest, request: Request, response: Response) -> dict[str, str]:
+    _reject_when_oidc_enabled()
     store = AuthStore()
     if not store.is_setup_complete():
         raise HTTPException(status_code=400, detail="Setup required")
     user = store.get_user()
     if user is None or user.username != body.username:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not verify_password(body.password, user.password_hash):
+    if not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = SessionManager().create_token(user.username)
-    _set_session_cookie(response, token)
+    set_session_cookie(response, token, request)
     return {"username": user.username, "status": "ok"}
 
 
 @router.post("/logout")
 async def logout(response: Response) -> dict[str, str]:
-    settings = get_settings()
-    response.delete_cookie(settings.session_cookie_name, path="/")
+    delete_session_cookie(response)
     return {"status": "logged_out"}
+
+
+@router.get("/oidc/login")
+async def oidc_login(request: Request, response: Response) -> Response:
+    if not is_oidc_mode():
+        raise HTTPException(status_code=404, detail="OIDC auth is not enabled")
+    redirect_url = await OidcClient().build_login_redirect(request, response)
+    response.status_code = 302
+    response.headers["Location"] = redirect_url
+    return response
+
+
+@router.get("/oidc/callback")
+async def oidc_callback(
+    request: Request,
+    response: Response,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> Response:
+    if not is_oidc_mode():
+        raise HTTPException(status_code=404, detail="OIDC auth is not enabled")
+    await OidcClient().handle_callback(
+        request,
+        response,
+        code=code,
+        state=state,
+        error=error,
+        error_description=error_description,
+    )
+    response.status_code = 302
+    response.headers["Location"] = "/"
+    return response
+
+
+@router.post("/oidc/logout")
+async def oidc_logout(request: Request, response: Response) -> dict[str, str | None]:
+    if not is_oidc_mode():
+        raise HTTPException(status_code=404, detail="OIDC auth is not enabled")
+    logout_url = await OidcClient().logout(request, response)
+    return {"status": "logged_out", "logout_url": logout_url}
 
 
 @router.get("/me")
@@ -229,14 +290,16 @@ async def delete_profile_photo(_username: str = Depends(require_auth)) -> dict[s
 @router.put("/account/username")
 async def change_username(
     body: ChangeUsernameRequest,
+    request: Request,
     response: Response,
     username: str = Depends(require_auth),
 ) -> dict[str, str]:
+    _reject_when_oidc_enabled()
     store = AuthStore()
     user = store.get_user()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if not verify_password(body.current_password, user.password_hash):
+    if not user.password_hash or not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect password")
     if not is_valid_username(body.username):
         raise HTTPException(status_code=400, detail="Invalid username")
@@ -247,7 +310,7 @@ async def change_username(
     await _provision_ssh_user(record.username, body.current_password)
 
     token = SessionManager().create_token(record.username)
-    _set_session_cookie(response, token)
+    set_session_cookie(response, token, request)
     return {"username": record.username, "status": "ok"}
 
 
@@ -256,11 +319,12 @@ async def change_password(
     body: ChangePasswordRequest,
     _username: str = Depends(require_auth),
 ) -> dict[str, str]:
+    _reject_when_oidc_enabled()
     store = AuthStore()
     user = store.get_user()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if not verify_password(body.current_password, user.password_hash):
+    if not user.password_hash or not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect password")
     try:
         validate_password(body.password, body.confirm_password)
@@ -382,6 +446,8 @@ async def update_general_settings(
 
 
 async def _provision_ssh_user(username: str, password: str) -> None:
+    if not is_builtin_mode():
+        return
     script = Path("/opt/brokerai/scripts/provision-admin-user.sh")
     if not script.exists():
         script = Path(__file__).resolve().parents[3] / "scripts" / "provision-admin-user.sh"
@@ -412,6 +478,9 @@ async def _provision_ssh_user(username: str, password: str) -> None:
 
 
 async def _update_ssh_password(username: str, password: str) -> None:
+    if not is_builtin_mode():
+        return
+
     def run() -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["sudo", "-n", "chpasswd"],

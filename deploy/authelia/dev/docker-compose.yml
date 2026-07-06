@@ -1,0 +1,13 @@
+services:
+  authelia:
+    image: authelia/authelia:4.38
+    container_name: brokerai-authelia-dev
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    volumes:
+      - ./config:/config
+    command:
+      - authelia
+      - --config
+      - /config/configuration.yml

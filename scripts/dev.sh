@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/dev.sh              Start dev stack (bootstrap if needed)
 #   ./scripts/dev.sh --setup      Bootstrap only (venv, .env, mongo, npm)
+#   ./scripts/dev.sh --oidc          Use local Authelia OIDC auth (Docker required)
 #   ./scripts/dev.sh --backend-only   API + orchestrator only (no Vite)
 #   ./scripts/dev.sh --no-mongo   Skip MongoDB Docker container
 #   ./scripts/dev.sh --no-open    Do not open browser (macOS)
@@ -19,6 +20,7 @@ SETUP_ONLY=false
 NO_MONGO=false
 NO_OPEN=false
 BACKEND_ONLY=false
+USE_OIDC=false
 
 usage() {
   cat <<EOF
@@ -28,6 +30,7 @@ Bootstrap and run BrokerAI locally for development.
 
 Options:
   --setup          Bootstrap venv, .env, MongoDB, and npm deps; do not start servers
+  --oidc           Enable local Authelia OIDC auth (requires Docker)
   --no-mongo       Skip Docker MongoDB auto-start
   --no-open        Do not open the browser (macOS)
   --backend-only   Skip Vite; serve built static via uvicorn only
@@ -38,6 +41,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --setup) SETUP_ONLY=true; shift ;;
+    --oidc) USE_OIDC=true; shift ;;
     --no-mongo) NO_MONGO=true; shift ;;
     --no-open) NO_OPEN=true; shift ;;
     --backend-only) BACKEND_ONLY=true; shift ;;
@@ -188,6 +192,20 @@ ensure_static_build() {
   "${ROOT}/scripts/build-frontend.sh"
 }
 
+ensure_oidc_dev() {
+  if [[ "${USE_OIDC}" != "true" ]]; then
+    return 0
+  fi
+  local setup_args=()
+  if [[ "${BACKEND_ONLY}" == "true" ]]; then
+    setup_args+=(--backend-only)
+  fi
+  if [[ "${SETUP_ONLY}" == "true" ]]; then
+    setup_args+=(--configure-only)
+  fi
+  "${ROOT}/scripts/setup-dev-oidc.sh" "${setup_args[@]}"
+}
+
 preflight() {
   if [[ "${BACKEND_ONLY}" != "true" ]]; then
     require_cmd npm
@@ -252,11 +270,16 @@ print_banner() {
     echo "  API:     http://127.0.0.1:${port}"
   fi
   echo "  MongoDB: mongodb://127.0.0.1:27017/brokerai"
+  if [[ "${USE_OIDC}" == "true" || "${BROKERAI_AUTH_MODE:-builtin}" == "oidc" ]]; then
+    echo "  Auth:    OIDC via Authelia — http://localhost:9091"
+    echo "           dev / BrokerAI!2026"
+  fi
   echo "  Ctrl+C to stop all"
   echo ""
 }
 
 bootstrap
+ensure_oidc_dev
 load_env
 
 if [[ "${SETUP_ONLY}" == "true" ]]; then

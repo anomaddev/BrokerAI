@@ -52,14 +52,29 @@ function LegacyStrategyEditRedirect() {
   return <Navigate to={`/research/strategies/${id ?? ""}/edit`} replace />;
 }
 
+type AuthStatus = "loading" | "setup" | "auth" | "oidc" | "ok";
+
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<"loading" | "setup" | "auth" | "ok">("loading");
+  const [status, setStatus] = useState<AuthStatus>("loading");
   const location = useLocation();
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        const config = await api.authConfig();
+        if (cancelled) return;
+
+        if (config.mode === "oidc") {
+          try {
+            await api.me();
+            if (!cancelled) setStatus("ok");
+          } catch {
+            if (!cancelled) setStatus("oidc");
+          }
+          return;
+        }
+
         const { setup_complete } = await api.setupStatus();
         if (cancelled) return;
         if (!setup_complete) {
@@ -80,6 +95,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (status === "loading") {
     return <div className="center-page">Loading…</div>;
   }
+
+  if (status === "oidc") {
+    window.location.href = "/api/auth/oidc/login";
+    return <div className="center-page">Redirecting to sign in…</div>;
+  }
+
   if (status === "setup" && location.pathname !== "/setup") {
     return <Navigate to="/setup" replace />;
   }
@@ -89,7 +110,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (status === "ok" && ["/login", "/setup"].includes(location.pathname)) {
     return <Navigate to="/" replace />;
   }
-  return <>{children}</>;
+
+  return (
+    <>
+      {children}
+    </>
+  );
 }
 
 export default function App() {

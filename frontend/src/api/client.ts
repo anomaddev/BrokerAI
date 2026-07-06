@@ -134,6 +134,8 @@ export type UpdateStatusResponse = {
 };
 
 export const api = {
+  authConfig: () =>
+    request<{ mode: "builtin" | "oidc"; setup_complete: boolean }>("/api/auth/config"),
   setupStatus: () => request<{ setup_complete: boolean }>("/api/auth/setup/status"),
   setup: (data: {
     username: string;
@@ -155,7 +157,11 @@ export const api = {
   },
   login: (data: { username: string; password: string }) =>
     request("/api/auth/login", { method: "POST", body: JSON.stringify(data) }),
-  logout: () => request("/api/auth/logout", { method: "POST" }),
+  logout: () => request<{ status: string; logout_url?: string | null }>("/api/auth/logout", { method: "POST" }),
+  oidcLogout: () =>
+    request<{ status: string; logout_url?: string | null }>("/api/auth/oidc/logout", {
+      method: "POST",
+    }),
   me: () => request<MeResponse>("/api/auth/me"),
   uploadProfilePhoto: (file: File) => {
     const form = new FormData();

@@ -20,7 +20,11 @@ The backend reads `.env` from the repo root (gitignored). If absent, create it t
 
 ### First-run / hello-world
 
-Fresh install shows a Setup wizard at `http://localhost:5173`. Create an admin (password rules: ≥12 chars, upper+lower+digit+special, e.g. `BrokerAI!2026`); it auto-logs-in. Auth state lives in `BROKERAI_DATA_DIR` (`data/`), strategies/market data in MongoDB.
+**Built-in auth (default):** Fresh install shows a Setup wizard at `http://localhost:5173`. Create an admin (password rules: ≥12 chars, upper+lower+digit+special, e.g. `BrokerAI!2026`); it auto-logs-in.
+
+**OIDC auth (matches production):** Run `./scripts/dev.sh --oidc` (requires Docker). Starts local Authelia on `:9091` and configures `.env` for OIDC. Sign in with `dev` / `BrokerAI!2026`. See `docs/auth/self-hosted-oidc.md`.
+
+Auth state lives in `BROKERAI_DATA_DIR` (`data/`), strategies/market data in MongoDB.
 
 ### Tests
 

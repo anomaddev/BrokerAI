@@ -62,6 +62,7 @@ function FormFooter({
 }
 
 export default function AccountTab() {
+  const [authMode, setAuthMode] = useState<"builtin" | "oidc">("builtin");
   const [currentUsername, setCurrentUsername] = useState("");
   const [savedFirstName, setSavedFirstName] = useState("");
   const [savedLastName, setSavedLastName] = useState("");
@@ -91,6 +92,11 @@ export default function AccountTab() {
   const [profileError, setProfileError] = useState("");
 
   useEffect(() => {
+    api
+      .authConfig()
+      .then((config) => setAuthMode(config.mode))
+      .catch(() => setAuthMode("builtin"));
+
     api
       .me()
       .then((user) => {
@@ -224,7 +230,11 @@ export default function AccountTab() {
     <div className="settings-panel">
       <SettingsPanelHeader
         title="Account"
-        description="Manage your BrokerAI login profile, username, and password."
+        description={
+          authMode === "oidc"
+            ? "Manage your BrokerAI profile and display preferences. Sign-in is handled by your identity provider."
+            : "Manage your BrokerAI login profile, username, and password."
+        }
       />
       <div className="settings-panel-body settings-panel-body--stack">
         {loading ? (
@@ -315,6 +325,8 @@ export default function AccountTab() {
               </form>
             </section>
 
+            {authMode === "builtin" ? (
+              <>
             <section className="account-section-card">
               <div className="settings-section-intro">
                 <h3 className="settings-subsection-title">Username</h3>
@@ -435,6 +447,8 @@ export default function AccountTab() {
                 />
               </form>
             </section>
+              </>
+            ) : null}
           </div>
         )}
       </div>

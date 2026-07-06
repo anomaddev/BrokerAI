@@ -1,13 +1,27 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 
 export default function Login() {
   const navigate = useNavigate();
+  const [mode, setMode] = useState<"loading" | "builtin" | "oidc">("loading");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api
+      .authConfig()
+      .then((config) => {
+        if (config.mode === "oidc") {
+          window.location.href = "/api/auth/oidc/login";
+          return;
+        }
+        setMode("builtin");
+      })
+      .catch(() => setMode("builtin"));
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,6 +36,10 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (mode === "loading" || mode === "oidc") {
+    return <div className="center-page">Redirecting to sign in…</div>;
   }
 
   return (

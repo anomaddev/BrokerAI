@@ -1,0 +1,14 @@
+# Reverse-proxy TLS termination for BrokerAI + Authelia OIDC.
+#
+# Replace brokerai.example.com with your hostname and update Authelia URLs to match.
+
+brokerai.example.com {
+    encode gzip
+
+    reverse_proxy /authelia/* authelia:9091
+    reverse_proxy * 127.0.0.1:1989 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        header_up X-Real-IP {remote_host}
+    }
+}
