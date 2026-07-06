@@ -16,8 +16,10 @@ type ReasonDefinition = {
 };
 
 const REASON_REGISTRY: Record<string, ReasonDefinition> = {
-  bullish_cross: { label: "Bullish crossover", short: "Bull cross", category: "signal" },
-  bearish_cross: { label: "Bearish crossover", short: "Bear cross", category: "signal" },
+  bullish_cross: { label: "Bullish Cross", short: "Bull cross", category: "signal" },
+  bearish_cross: { label: "Bearish Cross", short: "Bear cross", category: "signal" },
+  approaching_bullish_cross: { label: "Approaching Bullish", short: "Approach Bull", category: "signal" },
+  approaching_bearish_cross: { label: "Approaching Bearish", short: "Approach Bear", category: "signal" },
   ema_crossover: { label: "EMA crossover", short: "EMA cross", category: "signal" },
   oanda_import: { label: "Imported from OANDA", short: "OANDA import", category: "import" },
   random_trade: { label: "Random Trade", short: "Random Trade", category: "other" },

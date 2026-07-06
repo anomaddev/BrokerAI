@@ -39,7 +39,7 @@ async def record_execution_outcomes(
         if strategy is None:
             continue
         params = strategy_params(strategy)
-        _passed, reasons = passes_execution_gates(
+        _passed, reasons, gate_details = passes_execution_gates(
             analysis,
             params,
             trade_counts,
@@ -51,6 +51,7 @@ async def record_execution_outcomes(
             processed_at=when,
             gates_passed=False,
             gate_reasons=reasons,
+            gate_details=gate_details,
             priority_winner=False,
             intent_queued=False,
             intent=None,
@@ -63,6 +64,7 @@ async def persist_execution_outcome(
     processed_at: datetime,
     gates_passed: bool,
     gate_reasons: list[str],
+    gate_details: dict | None = None,
     priority_winner: bool,
     intent_queued: bool,
     intent: TradeIntent | None,
@@ -73,6 +75,7 @@ async def persist_execution_outcome(
         "processed_at": processed_at.isoformat(),
         "gates_passed": gates_passed,
         "gate_reasons": gate_reasons,
+        "gate_details": gate_details or {},
         "priority_winner": priority_winner,
         "intent_queued": intent_queued,
         "intent": serialize_intent(intent),
@@ -98,7 +101,7 @@ async def apply_execution_gates(
         if strategy is None:
             continue
         params = strategy_params(strategy)
-        passed, reasons = passes_execution_gates(
+        passed, reasons, gate_details = passes_execution_gates(
             analysis,
             params,
             trade_counts,
@@ -113,6 +116,7 @@ async def apply_execution_gates(
                 processed_at=when,
                 gates_passed=False,
                 gate_reasons=reasons,
+                gate_details=gate_details,
                 priority_winner=False,
                 intent_queued=False,
                 intent=None,
@@ -130,6 +134,7 @@ async def apply_execution_gates(
                 processed_at=when,
                 gates_passed=True,
                 gate_reasons=[],
+                gate_details={},
                 priority_winner=False,
                 intent_queued=False,
                 intent=None,
@@ -161,6 +166,7 @@ async def apply_execution_gates(
             processed_at=when,
             gates_passed=True,
             gate_reasons=[],
+            gate_details={},
             priority_winner=True,
             intent_queued=intent is not None,
             intent=intent,

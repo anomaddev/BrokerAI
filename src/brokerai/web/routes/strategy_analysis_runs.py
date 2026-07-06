@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -49,6 +49,72 @@ def _parse_instant(value: object) -> datetime | None:
 
 def _candle_open_time(candle: dict[str, Any]) -> datetime | None:
     return _parse_instant(candle.get("time"))
+
+
+def _bars_since_anchor(anchor: datetime, *, now: datetime, bar_duration) -> int:
+    """Closed bars from ``anchor`` open through the latest bar at ``now``."""
+    anchor_utc = anchor.astimezone(timezone.utc) if anchor.tzinfo else anchor.replace(tzinfo=timezone.utc)
+    now_utc = now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    if now_utc <= anchor_utc:
+        return 1
+    elapsed = now_utc - anchor_utc
+    return max(1, int(elapsed / bar_duration) + 1)
+
+
+def _analysis_signal_anchor_time(
+    run: dict[str, Any],
+    *,
+    bar_duration: timedelta | None = None,
+) -> datetime | None:
+    """Return the bar open time to center the analysis chart."""
+    metadata = run.get("metadata") or {}
+    if metadata.get("catchup") and metadata.get("crossover_time"):
+        crossover = _parse_instant(metadata.get("crossover_time"))
+        if crossover is not None:
+            return crossover
+
+    if bar_duration is not None:
+        implied = _implied_candle_open_at_analysis(run, bar_duration)
+        if implied is not None:
+            return implied
+
+    candle = _parse_instant(run.get("candle_time"))
+    if candle is not None:
+        return candle
+    crossover = _parse_instant(metadata.get("crossover_time"))
+    if crossover is not None:
+        return crossover
+    return _parse_instant(run.get("analyzed_at"))
+
+
+def _implied_candle_open_at_analysis(
+    run: dict[str, Any],
+    bar_duration: timedelta,
+) -> datetime | None:
+    """When analysis ran just after a bar close, return that bar's open time."""
+    analyzed = _parse_instant(run.get("analyzed_at"))
+    if analyzed is None:
+        return None
+
+    analyzed_utc = analyzed.astimezone(timezone.utc)
+    at_ms = int(analyzed_utc.timestamp() * 1000)
+    tf_ms = int(bar_duration.total_seconds() * 1000)
+    if tf_ms <= 0:
+        return None
+
+    ms_into_bar = at_ms % tf_ms
+    if ms_into_bar > 120_000:
+        return None
+
+    implied_open_ms = at_ms - ms_into_bar - tf_ms
+    stored = _parse_instant(run.get("candle_time"))
+    if stored is None:
+        return datetime.fromtimestamp(implied_open_ms / 1000, tz=timezone.utc)
+
+    stored_ms = int(stored.astimezone(timezone.utc).timestamp() * 1000)
+    if stored_ms < implied_open_ms:
+        return datetime.fromtimestamp(implied_open_ms / 1000, tz=timezone.utc)
+    return None
 
 
 def _resolve_anchor_candle_index(candles: list[dict[str, Any]], candle_time: datetime) -> int:
@@ -179,23 +245,28 @@ async def get_strategy_analysis_run_candles(
     if run is None:
         raise HTTPException(status_code=404, detail="Analysis run not found")
 
-    candle_time = _parse_instant(run.get("candle_time"))
-    if candle_time is None:
-        candle_time = _parse_instant(run.get("analyzed_at"))
-    if candle_time is None:
-        raise HTTPException(status_code=400, detail="Analysis candle time is unavailable")
-
     pair = str(run.get("pair") or "").strip()
     if not pair:
         raise HTTPException(status_code=400, detail="Analysis pair is unavailable")
 
     timeframe = str(run.get("timeframe") or "M15")
     validate_timeframe(timeframe)
-
     bar_duration = timeframe_to_duration(timeframe)
+
+    anchor_time = _analysis_signal_anchor_time(run, bar_duration=bar_duration)
+    if anchor_time is None:
+        raise HTTPException(status_code=400, detail="Analysis candle time is unavailable")
+
     warmup_bars = await _resolve_analysis_warmup_bars(run)
     display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
-    fetch_bars = display_bars_before + warmup_bars + ANALYSIS_DISPLAY_BARS_AFTER + 2
+    analyzed_at = _parse_instant(run.get("analyzed_at")) or anchor_time
+    bars_to_analyzed = _bars_since_anchor(
+        anchor_time,
+        now=analyzed_at,
+        bar_duration=bar_duration,
+    )
+    tail_bars = max(ANALYSIS_DISPLAY_BARS_AFTER + 2, bars_to_analyzed)
+    fetch_bars = display_bars_before + warmup_bars + tail_bars
 
     service = require_data_manager_service()
     try:
@@ -203,7 +274,7 @@ async def get_strategy_analysis_run_candles(
             pair,
             timeframe,
             fetch_bars,
-            until=candle_time,
+            until=anchor_time,
             price="M",
         )
     except ValueError as exc:
@@ -221,7 +292,7 @@ async def get_strategy_analysis_run_candles(
             detail="Candle data unavailable. Check your OANDA connection in Settings.",
         )
 
-    anchor_idx = _resolve_anchor_candle_index(candles, candle_time)
+    anchor_idx = _resolve_anchor_candle_index(candles, anchor_time)
     display_start_idx = max(0, anchor_idx - display_bars_before)
     display_end_idx = min(len(candles) - 1, anchor_idx + ANALYSIS_DISPLAY_BARS_AFTER)
 
@@ -229,7 +300,7 @@ async def get_strategy_analysis_run_candles(
     display_since_dt = _candle_open_time(candles[display_start_idx])
     display_until_dt = _candle_open_time(candles[display_end_idx])
     last_dt = _candle_open_time(candles[-1])
-    until_dt = (last_dt + bar_duration) if last_dt is not None else candle_time + bar_duration
+    until_dt = (last_dt + bar_duration) if last_dt is not None else analyzed_at + bar_duration
 
     if since_dt is None or display_since_dt is None or display_until_dt is None:
         raise HTTPException(status_code=503, detail="Candle data unavailable for this analysis window.")

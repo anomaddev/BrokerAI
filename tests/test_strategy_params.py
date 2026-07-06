@@ -24,6 +24,8 @@ def test_validate_params_accepts_default_ema_crossover():
     assert result["min_candles"] == 63
     assert result["execution"]["priority"] == 50
     assert "trailing" not in result["exits"]
+    assert result["signal"]["approaching"]["enabled"] is True
+    assert result["signal"]["approaching"]["max_gap_atr"] == 0.5
 
 
 def test_validate_params_accepts_reverse_crossover_with_ema_signal():

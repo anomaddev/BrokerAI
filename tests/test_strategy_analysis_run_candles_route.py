@@ -32,8 +32,8 @@ ANALYSIS_RUN = {
 }
 
 
-def _m15_candles(count: int, *, end: datetime) -> list[dict]:
-    bar_duration = timeframe_to_duration("M15")
+def _candles(count: int, *, end: datetime, timeframe: str = "M15") -> list[dict]:
+    bar_duration = timeframe_to_duration(timeframe)
     rows: list[dict] = []
     for offset in range(count):
         opened = end - (bar_duration * (count - 1 - offset))
@@ -48,6 +48,10 @@ def _m15_candles(count: int, *, end: datetime) -> list[dict]:
             }
         )
     return rows
+
+
+def _m15_candles(count: int, *, end: datetime) -> list[dict]:
+    return _candles(count, end=end, timeframe="M15")
 
 
 @pytest.fixture
@@ -77,9 +81,15 @@ def test_get_strategy_analysis_run_candles_returns_payload(
     repo.get_by_id.return_value = ANALYSIS_RUN
 
     candle_time = datetime.fromisoformat("2026-01-01T00:15:00+00:00")
+    analyzed_at = datetime.fromisoformat("2026-01-01T00:15:01+00:00")
+    run = {**ANALYSIS_RUN, "analyzed_at": analyzed_at.isoformat()}
+    repo.get_by_id.return_value = run
+
     warmup_bars = 63
     display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
-    fetch_bars = display_bars_before + warmup_bars + ANALYSIS_DISPLAY_BARS_AFTER + 2
+    bars_to_analyzed = int((analyzed_at - candle_time) / timeframe_to_duration("M15")) + 1
+    tail_bars = max(ANALYSIS_DISPLAY_BARS_AFTER + 2, bars_to_analyzed)
+    fetch_bars = display_bars_before + warmup_bars + tail_bars
     candles = _m15_candles(fetch_bars, end=candle_time)
 
     dm = AsyncMock()
@@ -102,9 +112,15 @@ def test_get_strategy_analysis_run_candles_returns_payload(
     display_until = datetime.fromisoformat(body["display_until"])
     fetch_since = datetime.fromisoformat(body["since"])
     fetch_until = datetime.fromisoformat(body["until"])
+    anchor_open = candle_time
+    last_open = datetime.fromisoformat(candles[-1]["time"].replace("Z", "+00:00"))
+    display_end_open = min(
+        anchor_open + (bar_duration * ANALYSIS_DISPLAY_BARS_AFTER),
+        last_open,
+    )
 
     assert display_since == candle_time - (bar_duration * display_bars_before)
-    assert display_until == candle_time
+    assert display_until == display_end_open
     assert fetch_since == datetime.fromisoformat(candles[0]["time"].replace("Z", "+00:00"))
     assert fetch_until == datetime.fromisoformat(candles[-1]["time"].replace("Z", "+00:00")) + bar_duration
 
@@ -115,6 +131,59 @@ def test_get_strategy_analysis_run_candles_returns_payload(
     assert call.args[1] == "M15"
     assert call.args[2] == fetch_bars
     assert call.kwargs["until"] == candle_time
+
+
+@patch("brokerai.web.routes.strategy_analysis_runs.require_data_manager_service")
+@patch("brokerai.web.routes.strategy_analysis_runs.StrategyAnalysisRunsRepository")
+def test_get_strategy_analysis_run_candles_anchors_on_crossover_metadata(
+    mock_repo_cls,
+    mock_require_service,
+    client: TestClient,
+) -> None:
+    """Startup catchup runs keep crossover_time in metadata while candle_time is current."""
+    repo = AsyncMock()
+    mock_repo_cls.return_value = repo
+    crossover_time = datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc)
+    latest_time = datetime(2026, 1, 1, 23, 0, tzinfo=timezone.utc)
+    run = {
+        **ANALYSIS_RUN,
+        "timeframe": "H1",
+        "candle_time": latest_time.isoformat(),
+        "analyzed_at": (latest_time + timedelta(minutes=1)).isoformat(),
+        "metadata": {
+            "crossover_time": crossover_time.strftime("%Y-%m-%dT%H:%M:%S.000000000Z"),
+            "catchup": True,
+        },
+    }
+    repo.get_by_id.return_value = run
+
+    analyzed_at = datetime.fromisoformat(run["analyzed_at"])
+
+    warmup_bars = 63
+    display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
+    bar_duration = timeframe_to_duration("H1")
+    bars_to_analyzed = int((analyzed_at - crossover_time) / bar_duration) + 1
+    fetch_bars = display_bars_before + warmup_bars + max(ANALYSIS_DISPLAY_BARS_AFTER + 2, bars_to_analyzed)
+    candles = _candles(fetch_bars, end=crossover_time, timeframe="H1")
+
+    dm = AsyncMock()
+    dm.fetch_live_candles_from_oanda = AsyncMock(return_value=candles)
+    mock_require_service.return_value = dm
+
+    response = client.get("/api/strategy-analysis-runs/run-1/candles")
+
+    assert response.status_code == 200
+    body = response.json()
+    display_since = datetime.fromisoformat(body["display_since"])
+    display_until = datetime.fromisoformat(body["display_until"])
+    last_open = datetime.fromisoformat(candles[-1]["time"].replace("Z", "+00:00"))
+    display_end_open = min(
+        crossover_time + (bar_duration * ANALYSIS_DISPLAY_BARS_AFTER),
+        last_open,
+    )
+
+    assert display_since == crossover_time - (bar_duration * display_bars_before)
+    assert display_until == display_end_open
 
 
 @patch("brokerai.web.routes.strategy_analysis_runs.require_data_manager_service")
@@ -140,7 +209,15 @@ def test_get_strategy_analysis_run_candles_resolves_warmup_from_strategy(
     }
 
     candle_time = datetime.fromisoformat("2026-01-01T00:15:00+00:00")
-    fetch_bars = max(ANALYSIS_DISPLAY_BARS_BEFORE, 63) + 63 + ANALYSIS_DISPLAY_BARS_AFTER + 2
+    analyzed_at = datetime.fromisoformat("2026-01-01T00:15:01+00:00")
+    run = {**ANALYSIS_RUN, "min_candles": 0, "analyzed_at": analyzed_at.isoformat()}
+    repo.get_by_id.return_value = run
+
+    warmup_bars = 63
+    display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
+    bars_to_analyzed = int((analyzed_at - candle_time) / timeframe_to_duration("M15")) + 1
+    tail_bars = max(ANALYSIS_DISPLAY_BARS_AFTER + 2, bars_to_analyzed)
+    fetch_bars = display_bars_before + warmup_bars + tail_bars
     candles = _m15_candles(fetch_bars, end=candle_time)
 
     dm = AsyncMock()
@@ -168,18 +245,21 @@ def test_get_strategy_analysis_run_candles_spans_weekend_by_bar_count(
     """Display window uses bar indices, not wall-clock hours across forex closures."""
     repo = AsyncMock()
     mock_repo_cls.return_value = repo
+    candle_time = datetime(2026, 7, 6, 3, 0, tzinfo=timezone.utc)
+    analyzed_at = datetime(2026, 7, 6, 3, 15, 1, tzinfo=timezone.utc)
     run = {
         **ANALYSIS_RUN,
         "pair": "USD/JPY",
         "min_candles": 100,
-        "candle_time": "2026-07-05T21:30:00.000000000Z",
+        "candle_time": candle_time.isoformat(),
+        "analyzed_at": analyzed_at.isoformat(),
     }
     repo.get_by_id.return_value = run
 
-    candle_time = datetime(2026, 7, 5, 21, 30, tzinfo=timezone.utc)
     warmup_bars = 100
     display_bars_before = max(ANALYSIS_DISPLAY_BARS_BEFORE, warmup_bars)
-    fetch_bars = display_bars_before + warmup_bars + ANALYSIS_DISPLAY_BARS_AFTER + 2
+    bars_to_analyzed = int((analyzed_at - candle_time) / timeframe_to_duration("M15")) + 1
+    fetch_bars = display_bars_before + warmup_bars + max(ANALYSIS_DISPLAY_BARS_AFTER + 2, bars_to_analyzed)
     candles = _m15_candles(fetch_bars, end=candle_time)
 
     dm = AsyncMock()

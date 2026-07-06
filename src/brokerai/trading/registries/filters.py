@@ -14,6 +14,8 @@ class FilterEvaluator(Protocol):
         candles: list[dict[str, Any]],
         indicators: IndicatorCacheView,
         direction: str | None,
+        *,
+        evaluate_at_time: str | None = None,
     ) -> tuple[bool, dict[str, Any]]: ...
 
 
@@ -33,6 +35,8 @@ def run_filter_chain(
     candles: list[dict[str, Any]],
     indicators: IndicatorCacheView,
     direction: str | None,
+    *,
+    evaluate_at_time: str | None = None,
 ) -> tuple[bool, dict[str, dict[str, Any]]]:
     results: dict[str, dict[str, Any]] = {}
     passed = True
@@ -52,7 +56,13 @@ def run_filter_chain(
             results[filter_id] = {"passed": True, "unknown_type": filter_type}
             continue
 
-        filter_passed, metadata = evaluator.evaluate(filter_spec, candles, indicators, direction)
+        filter_passed, metadata = evaluator.evaluate(
+            filter_spec,
+            candles,
+            indicators,
+            direction,
+            evaluate_at_time=evaluate_at_time,
+        )
         results[filter_id] = {"passed": filter_passed, **metadata}
         if not filter_passed:
             passed = False

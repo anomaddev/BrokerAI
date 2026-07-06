@@ -73,6 +73,7 @@ class ForexDataAnalystWorker(EphemeralBot[PipelineContext, list[AnalysisResult]]
                 candles,
                 cache,
                 timeframe=unit.timeframe,
+                catchup=request.catchup,
             )
             persisted = await StrategyAnalysisRunsRepository().insert_from_result(
                 analysis,

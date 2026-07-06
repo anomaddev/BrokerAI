@@ -106,6 +106,7 @@ async def test_startup_pipeline_runs_analysis_and_broker():
         strategies=(strategy,),
         incremental=False,
         bootstrap=True,
+        catchup=True,
     )
     latest = "2026-01-07T15:15:00.000000000Z"
     context_after_fetch = PipelineContext.from_job(job)
@@ -168,6 +169,7 @@ async def test_secretary_run_startup_pass_dispatches_jobs():
         strategies=(_sample_strategy(),),
         incremental=False,
         bootstrap=True,
+        catchup=True,
     )
 
     with (

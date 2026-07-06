@@ -35,6 +35,7 @@ class CandleJob:
     strategies: tuple[dict, ...]
     incremental: bool = True
     bootstrap: bool = False
+    catchup: bool = False
 
     @property
     def dedupe_key(self) -> str:
@@ -57,6 +58,7 @@ class PipelineContext:
     candles_ref: str | None = None
     incremental: bool = True
     bootstrap: bool = False
+    catchup: bool = False
 
     @classmethod
     def from_job(cls, job: CandleJob) -> PipelineContext:
@@ -70,6 +72,7 @@ class PipelineContext:
             strategies=job.strategies,
             incremental=job.incremental,
             bootstrap=job.bootstrap,
+            catchup=job.catchup,
         )
 
 

@@ -84,6 +84,7 @@ class PipelineRunner:
             )
             if (
                 not context.bootstrap
+                and not context.catchup
                 and revision_unchanged
                 and candles_upserted == 0
             ):

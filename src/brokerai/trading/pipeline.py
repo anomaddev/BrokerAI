@@ -52,6 +52,7 @@ def run_strategy_analysis(
     indicators: IndicatorCacheView,
     *,
     timeframe: str | None = None,
+    catchup: bool = False,
 ) -> AnalysisResult:
     ensure_trading_registries()
     params = strategy_params(strategy)
@@ -96,17 +97,34 @@ def run_strategy_analysis(
             analyzed_at=datetime.now(timezone.utc),
         )
 
-    signal_result = evaluator.evaluate(candles, params, indicators)
+    if catchup and signal_type == "ema_crossover":
+        signal_result = evaluator.evaluate(candles, params, indicators, catchup=True)
+    else:
+        signal_result = evaluator.evaluate(candles, params, indicators)
+    evaluate_at_time: str | None = None
+    if signal_result.direction:
+        crossover_time = signal_result.metadata.get("crossover_time")
+        signal_time = signal_result.metadata.get("signal_time")
+        if crossover_time:
+            evaluate_at_time = str(crossover_time)
+        elif signal_time:
+            evaluate_at_time = str(signal_time)
+
     filters_passed, filter_metadata = run_filter_chain(
         list(params.get("filters") or []),
         candles,
         indicators,
         signal_result.direction,
+        evaluate_at_time=evaluate_at_time,
     )
 
-    confidence = signal_result.confidence if filters_passed else 0.0
-    direction = signal_result.direction if filters_passed else None
-    metadata = {**signal_result.metadata, "filters": filter_metadata, "filters_passed": filters_passed}
+    confidence = signal_result.confidence
+    direction = signal_result.direction
+    metadata = {
+        **signal_result.metadata,
+        "filters": filter_metadata,
+        "filters_passed": filters_passed,
+    }
 
     return AnalysisResult(
         strategy_id=strategy_id,

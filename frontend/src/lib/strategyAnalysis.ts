@@ -7,10 +7,39 @@ const DIRECTION_LABELS: Record<string, string> = {
 };
 
 const SIGNAL_LABELS: Record<string, string> = {
-  bullish_cross: "Bullish cross",
-  bearish_cross: "Bearish cross",
+  bullish_cross: "Bullish Cross",
+  bearish_cross: "Bearish Cross",
+  approaching_bullish_cross: "Approaching Bullish",
+  approaching_bearish_cross: "Approaching Bearish",
+  approaching: "Approaching",
+  approaching_cross: "Approaching",
   none: "No signal",
 };
+
+export type AnalysisDirectionFilterValue = "long" | "short" | "none";
+
+export const ANALYSIS_DIRECTION_FILTER_OPTIONS: {
+  value: AnalysisDirectionFilterValue;
+  label: string;
+}[] = [
+  { value: "long", label: "Long" },
+  { value: "short", label: "Short" },
+  { value: "none", label: "None" },
+];
+
+export const DEFAULT_ANALYSIS_DIRECTION_FILTERS = new Set<AnalysisDirectionFilterValue>([
+  "long",
+  "short",
+  "none",
+]);
+
+export function analysisRunDirectionCategory(
+  run: Pick<StrategyAnalysisRun, "direction">,
+): AnalysisDirectionFilterValue {
+  if (run.direction === "long") return "long";
+  if (run.direction === "short") return "short";
+  return "none";
+}
 
 const GATE_REASON_LABELS: Record<string, string> = {
   no_signal: "No signal",
@@ -18,7 +47,11 @@ const GATE_REASON_LABELS: Record<string, string> = {
   asset_session_inactive: "Asset session inactive",
   session_inactive: "Strategy session inactive",
   max_trades_reached: "Max trades reached",
+  filters_failed: "Filters failed",
 };
+
+const FILTER_GATE_PREFIX = "filter_";
+const FILTER_GATE_SUFFIX = "_failed";
 
 export function directionLabel(direction: string | null | undefined): string {
   if (!direction) return "None";
@@ -68,11 +101,77 @@ export function filterSummary(run: StrategyAnalysisRun): string {
     .join(", ");
 }
 
-export function gateReasonLabel(reason: string): string {
+export function gateReasonLabel(
+  reason: string,
+  details?: Record<string, Record<string, unknown>>,
+): string {
+  if (reason.startsWith(FILTER_GATE_PREFIX) && reason.endsWith(FILTER_GATE_SUFFIX)) {
+    const filterId = reason.slice(
+      FILTER_GATE_PREFIX.length,
+      reason.length - FILTER_GATE_SUFFIX.length,
+    );
+    const label = formatFilterGateLabel(filterId);
+    const metrics = details?.[reason];
+    if (metrics) {
+      return `${label} failed (${formatGateMetrics(metrics)})`;
+    }
+    return `${label} failed`;
+  }
   return GATE_REASON_LABELS[reason] ?? reason.replace(/_/g, " ");
 }
 
+function formatFilterGateLabel(filterId: string): string {
+  const labels: Record<string, string> = {
+    adx: "ADX filter",
+    atr: "ATR filter",
+    rsi: "RSI filter",
+  };
+  return labels[filterId.toLowerCase()] ?? `${filterId} filter`;
+}
+
+function formatGateMetrics(metrics: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (metrics.adx != null && metrics.threshold != null) {
+    parts.push(`ADX ${formatMetricNumber(metrics.adx)} < ${formatMetricNumber(metrics.threshold)}`);
+  } else if (metrics.atr != null && metrics.min_value != null) {
+    parts.push(`ATR ${formatMetricNumber(metrics.atr)} < min ${formatMetricNumber(metrics.min_value)}`);
+  } else if (metrics.confidence_pct != null && metrics.min_confidence_pct != null) {
+    parts.push(
+      `${formatMetricNumber(metrics.confidence_pct)}% < ${formatMetricNumber(metrics.min_confidence_pct)}%`,
+    );
+  } else if (metrics.count != null && metrics.max_trades_per_day != null) {
+    parts.push(`${metrics.count} / ${metrics.max_trades_per_day} trades today`);
+  } else {
+    for (const [key, value] of Object.entries(metrics)) {
+      if (key === "evaluated_at" || key === "compare") continue;
+      parts.push(`${key.replace(/_/g, " ")}: ${formatMetricNumber(value)}`);
+    }
+  }
+  return parts.join(", ") || "see metrics";
+}
+
+function formatMetricNumber(value: unknown): string {
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : value.toFixed(4);
+  }
+  return String(value);
+}
+
+export function isActionableSignal(signal: unknown): boolean {
+  if (typeof signal !== "string" || !signal.trim()) return false;
+  const normalized = signal.trim().toLowerCase();
+  if (normalized === "none") return false;
+  if (normalized.includes("approach")) return false;
+  return true;
+}
+
+export function isApproachingSignal(run: Pick<StrategyAnalysisRun, "metadata">): boolean {
+  const raw = run.metadata.signal;
+  return typeof raw === "string" && raw.toLowerCase().includes("approach");
+}
+
 export function isExecutorEligible(run: StrategyAnalysisRun): boolean {
+  if (!isActionableSignal(run.metadata.signal)) return false;
   return run.confidence > 0 && run.direction != null;
 }
 
@@ -85,7 +184,9 @@ export function executionOutcomeLabel(run: StrategyAnalysisRun): string {
   if (execution.intent_queued) return "Intent queued";
   if (!execution.gates_passed) {
     const reason = execution.gate_reasons[0];
-    return reason ? `Gated: ${gateReasonLabel(reason)}` : "Gated";
+    return reason
+      ? `Gated: ${gateReasonLabel(reason, execution.gate_details)}`
+      : "Gated";
   }
   if (!execution.priority_winner) return "Lower priority";
   if (run.direction == null) return "No signal";
@@ -112,6 +213,21 @@ export type FilterDetail = {
   values: Record<string, unknown>;
 };
 
+const HIDDEN_FILTER_METRIC_KEYS = new Set(["evaluated_at"]);
+
+function visibleFilterMetricValues(
+  filterId: string,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalized = filterId.trim().toLowerCase();
+  if (normalized !== "adx" && normalized !== "atr") {
+    return values;
+  }
+  return Object.fromEntries(
+    Object.entries(values).filter(([key]) => !HIDDEN_FILTER_METRIC_KEYS.has(key)),
+  );
+}
+
 export function filterDetails(run: StrategyAnalysisRun): FilterDetail[] {
   const filters = run.metadata.filters;
   if (!filters || typeof filters !== "object") return [];
@@ -124,7 +240,7 @@ export function filterDetails(run: StrategyAnalysisRun): FilterDetail[] {
     return {
       id,
       passed: Boolean(passed),
-      values,
+      values: visibleFilterMetricValues(id, values),
     };
   });
 }

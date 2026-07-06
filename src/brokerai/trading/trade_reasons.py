@@ -16,8 +16,18 @@ class TradeReasonInfo:
 # Short labels are capped at 19 characters for compact table display.
 REASON_REGISTRY: dict[str, TradeReasonInfo] = {
     # Entry / execution
-    "bullish_cross": TradeReasonInfo("Bullish crossover", "Bull cross", "signal"),
-    "bearish_cross": TradeReasonInfo("Bearish crossover", "Bear cross", "signal"),
+    "bullish_cross": TradeReasonInfo("Bullish Cross", "Bull cross", "signal"),
+    "bearish_cross": TradeReasonInfo("Bearish Cross", "Bear cross", "signal"),
+    "approaching_bullish_cross": TradeReasonInfo(
+        "Approaching Bullish",
+        "Approach Bull",
+        "signal",
+    ),
+    "approaching_bearish_cross": TradeReasonInfo(
+        "Approaching Bearish",
+        "Approach Bear",
+        "signal",
+    ),
     "ema_crossover": TradeReasonInfo("EMA crossover", "EMA cross", "signal"),
     "oanda_import": TradeReasonInfo("Imported from OANDA", "OANDA import", "import"),
     "random_trade": TradeReasonInfo("Random Trade", "Random Trade", "other"),

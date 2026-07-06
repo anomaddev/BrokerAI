@@ -60,6 +60,77 @@ def test_is_executor_eligible_requires_signal_and_confidence():
     assert is_executor_eligible(actionable) is True
 
 
+def test_is_executor_eligible_when_filters_failed_but_signal_present():
+    blocked = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.75,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+        metadata={"signal": "bullish_cross", "filters_passed": False},
+    )
+    assert is_executor_eligible(blocked) is True
+
+
+def test_is_executor_eligible_rejects_approaching_signal():
+    approaching = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.65,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+        metadata={"signal": "approaching_bullish_cross"},
+    )
+    assert is_executor_eligible(approaching) is False
+
+
+def test_passes_execution_gates_blocks_failed_filters():
+    result = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.75,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+        metadata={
+            "signal": "bullish_cross",
+            "filters_passed": False,
+            "filters": {
+                "adx": {
+                    "passed": False,
+                    "adx": 18.53,
+                    "threshold": 25,
+                    "compare": "gte",
+                },
+                "atr": {
+                    "passed": False,
+                    "atr": 0.0002,
+                    "min_value": 0.0008,
+                },
+            },
+        },
+    )
+    passed, reasons, details = passes_execution_gates(
+        result,
+        {"execution": {"min_confidence": 0}, "risk": {"max_trades_per_day": 3}},
+        {},
+        when=datetime.now(timezone.utc),
+    )
+    assert passed is False
+    assert "filter_adx_failed" in reasons
+    assert "filter_atr_failed" in reasons
+    assert details["filter_adx_failed"]["adx"] == 18.53
+    assert details["filter_atr_failed"]["min_value"] == 0.0008
+
+
 def test_passes_execution_gates_blocks_low_confidence():
     result = AnalysisResult(
         strategy_id="s1",
@@ -75,9 +146,10 @@ def test_passes_execution_gates_blocks_low_confidence():
         "execution": {"min_confidence": 60, "sessions": ["London"]},
         "risk": {"max_trades_per_day": 3},
     }
-    passed, reasons = passes_execution_gates(result, params, {}, when=datetime.now(timezone.utc))
+    passed, reasons, details = passes_execution_gates(result, params, {}, when=datetime.now(timezone.utc))
     assert passed is False
     assert "confidence_below_threshold" in reasons
+    assert details["confidence_below_threshold"]["confidence_pct"] == 50.0
 
 
 def test_resolve_priority_conflicts_picks_lower_priority_value():

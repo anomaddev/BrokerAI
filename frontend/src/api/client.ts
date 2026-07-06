@@ -698,6 +698,7 @@ export type StrategyAnalysisExecution = {
   processed_at: string;
   gates_passed: boolean;
   gate_reasons: string[];
+  gate_details?: Record<string, Record<string, unknown>>;
   priority_winner: boolean;
   intent_queued: boolean;
   intent: StrategyAnalysisIntent | null;

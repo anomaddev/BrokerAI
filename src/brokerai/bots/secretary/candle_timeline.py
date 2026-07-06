@@ -249,6 +249,7 @@ class CandleTimeline:
                     strategies=unit.strategies,
                     incremental=False,
                     bootstrap=needs_bootstrap,
+                    catchup=True,
                 )
             )
 

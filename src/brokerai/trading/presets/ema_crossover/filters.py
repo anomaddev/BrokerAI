@@ -4,6 +4,7 @@ from typing import Any
 
 from brokerai.trading.indicator_cache import IndicatorCacheView, indicator_cache_key
 from brokerai.trading.indicators.adx import compute_adx
+from brokerai.trading.indicators.at_time import atr_value_at_time, series_value_at_time
 from brokerai.trading.indicators.atr import compute_atr
 from brokerai.trading.registries.filters import register_filter
 
@@ -31,6 +32,8 @@ class AdxFilterEvaluator:
         candles: list[dict[str, Any]],
         indicators: IndicatorCacheView,
         direction: str | None,
+        *,
+        evaluate_at_time: str | None = None,
     ) -> tuple[bool, dict[str, Any]]:
         _ = direction
         period = int(filter_spec.get("period", 14))
@@ -40,9 +43,16 @@ class AdxFilterEvaluator:
         series = indicators.get_series(key) or compute_adx(candles, period)
         if not series:
             return False, {"adx": None, "reason": "insufficient_data"}
-        adx_val = float(series[-1]["value"])
+        adx_val = series_value_at_time(series, evaluate_at_time)
+        if adx_val is None:
+            return False, {"adx": None, "reason": "insufficient_data"}
         passed = _compare(adx_val, threshold, compare)
-        return passed, {"adx": adx_val, "threshold": threshold, "compare": compare}
+        metadata: dict[str, Any] = {
+            "adx": adx_val,
+            "threshold": threshold,
+            "compare": compare,
+        }
+        return passed, metadata
 
 
 class AtrFilterEvaluator:
@@ -54,11 +64,17 @@ class AtrFilterEvaluator:
         candles: list[dict[str, Any]],
         indicators: IndicatorCacheView,
         direction: str | None,
+        *,
+        evaluate_at_time: str | None = None,
     ) -> tuple[bool, dict[str, Any]]:
         _ = direction
         period = int(filter_spec.get("period", 14))
         key = indicator_cache_key("atr", period)
-        atr_val = indicators.get_scalar(key)
+        atr_val = None
+        if evaluate_at_time:
+            atr_val = atr_value_at_time(candles, period, evaluate_at_time)
+        if atr_val is None:
+            atr_val = indicators.get_scalar(key)
         if atr_val is None:
             atr_val = compute_atr(candles, period)
         min_value = filter_spec.get("min_value")
@@ -68,7 +84,12 @@ class AtrFilterEvaluator:
             passed = False
         if max_value is not None and atr_val > float(max_value):
             passed = False
-        return passed, {"atr": atr_val, "min_value": min_value, "max_value": max_value}
+        metadata: dict[str, Any] = {
+            "atr": atr_val,
+            "min_value": min_value,
+            "max_value": max_value,
+        }
+        return passed, metadata
 
 
 def register_ema_crossover_filters() -> None:

@@ -444,7 +444,9 @@ class CandleCache:
             )
         else:
             anchor = until.astimezone(timezone.utc) if until.tzinfo else until.replace(tzinfo=timezone.utc)
-            to_exclusive = format_oanda_time(anchor + timeframe_to_duration(timeframe))
+            to_dt = anchor + timeframe_to_duration(timeframe)
+            to_dt = to_dt.replace(microsecond=0)
+            to_exclusive = format_oanda_time(to_dt)
             raw = await fetch_candles_to(
                 token,
                 environment,

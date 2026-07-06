@@ -93,7 +93,7 @@ def test_passes_execution_gates_blocks_asset_session():
         "risk": {"max_trades_per_day": 3},
     }
     when = datetime(2026, 3, 4, 14, 0, tzinfo=timezone.utc)
-    passed, reasons = passes_execution_gates(
+    passed, reasons, _details = passes_execution_gates(
         result,
         params,
         {},

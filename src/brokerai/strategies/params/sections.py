@@ -395,14 +395,35 @@ def validate_signal_ema_crossover(
     if confirmation not in CONFIRMATIONS:
         raise ParamsValidationError(f"Invalid confirmation: {confirmation}", field=f"{field}.confirmation")
 
+    approaching_raw = data.get("approaching")
+    approaching: dict[str, Any] | None = None
+    if approaching_raw is not None:
+        approaching_data = _require_dict(approaching_raw, f"{field}.approaching")
+        approaching = {
+            "enabled": _require_bool(approaching_data.get("enabled", True), f"{field}.approaching.enabled"),
+            "max_gap_atr": _require_number(
+                approaching_data.get("max_gap_atr", 0.5),
+                f"{field}.approaching.max_gap_atr",
+            ),
+            "min_narrow_bars": _require_int(
+                approaching_data.get("min_narrow_bars", 2),
+                f"{field}.approaching.min_narrow_bars",
+            ),
+        }
+        _check_bounds(approaching["max_gap_atr"], f"{field}.approaching.max_gap_atr", 0.01, 5.0)
+        _check_bounds(approaching["min_narrow_bars"], f"{field}.approaching.min_narrow_bars", 1, 10)
+
     _ = schema
-    return {
+    normalized: dict[str, Any] = {
         "type": signal_type,
         "fast_ref": fast_ref,
         "slow_ref": slow_ref,
         "direction": direction,
         "confirmation": confirmation,
     }
+    if approaching is not None:
+        normalized["approaching"] = approaching
+    return normalized
 
 
 def _normalize_timeframe(value: Any, *, field: str) -> str:

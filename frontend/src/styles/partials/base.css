@@ -1440,6 +1440,13 @@ input {
   padding: 1rem 1.25rem 1.25rem;
 }
 
+.main-content:has(.analysis-page) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
 .page-title {
   font-size: 1.25rem;
   margin-bottom: 1rem;

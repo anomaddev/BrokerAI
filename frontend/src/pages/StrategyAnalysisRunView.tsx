@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import {
   api,
   type CandleBar,
@@ -8,6 +8,7 @@ import {
   type StrategyAnalysisRun,
 } from "../api/client";
 import AnalysisRunDetailPanel from "../components/analysis/AnalysisRunDetailPanel";
+import AnalysisRecencyBadge from "../components/analysis/AnalysisRecencyBadge";
 import {
   AnalysisRunDetailSkeleton,
   AnalysisRunHeaderSkeleton,
@@ -16,13 +17,25 @@ import ExploreCandleChart from "../components/explore/ExploreCandleChart";
 import { ROUTES } from "../lib/routes";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import {
+  analysisCandleOpenTime,
   analysisChartTimeframe,
   buildAnalysisCandleWindow,
+  formatAnalysisCandleLabel,
 } from "../lib/analysis/analysisCandleWindow";
 import {
   analysisRunCrossoverSignal,
   type SignalLookback,
 } from "../lib/analysis/analysisRunChartSignals";
+import {
+  ANALYSIS_RUN_NAV_LIMIT,
+  buildAnalysisRunNavIds,
+  resolveAnalysisRunNeighbors,
+  type AnalysisRunNavigationState,
+} from "../lib/analysis/analysisRunNavigation";
+import {
+  analysisRunRecency,
+  buildStaleAnalysisRunIds,
+} from "../lib/analysis/analysisRunRecency";
 import { parseAppInstant } from "../lib/formatTime";
 import { decomposeStrategyToLayers } from "../lib/chart/chartOverlayState";
 import { directionClassName, directionLabel } from "../lib/strategyAnalysis";
@@ -35,8 +48,11 @@ function timeframeLabel(timeframe: string): string {
 export default function StrategyAnalysisRunView() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
-  const { formatInstant } = useGeneralSettings();
+  const location = useLocation();
+  const navigationState = location.state as AnalysisRunNavigationState | null;
+  const { formatInstant, timeOptions } = useGeneralSettings();
   const [run, setRun] = useState<StrategyAnalysisRun | null>(null);
+  const [navRunIds, setNavRunIds] = useState<string[]>(() => navigationState?.runIds ?? []);
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [candles, setCandles] = useState<CandleBar[]>([]);
   const [candleWindowBounds, setCandleWindowBounds] = useState<{
@@ -53,6 +69,49 @@ export default function StrategyAnalysisRunView() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [relatedRuns, setRelatedRuns] = useState<StrategyAnalysisRun[]>([]);
+
+  useEffect(() => {
+    if (navigationState?.runIds?.length) {
+      setNavRunIds(navigationState.runIds);
+    }
+  }, [navigationState]);
+
+  useEffect(() => {
+    if (navRunIds.length > 0 || !runId) return;
+
+    let cancelled = false;
+    void api
+      .listStrategyAnalysisRuns({ limit: ANALYSIS_RUN_NAV_LIMIT })
+      .then((data) => {
+        if (cancelled) return;
+        setNavRunIds(buildAnalysisRunNavIds(data.runs));
+      })
+      .catch(() => {
+        if (!cancelled) setNavRunIds([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [navRunIds.length, runId]);
+
+  const neighbors = useMemo(
+    () => (runId ? resolveAnalysisRunNeighbors(navRunIds, runId) : null),
+    [navRunIds, runId],
+  );
+
+  const recency = useMemo(() => {
+    if (!run) return "historical" as const;
+    const pool = relatedRuns.length > 0 ? relatedRuns : [run];
+    return analysisRunRecency(run, buildStaleAnalysisRunIds(pool));
+  }, [run, relatedRuns]);
+
+  function navigateToRun(targetId: string) {
+    navigate(ROUTES.research.analysisRun(targetId), {
+      state: { runIds: navRunIds } satisfies AnalysisRunNavigationState,
+    });
+  }
 
   useEffect(() => {
     if (!runId) {
@@ -134,6 +193,31 @@ export default function StrategyAnalysisRunView() {
     };
   }, [runId]);
 
+  useEffect(() => {
+    if (!run?.strategy_id || !run.pair) {
+      setRelatedRuns([]);
+      return;
+    }
+
+    let cancelled = false;
+    void api
+      .listStrategyAnalysisRuns({
+        limit: ANALYSIS_RUN_NAV_LIMIT,
+        strategy_id: run.strategy_id,
+        pair: run.pair,
+      })
+      .then((data) => {
+        if (!cancelled) setRelatedRuns(data.runs);
+      })
+      .catch(() => {
+        if (!cancelled) setRelatedRuns([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [run?.strategy_id, run?.pair]);
+
   const timeframe = useMemo(
     () => analysisChartTimeframe(run?.timeframe),
     [run?.timeframe],
@@ -155,9 +239,14 @@ export default function StrategyAnalysisRunView() {
     return signal ? [signal] : [];
   }, [run]);
 
+  const candleLabel = useMemo(
+    () => (run ? formatAnalysisCandleLabel(run, timeOptions) : null),
+    [run, timeOptions],
+  );
+
   const signalLookback = useMemo((): SignalLookback | null => {
     if (!run) return null;
-    const rawTime = run.candle_time ?? run.analyzed_at;
+    const rawTime = analysisCandleOpenTime(run);
     if (rawTime == null) return null;
     const date = parseAppInstant(String(rawTime));
     if (!date) return null;
@@ -204,7 +293,10 @@ export default function StrategyAnalysisRunView() {
           <div className="analysis-run-view-title-row">
             <div className="analysis-run-view-title-block">
               <h1 className="page-title analysis-run-view-title">
-                {run.strategy_name} · {run.pair}
+                <span className="analysis-run-view-title-text">
+                  {run.strategy_name} · {run.pair}
+                </span>
+                <AnalysisRecencyBadge recency={recency} />
               </h1>
               <p className="settings-muted analysis-run-view-subtitle">
                 <span className={directionClassName(run.direction)}>
@@ -212,22 +304,51 @@ export default function StrategyAnalysisRunView() {
                 </span>
                 {" · "}
                 {timeframeLabel(run.timeframe)}
-                {run.candle_time ? ` · Candle ${formatInstant(run.candle_time)}` : ""}
+                {candleLabel ? ` · Candle ${candleLabel}` : ""}
                 {run.analyzed_at ? ` · Analyzed ${formatInstant(run.analyzed_at)}` : ""}
               </p>
             </div>
-            <button
-              type="button"
-              className="btn btn-danger btn-sm analysis-run-delete-btn"
-              disabled={deleting}
-              onClick={() => {
-                setDeleteError(null);
-                setDeleteConfirmOpen(true);
-              }}
-            >
-              <Trash2 size={14} aria-hidden="true" />
-              Delete
-            </button>
+            <div className="analysis-run-view-actions">
+              <div className="analysis-run-view-nav">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={!neighbors?.previousId}
+                  onClick={() => neighbors?.previousId && navigateToRun(neighbors.previousId)}
+                  aria-label="Previous analysis run"
+                >
+                  <ChevronLeft size={14} aria-hidden="true" />
+                  Previous
+                </button>
+                {neighbors && neighbors.index >= 0 ? (
+                  <span className="settings-muted analysis-run-view-nav-position">
+                    {neighbors.index + 1} of {neighbors.total}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={!neighbors?.nextId}
+                  onClick={() => neighbors?.nextId && navigateToRun(neighbors.nextId)}
+                  aria-label="Next analysis run"
+                >
+                  Next
+                  <ChevronRight size={14} aria-hidden="true" />
+                </button>
+              </div>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm analysis-run-delete-btn"
+                disabled={deleting}
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteConfirmOpen(true);
+                }}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                Delete
+              </button>
+            </div>
           </div>
         ) : null}
       </header>
@@ -265,7 +386,7 @@ export default function StrategyAnalysisRunView() {
             )}
           </div>
           <aside className="analysis-run-panel-col">
-            <AnalysisRunDetailPanel run={run} />
+            <AnalysisRunDetailPanel run={run} recency={recency} />
           </aside>
         </div>
       ) : null}

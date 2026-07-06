@@ -10,7 +10,7 @@
 
 Multi-bot trading platform for Proxmox LXC. BrokerAI runs a **Secretary-coordinated trading loop** for forex: strategy-driven candle analysis, OANDA order execution, a MongoDB trade ledger, daily research reports, and a full React dashboard — all managed via the `brokerai` CLI.
 
-**Alpha 0.0.7** — Unified OANDA sync and broker ledger (`broker_lots`, `broker_events`, `broker_sync_state`), child-order semantics, instrument exposure, trade detail workspace, and tiered event retention. See [`docs/releases/v0.0.7.md`](docs/releases/v0.0.7.md). Prior major release: [`v0.0.5.md`](docs/releases/v0.0.5.md).
+**Alpha 0.0.8** — Strategy analysis workspace, recency badges, multi-select filters, rich OHLC charts with market closure markers and legends, forex market calendar, `at_time` indicator, EMA crossover refinements, and Secretary pipeline updates. See [`docs/releases/v0.0.8.md`](docs/releases/v0.0.8.md). Prior major release: [`v0.0.7.md`](docs/releases/v0.0.7.md).
 
 ## Overview
 
@@ -97,7 +97,7 @@ Open **http://\<container-ip\>:1989** (or `http://localhost:5173` in dev).
 | **Explore** | `/trading/explore` | Candle chart, pair search, timeframe/history, live revision stream |
 | **Strategies** | `/trading/strategies` | List, enable/disable, create from preset, edit |
 | **Trades** | `/trading/trades` | Trade ledger with filters, sync, reconciliation badges, detail chart |
-| **Live Analysis** | `/trading/analysis` | Analyzer run history with direction, confidence, gate results |
+| **Live Analysis** | `/trading/analysis` | Analyzer run history with recency, filters, direction, confidence, gate results, and candle context |
 | **Activity** | `/activity` | Bot event timeline with job-ID correlation |
 | **Settings** | `/settings/*` | Models, connections, research, broker asset classes, system |
 | **Backtesting** | `/research/backtesting` | Placeholder — coming next |
@@ -377,6 +377,12 @@ BrokerAI/
 ├── config/
 └── systemd/
 ```
+
+## Future Optimizations
+
+Planned improvements that are not implemented yet:
+
+- **Analysis run retention (`strategy_analysis_runs`)** — Runs are deduped per `(strategy, pair, candle_time)` and updated in place on re-analysis, so growth is roughly `strategies × pairs × bars_per_day` (not one row per bot poll). For watchlists and future ML (crosses, approaching signals, filter/gate context), keep a long history rather than aggressive pruning. A sensible default when volume matters: retain all signal-bearing runs (cross, approaching, actionable direction) indefinitely; trim old `none` runs after 90–180 days; optionally archive signal runs to Parquet/JSON before prune. Revisit when the collection exceeds ~5–10M documents or ~20–50 GB.
 
 ## Known limitations (Alpha)
 

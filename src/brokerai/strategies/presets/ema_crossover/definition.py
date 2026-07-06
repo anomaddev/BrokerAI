@@ -16,6 +16,11 @@ DEFAULT_PARAMS: dict = {
         "slow_ref": "slow",
         "direction": "both",
         "confirmation": "close",
+        "approaching": {
+            "enabled": True,
+            "max_gap_atr": 0.5,
+            "min_narrow_bars": 2,
+        },
     },
     "filters": [
         {

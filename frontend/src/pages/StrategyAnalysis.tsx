@@ -3,6 +3,8 @@ import { Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, type Strategy, type StrategyAnalysisRun } from "../api/client";
 import RunAnalysisOverlay from "../components/analysis/RunAnalysisOverlay";
+import AnalysisFilterMultiSelect from "../components/analysis/AnalysisFilterMultiSelect";
+import AnalysisRecencyBadge from "../components/analysis/AnalysisRecencyBadge";
 import { ROUTES } from "../lib/routes";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import {
@@ -19,20 +21,29 @@ import {
   runSourceLabel,
   signalLabel,
   sortAnalysisRunsForTable,
+  analysisRunDirectionCategory,
+  ANALYSIS_DIRECTION_FILTER_OPTIONS,
+  DEFAULT_ANALYSIS_DIRECTION_FILTERS,
+  type AnalysisDirectionFilterValue,
   type AnalysisSortColumn,
   type AnalysisSortDirection,
 } from "../lib/strategyAnalysis";
 import { TIMEFRAME_LABELS, type Timeframe } from "../lib/strategyParams";
+import {
+  analysisRunRecency,
+  buildStaleAnalysisRunIds,
+} from "../lib/analysis/analysisRunRecency";
+import {
+  buildAnalysisRunNavIds,
+  type AnalysisRunNavigationState,
+} from "../lib/analysis/analysisRunNavigation";
 
 const POLL_INTERVAL_MS = 15_000;
-const RUN_LIMIT = 100;
+const MAX_FETCH_LIMIT = 200;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
+const DEFAULT_PAGE_SIZE = 25;
 
-const DIRECTION_FILTERS = [
-  { value: "all", label: "All directions" },
-  { value: "long", label: "Long" },
-  { value: "short", label: "Short" },
-  { value: "none", label: "None" },
-] as const;
+type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 
 const SORTABLE_COLUMNS: { key: AnalysisSortColumn; label: string }[] = [
   { key: "time", label: "Time" },
@@ -108,8 +119,12 @@ export default function StrategyAnalysis() {
   const [error, setError] = useState<string | null>(null);
   const [strategyFilter, setStrategyFilter] = useState("all");
   const [pairQuery, setPairQuery] = useState("");
-  const [directionFilter, setDirectionFilter] = useState("all");
+  const [directionFilter, setDirectionFilter] = useState<Set<AnalysisDirectionFilterValue>>(
+    () => new Set(DEFAULT_ANALYSIS_DIRECTION_FILTERS),
+  );
   const [tableSort, setTableSort] = useState<AnalysisTableSort>(INITIAL_TABLE_SORT);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [runOverlayOpen, setRunOverlayOpen] = useState(false);
@@ -119,7 +134,7 @@ export default function StrategyAnalysis() {
 
   const loadRuns = useCallback(async () => {
     const params: { limit: number; strategy_id?: string; pair?: string } = {
-      limit: RUN_LIMIT,
+      limit: MAX_FETCH_LIMIT,
     };
     if (strategyFilter !== "all") {
       params.strategy_id = strategyFilter;
@@ -178,12 +193,18 @@ export default function StrategyAnalysis() {
     };
   }, [loadRuns]);
 
+  const staleRunIds = useMemo(() => buildStaleAnalysisRunIds(runs), [runs]);
+
   const filtered = useMemo(() => {
-    if (directionFilter === "all") return runs;
-    if (directionFilter === "none") {
-      return runs.filter((run) => run.direction == null);
+    let next = runs;
+
+    if (directionFilter.size > 0) {
+      next = next.filter((run) => directionFilter.has(analysisRunDirectionCategory(run)));
+    } else {
+      next = [];
     }
-    return runs.filter((run) => run.direction === directionFilter);
+
+    return next;
   }, [runs, directionFilter]);
 
   const sortedRuns = useMemo(
@@ -195,7 +216,32 @@ export default function StrategyAnalysis() {
     [filtered, tableSort],
   );
 
-  const runIds = useMemo(() => sortedRuns.map((run) => run.id), [sortedRuns]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(sortedRuns.length / pageSize)),
+    [sortedRuns.length, pageSize],
+  );
+
+  const currentPage = Math.min(page, totalPages);
+
+  const paginatedRuns = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return sortedRuns.slice(start, start + pageSize);
+  }, [sortedRuns, currentPage, pageSize]);
+
+  const pageRangeStart = sortedRuns.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const pageRangeEnd = Math.min(currentPage * pageSize, sortedRuns.length);
+
+  useEffect(() => {
+    setPage(1);
+  }, [strategyFilter, pairQuery, directionFilter, tableSort, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const runIds = useMemo(() => paginatedRuns.map((run) => run.id), [paginatedRuns]);
   const selectedVisibleCount = useMemo(
     () => runIds.filter((id) => selectedIds.has(id)).length,
     [runIds, selectedIds],
@@ -249,7 +295,13 @@ export default function StrategyAnalysis() {
   }, [runIds]);
 
   function openRun(run: StrategyAnalysisRun) {
-    navigate(ROUTES.research.analysisRun(run.id));
+    const runIds = buildAnalysisRunNavIds(sortedRuns, {
+      sortColumn: tableSort.column,
+      sortDirection: tableSort.direction,
+    });
+    navigate(ROUTES.research.analysisRun(run.id), {
+      state: { runIds } satisfies AnalysisRunNavigationState,
+    });
   }
 
   function stopRowActivation(event: SyntheticEvent) {
@@ -321,7 +373,7 @@ export default function StrategyAnalysis() {
         </button>
       </div>
 
-      <div className="settings-panel">
+      <div className="settings-panel settings-panel--analysis">
         <div className="analysis-toolbar-filters">
           <div className="research-select-wrap analysis-filter-select">
             <select
@@ -346,19 +398,14 @@ export default function StrategyAnalysis() {
             onChange={(event) => setPairQuery(event.target.value)}
             aria-label="Filter by pair"
           />
-          <div className="research-select-wrap analysis-filter-select analysis-filter-select--compact">
-            <select
-              className="research-select"
+          <div className="analysis-filter-select analysis-filter-select--compact">
+            <AnalysisFilterMultiSelect
+              label="Directions"
+              ariaLabel="Filter by direction"
+              options={ANALYSIS_DIRECTION_FILTER_OPTIONS}
               value={directionFilter}
-              onChange={(event) => setDirectionFilter(event.target.value)}
-              aria-label="Filter by direction"
-            >
-              {DIRECTION_FILTERS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              onChange={setDirectionFilter}
+            />
           </div>
           <button
             type="button"
@@ -374,52 +421,61 @@ export default function StrategyAnalysis() {
           </button>
         </div>
 
-        {loading && <p className="settings-muted">Loading analysis runs…</p>}
-        {error && !loading && <p className="settings-error">{error}</p>}
-        {deleteError && <p className="settings-error">{deleteError}</p>}
+        {loading && <p className="settings-muted analysis-panel-status">Loading analysis runs…</p>}
+        {error && !loading && <p className="settings-error analysis-panel-status">{error}</p>}
+        {deleteError && <p className="settings-error analysis-panel-status">{deleteError}</p>}
         {!loading && !error && runs.length === 0 && (
-          <p className="settings-muted">No analysis runs recorded yet.</p>
+          <p className="settings-muted analysis-panel-status">No analysis runs recorded yet.</p>
         )}
         {!loading && !error && runs.length > 0 && filtered.length === 0 && (
-          <p className="settings-muted">No analysis runs match your filters.</p>
+          <p className="settings-muted analysis-panel-status">No analysis runs match your filters.</p>
         )}
 
         {!loading && !error && sortedRuns.length > 0 && (
-          <div className="research-table-wrap">
-            <table className="research-table research-table--clickable analysis-runs-table">
-              <thead>
-                <tr>
-                  <th className="analysis-runs-table-checkbox-col" scope="col">
-                    <label className="analysis-runs-table-checkbox-label">
-                      <input
-                        ref={selectAllRef}
-                        type="checkbox"
-                        className="ui-checkbox-input"
-                        checked={allRunsSelected}
-                        onChange={toggleSelectAllRuns}
-                        aria-label="Select all visible analysis runs"
+          <div className="analysis-table-section">
+            <div className="research-table-wrap analysis-table-wrap">
+              <table className="research-table research-table--clickable analysis-runs-table">
+                <thead>
+                  <tr>
+                    <th className="analysis-runs-table-checkbox-col" scope="col">
+                      <label className="analysis-runs-table-checkbox-label">
+                        <input
+                          ref={selectAllRef}
+                          type="checkbox"
+                          className="ui-checkbox-input"
+                          checked={allRunsSelected}
+                          onChange={toggleSelectAllRuns}
+                          aria-label="Select all analysis runs on this page"
+                        />
+                      </label>
+                    </th>
+                    {SORTABLE_COLUMNS.map((column) => (
+                      <SortableAnalysisHeader
+                        key={column.key}
+                        column={column.key}
+                        label={column.label}
+                        sortColumn={tableSort.column}
+                        sortDirection={tableSort.direction}
+                        onSort={handleSortColumn}
                       />
-                    </label>
-                  </th>
-                  {SORTABLE_COLUMNS.map((column) => (
-                    <SortableAnalysisHeader
-                      key={column.key}
-                      column={column.key}
-                      label={column.label}
-                      sortColumn={tableSort.column}
-                      sortDirection={tableSort.direction}
-                      onSort={handleSortColumn}
-                    />
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRuns.map((run) => {
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedRuns.map((run) => {
                   const isSelected = selectedIds.has(run.id);
+                  const recency = analysisRunRecency(run, staleRunIds);
+                  const rowClassName = [
+                    isSelected ? "analysis-runs-table-row--selected" : undefined,
+                    recency === "current" ? "analysis-runs-table-row--current-bar" : undefined,
+                    recency === "stale" ? "analysis-runs-table-row--stale-bar" : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
                   return (
                     <tr
                       key={run.id}
-                      className={isSelected ? "analysis-runs-table-row--selected" : undefined}
+                      className={rowClassName || undefined}
                       aria-selected={isSelected}
                       onClick={() => openRun(run)}
                     >
@@ -437,7 +493,12 @@ export default function StrategyAnalysis() {
                           />
                         </label>
                       </td>
-                      <td className="settings-muted">{formatInstant(run.analyzed_at)}</td>
+                      <td className="settings-muted">
+                        <span className="analysis-run-time-cell">
+                          <span>{formatInstant(run.analyzed_at, "compact")}</span>
+                          <AnalysisRecencyBadge recency={recency} />
+                        </span>
+                      </td>
                       <td>
                         <span className={runSourceClassName(run)}>{runSourceLabel(run)}</span>
                       </td>
@@ -462,6 +523,59 @@ export default function StrategyAnalysis() {
                 })}
               </tbody>
             </table>
+            </div>
+
+            <div className="analysis-pagination">
+              <div className="analysis-pagination__size">
+                <label className="analysis-pagination__size-label" htmlFor="analysis-page-size">
+                  Rows per page
+                </label>
+                <div className="research-select-wrap analysis-pagination__size-select">
+                  <select
+                    id="analysis-page-size"
+                    className="research-select"
+                    value={pageSize}
+                    onChange={(event) =>
+                      setPageSize(Number(event.target.value) as PageSize)
+                    }
+                    aria-label="Rows per page"
+                  >
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <p className="settings-muted analysis-pagination__summary">
+                Showing {pageRangeStart}–{pageRangeEnd} of {sortedRuns.length}
+                {runs.length >= MAX_FETCH_LIMIT ? ` (latest ${MAX_FETCH_LIMIT})` : ""}
+              </p>
+
+              <div className="analysis-pagination__controls">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={currentPage <= 1}
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                >
+                  Previous
+                </button>
+                <span className="analysis-pagination__page">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

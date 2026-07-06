@@ -13,8 +13,12 @@ import {
   runSourceClassName,
   runSourceLabel,
   signalLabel,
+  isApproachingSignal,
 } from "../../lib/strategyAnalysis";
+import { formatCandleOpenCloseLabel, resolveKnownTimeframe } from "../../lib/candleTime";
+import type { AnalysisRunRecency } from "../../lib/analysis/analysisRunRecency";
 import { TIMEFRAME_LABELS, type Timeframe } from "../../lib/strategyParams";
+import AnalysisRecencyBadge from "./AnalysisRecencyBadge";
 
 function timeframeLabel(timeframe: string): string {
   return TIMEFRAME_LABELS[timeframe as Timeframe] ?? timeframe;
@@ -94,12 +98,18 @@ function AnalysisDetailSection({
 
 type AnalysisRunDetailPanelProps = {
   run: StrategyAnalysisRun;
+  recency?: AnalysisRunRecency;
 };
 
-export default function AnalysisRunDetailPanel({ run }: AnalysisRunDetailPanelProps) {
-  const { formatInstant } = useGeneralSettings();
+export default function AnalysisRunDetailPanel({ run, recency }: AnalysisRunDetailPanelProps) {
+  const { formatInstant, timeOptions } = useGeneralSettings();
   const filters = filterDetails(run);
   const passedFilterCount = filters.filter((filter) => filter.passed).length;
+  const approaching = isApproachingSignal(run);
+  const signalCandleTime = approaching
+    ? run.metadata.signal_time
+    : run.metadata.crossover_time;
+  const signalCandleLabel = approaching ? "Signal candle" : "Crossover candle";
 
   return (
     <div className="trade-detail-panel-scroll">
@@ -114,6 +124,12 @@ export default function AnalysisRunDetailPanel({ run }: AnalysisRunDetailPanelPr
           />
           <DetailRow label="Pair" value={run.pair} />
           <DetailRow label="Timeframe" value={timeframeLabel(run.timeframe)} />
+          {recency && recency !== "historical" ? (
+            <DetailRow
+              label="Candle bar"
+              value={<AnalysisRecencyBadge recency={recency} />}
+            />
+          ) : null}
           <DetailRow
             label="Direction"
             value={
@@ -133,13 +149,27 @@ export default function AnalysisRunDetailPanel({ run }: AnalysisRunDetailPanelPr
           <DetailRow label="Signal type" value={run.signal_type.replace(/_/g, " ")} />
           <DetailRow label="Signal" value={signalLabel(run)} />
           <DetailRow
-            label="Crossover time"
+            label={signalCandleLabel}
             value={
-              run.metadata.crossover_time
-                ? formatInstant(String(run.metadata.crossover_time))
+              signalCandleTime
+                ? formatCandleOpenCloseLabel(
+                    String(signalCandleTime),
+                    resolveKnownTimeframe(run.timeframe),
+                    timeOptions,
+                  ) ?? "—"
                 : "—"
             }
           />
+          {approaching && (
+            <>
+              <DetailRow label="EMA gap" value={formatValue(run.metadata.ema_gap)} />
+              <DetailRow label="EMA gap (ATR)" value={formatValue(run.metadata.ema_gap_atr)} />
+              <DetailRow
+                label="Convergence bars"
+                value={formatValue(run.metadata.convergence_bars)}
+              />
+            </>
+          )}
           <DetailRow label="ADX" value={formatValue(run.metadata.adx)} />
           <DetailRow label="Confirmation" value={formatValue(run.metadata.confirmation)} />
         </dl>
@@ -231,7 +261,7 @@ export default function AnalysisRunDetailPanel({ run }: AnalysisRunDetailPanelPr
           <p className="settings-muted">
             {isExecutorEligible(run)
               ? "Executor has not processed this run yet."
-              : "Not submitted to the executor."}
+              : "No trade signal — not submitted to the executor."}
           </p>
         )}
         {run.execution && (
@@ -262,7 +292,7 @@ export default function AnalysisRunDetailPanel({ run }: AnalysisRunDetailPanelPr
                   {run.execution.gate_reasons.map((reason) => (
                     <li key={reason}>
                       <span className={executionOutcomeClassName(run)}>
-                        {gateReasonLabel(reason)}
+                        {gateReasonLabel(reason, run.execution?.gate_details)}
                       </span>
                     </li>
                   ))}

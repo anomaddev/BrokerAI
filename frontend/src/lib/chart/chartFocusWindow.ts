@@ -17,7 +17,7 @@ function parseInstant(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** Keep bars whose open time falls within the display window (plus one bar past ``until``). */
+/** Keep bars whose open time falls within ``since`` … ``until`` (both bar open times). */
 export function sliceCandlesToFocusWindow(
   bars: CandleBar[],
   since: string,
@@ -28,12 +28,9 @@ export function sliceCandlesToFocusWindow(
   const untilMs = parseInstant(until);
   if (sinceMs == null || untilMs == null) return bars;
 
-  const barMs = timeframe && isKnownTimeframe(timeframe) ? timeframeToMs(timeframe) : 0;
-  const inclusiveUntilMs = untilMs + barMs;
-
   return bars.filter((bar) => {
     const barMsValue = parseInstant(bar.time);
-    return barMsValue != null && barMsValue >= sinceMs && barMsValue <= inclusiveUntilMs;
+    return barMsValue != null && barMsValue >= sinceMs && barMsValue <= untilMs;
   });
 }
 
