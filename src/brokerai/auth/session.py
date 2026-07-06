@@ -13,16 +13,22 @@ class SessionManager:
             salt="brokerai-session",
         )
 
-    def create_token(self, username: str) -> str:
-        return self._serializer.dumps({"username": username})
+    def create_token(self, username: str, *, oidc_sub: str | None = None) -> str:
+        payload: dict[str, str] = {"username": username}
+        if oidc_sub:
+            payload["oidc_sub"] = oidc_sub
+        return self._serializer.dumps(payload)
 
-    def verify_token(self, token: str) -> str | None:
+    def verify_token(self, token: str) -> tuple[str, str | None] | None:
         try:
             data = self._serializer.loads(
                 token,
                 max_age=self.settings.session_max_age,
             )
             username = data.get("username")
-            return str(username) if username else None
+            if not username:
+                return None
+            oidc_sub = data.get("oidc_sub")
+            return str(username), str(oidc_sub) if oidc_sub else None
         except (BadSignature, SignatureExpired):
             return None

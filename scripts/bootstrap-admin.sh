@@ -23,6 +23,11 @@ if [[ -f "$CONFIG_FILE" ]]; then
   set -a && source "$CONFIG_FILE" && set +a
 fi
 
+if [[ "${BROKERAI_AUTH_MODE:-builtin}" == "oidc" ]]; then
+  echo "OIDC auth enabled — skipping built-in admin bootstrap"
+  exit 0
+fi
+
 export BROKERAI_ADMIN_USER BROKERAI_ADMIN_PASSWORD
 
 "${INSTALL_DIR}/venv/bin/python" <<'PY'

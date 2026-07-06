@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from brokerai.config.env_file import sync_update_env_from_file
 
 UpdateTrack = Literal["branch", "release", "latest-release", "next-major"]
+AuthMode = Literal["builtin", "oidc"]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEV_ENV = _REPO_ROOT / ".env"
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
     )
 
     secret_key: str = "change-me"
+    auth_mode: AuthMode = "builtin"
     web_port: int = 1989
     log_level: str = "INFO"
     enabled_bots: str = "secretary,broker,researcher"
@@ -46,6 +48,15 @@ class Settings(BaseSettings):
     mongodb_db: str = "brokerai"
     session_cookie_name: str = "brokerai_session"
     session_max_age: int = 60 * 60 * 24 * 7
+    session_cookie_secure: bool | None = None
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = ""
+    oidc_post_logout_redirect_uri: str = ""
+    oidc_logout_url: str = ""
+    oidc_allowed_sub: str = ""
+    oidc_scopes: str = "openid profile email"
     research_search_concurrency: int = 6
     research_analysis_concurrency: int = 4
     ai_confirmation_enabled: bool = False
@@ -126,3 +137,17 @@ def validate_startup_settings(settings: Settings | None = None) -> None:
             "BROKERAI_SECRET_KEY must be set to a secure value in production "
             "(/etc/brokerai/config.env)"
         )
+    if settings.auth_mode == "oidc":
+        missing = [
+            name
+            for name, value in (
+                ("BROKERAI_OIDC_ISSUER", settings.oidc_issuer),
+                ("BROKERAI_OIDC_CLIENT_ID", settings.oidc_client_id),
+                ("BROKERAI_OIDC_CLIENT_SECRET", settings.oidc_client_secret),
+            )
+            if not str(value).strip()
+        ]
+        if missing:
+            raise RuntimeError(
+                "OIDC auth mode requires: " + ", ".join(missing)
+            )

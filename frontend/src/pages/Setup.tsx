@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import ProfilePhotoField from "../components/ProfilePhotoField";
@@ -17,12 +17,20 @@ function passwordStrength(pw: string): string {
 
 export default function Setup() {
   const navigate = useNavigate();
+  const [mode, setMode] = useState<"loading" | "builtin" | "oidc">("loading");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api
+      .authConfig()
+      .then((config) => setMode(config.mode))
+      .catch(() => setMode("builtin"));
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -42,6 +50,27 @@ export default function Setup() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (mode === "loading") {
+    return <div className="center-page">Loading…</div>;
+  }
+
+  if (mode === "oidc") {
+    return (
+      <div className="center-page">
+        <div className="auth-card">
+          <h1>Welcome to BrokerAI</h1>
+          <p>
+            Sign in with your identity provider to create your local BrokerAI profile and finish
+            setup.
+          </p>
+          <a className="btn" href="/api/auth/oidc/login" style={{ display: "block", textAlign: "center" }}>
+            Continue with SSO
+          </a>
+        </div>
+      </div>
+    );
   }
 
   return (

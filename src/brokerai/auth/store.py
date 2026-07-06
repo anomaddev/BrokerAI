@@ -8,7 +8,7 @@ from pathlib import Path
 
 from brokerai.config.settings import Settings, get_settings
 from brokerai.auth.general_settings import normalize_general_settings, resolved_general_settings
-from brokerai.market_sessions import default_market_indicators, normalize_market_indicators
+from brokerai.market_sessions import normalize_market_indicators
 
 USERS_FILE = "users.json"
 MAX_NAME_LENGTH = 64
@@ -17,8 +17,9 @@ MAX_NAME_LENGTH = 64
 @dataclass
 class UserRecord:
     username: str
-    password_hash: str
+    password_hash: str | None
     created_at: str
+    oidc_sub: str | None = None
     profile_photo: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -31,10 +32,9 @@ class UserRecord:
     def replace(self, **changes: object) -> UserRecord:
         return UserRecord(
             username=str(changes["username"]) if "username" in changes else self.username,
-            password_hash=str(changes["password_hash"])
-            if "password_hash" in changes
-            else self.password_hash,
+            password_hash=changes["password_hash"] if "password_hash" in changes else self.password_hash,  # type: ignore[assignment]
             created_at=str(changes["created_at"]) if "created_at" in changes else self.created_at,
+            oidc_sub=changes["oidc_sub"] if "oidc_sub" in changes else self.oidc_sub,  # type: ignore[assignment]
             profile_photo=changes["profile_photo"] if "profile_photo" in changes else self.profile_photo,  # type: ignore[assignment]
             first_name=changes["first_name"] if "first_name" in changes else self.first_name,  # type: ignore[assignment]
             last_name=changes["last_name"] if "last_name" in changes else self.last_name,  # type: ignore[assignment]
@@ -62,7 +62,6 @@ class UserRecord:
         general = self.resolved_general_settings()
         payload: dict[str, object] = {
             "username": self.username,
-            "password_hash": self.password_hash,
             "created_at": self.created_at,
             "market_indicators": self.resolved_market_indicators(),
             "timezone_auto": general["timezone_auto"],
@@ -70,6 +69,10 @@ class UserRecord:
             "show_utc_times": general["show_utc_times"],
             "time_format": general["time_format"],
         }
+        if self.password_hash:
+            payload["password_hash"] = self.password_hash
+        if self.oidc_sub:
+            payload["oidc_sub"] = self.oidc_sub
         if self.profile_photo:
             payload["profile_photo"] = self.profile_photo
         if self.first_name:
@@ -83,10 +86,13 @@ class UserRecord:
         profile_photo = data.get("profile_photo") or None
         first_name = data.get("first_name") or None
         last_name = data.get("last_name") or None
+        password_hash = data.get("password_hash")
+        oidc_sub = data.get("oidc_sub")
         return cls(
             username=str(data["username"]),
-            password_hash=str(data["password_hash"]),
+            password_hash=str(password_hash) if password_hash else None,
             created_at=str(data["created_at"]),
+            oidc_sub=str(oidc_sub) if oidc_sub else None,
             profile_photo=str(profile_photo) if profile_photo else None,
             first_name=str(first_name) if first_name else None,
             last_name=str(last_name) if last_name else None,
@@ -159,6 +165,47 @@ class AuthStore:
             password_hash=password_hash,
             created_at=datetime.now(timezone.utc).isoformat(),
             profile_photo=profile_photo,
+        )
+        self._save_user(record)
+        (self.auth_dir / "setup_complete").touch()
+        return record
+
+    def create_or_link_oidc_user(
+        self,
+        *,
+        oidc_sub: str,
+        username: str,
+        first_name: str | None = None,
+        last_name: str | None = None,
+    ) -> UserRecord:
+        """Create the local profile on first OIDC login or link an existing profile."""
+        allowed = self.settings.oidc_allowed_sub.strip()
+        if allowed and oidc_sub != allowed:
+            raise ValueError("OIDC subject is not allowed for this BrokerAI instance")
+
+        existing = self.get_user()
+        if existing is not None:
+            if existing.oidc_sub and existing.oidc_sub != oidc_sub:
+                raise ValueError("OIDC subject does not match the linked BrokerAI profile")
+            record = existing.replace(
+                oidc_sub=oidc_sub,
+                first_name=first_name if first_name is not None else existing.first_name,
+                last_name=last_name if last_name is not None else existing.last_name,
+            )
+            self._save_user(record)
+            (self.auth_dir / "setup_complete").touch()
+            return record
+
+        if not _valid_username(username):
+            raise ValueError("Invalid username derived from OIDC claims")
+        self.ensure_dir()
+        record = UserRecord(
+            username=username,
+            password_hash=None,
+            oidc_sub=oidc_sub,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            first_name=first_name,
+            last_name=last_name,
         )
         self._save_user(record)
         (self.auth_dir / "setup_complete").touch()

@@ -10,12 +10,14 @@ type UserMenuProps = {
   displayName: string;
   hasProfilePhoto?: boolean;
   photoVersion?: number;
+  authMode?: "builtin" | "oidc";
 };
 
 export default function UserMenu({
   displayName,
   hasProfilePhoto = false,
   photoVersion = 0,
+  authMode = "builtin",
 }: UserMenuProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -42,8 +44,13 @@ export default function UserMenu({
   }, [open]);
 
   async function logout() {
-    await api.logout();
-    window.location.href = "/login";
+    const result =
+      authMode === "oidc" ? await api.oidcLogout() : await api.logout();
+    if (result.logout_url) {
+      window.location.href = result.logout_url;
+      return;
+    }
+    window.location.href = authMode === "oidc" ? "/api/auth/oidc/login" : "/login";
   }
 
   const menuLabel = displayName || "Account";
@@ -100,9 +107,15 @@ export function UserMenuContainer() {
   const [displayName, setDisplayName] = useState("");
   const [hasProfilePhoto, setHasProfilePhoto] = useState(false);
   const [photoVersion, setPhotoVersion] = useState(0);
+  const [authMode, setAuthMode] = useState<"builtin" | "oidc">("builtin");
 
   useEffect(() => {
     function loadProfile() {
+      api
+        .authConfig()
+        .then((config) => setAuthMode(config.mode))
+        .catch(() => setAuthMode("builtin"));
+
       api
         .me()
         .then((user) => {
@@ -132,6 +145,7 @@ export function UserMenuContainer() {
       displayName={displayName}
       hasProfilePhoto={hasProfilePhoto}
       photoVersion={photoVersion}
+      authMode={authMode}
     />
   );
 }
