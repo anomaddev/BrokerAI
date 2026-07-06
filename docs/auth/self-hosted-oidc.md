@@ -92,3 +92,38 @@ SSH user provisioning tied to password changes is also skipped in OIDC mode.
 ## Rollback
 
 Set `BROKERAI_AUTH_MODE=builtin` and restore `users.json` from a config backup if needed.
+
+## Local development (Authelia on localhost)
+
+Use the same OIDC flow as production while developing:
+
+```bash
+./scripts/dev.sh --oidc
+```
+
+This will:
+
+1. Write OIDC settings to `.env` (`BROKERAI_AUTH_MODE=oidc`, issuer `http://localhost:9091`, etc.)
+2. Start Authelia in Docker (`brokerai-authelia-dev` on port **9091**)
+3. Start BrokerAI as usual (Vite on `:5173`, API on `:1989`)
+
+Sign in at `http://localhost:5173` — you are redirected to Authelia, then back to the app.
+
+| Item | Value |
+|------|-------|
+| Authelia URL | http://localhost:9091 |
+| Dev username | `dev` |
+| Dev password | `BrokerAI!2026` |
+| OIDC client secret | `brokerai-dev-local-secret` (local only) |
+
+Config lives in `deploy/authelia/dev/`. **Do not reuse these secrets in production.**
+
+For backend-only dev (no Vite):
+
+```bash
+./scripts/dev.sh --oidc --backend-only
+```
+
+Reset local OIDC profile: delete `data/auth/` and sign in again.
+
+To return to built-in username/password auth, set `BROKERAI_AUTH_MODE=builtin` in `.env` and restart dev.
