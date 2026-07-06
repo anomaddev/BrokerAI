@@ -304,23 +304,30 @@ async def get_trade_candles(
     timeframe = await _resolve_trade_timeframe(trade)
     validate_timeframe(timeframe)
 
-    display_since_dt = opened_at - TRADE_CANDLE_PADDING
+    warmup_bars = await _resolve_strategy_warmup_bars(trade)
+    bar_duration = timeframe_to_duration(timeframe)
+
     if _trade_is_open(trade):
         display_until_dt = datetime.now(timezone.utc)
+        if warmup_bars > 0:
+            # Strategy trade: show from warmup start through live.
+            display_since_dt = opened_at - (bar_duration * warmup_bars)
+        else:
+            # No strategy: default to last 200 candles ending at live.
+            display_since_dt = datetime.now(timezone.utc) - (bar_duration * 200)
     else:
         closed_at = _parse_trade_instant(trade.get("closed_at") or trade.get("close_time"))
         if closed_at is None:
             raise HTTPException(status_code=400, detail="Trade close time is unavailable")
         display_until_dt = closed_at + TRADE_CANDLE_PADDING
+        display_since_dt = opened_at - TRADE_CANDLE_PADDING
 
-    warmup_bars = await _resolve_strategy_warmup_bars(trade)
     since_dt = display_since_dt
     if warmup_bars > 0:
-        warmup_start = opened_at - (timeframe_to_duration(timeframe) * warmup_bars)
+        warmup_start = opened_at - (bar_duration * warmup_bars)
         since_dt = min(since_dt, warmup_start)
 
     # Fetch one extra bar past the display window so the final candle covers exit + 1h.
-    bar_duration = timeframe_to_duration(timeframe)
     until_dt = display_until_dt + bar_duration
 
     service = require_data_manager_service()

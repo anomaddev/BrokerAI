@@ -141,13 +141,17 @@ export default function TradeDetailOverlay({
 
   const candleWindow = useMemo(
     () =>
-      buildTradeCandleWindow(trade, {
-        since: candleWindowBounds?.since,
-        until: candleWindowBounds?.until,
-        displaySince: candleWindowBounds?.displaySince,
-        displayUntil: candleWindowBounds?.displayUntil,
-      }),
-    [trade, candleWindowBounds],
+      buildTradeCandleWindow(
+        trade,
+        {
+          since: candleWindowBounds?.since,
+          until: candleWindowBounds?.until,
+          displaySince: candleWindowBounds?.displaySince,
+          displayUntil: candleWindowBounds?.displayUntil,
+        },
+        timeframe,
+      ),
+    [trade, candleWindowBounds, timeframe],
   );
 
   const chartLoading = candlesLoading || (Boolean(trade.strategy_id) && strategyLoading);

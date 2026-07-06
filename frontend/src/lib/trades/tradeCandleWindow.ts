@@ -38,6 +38,9 @@ export function tradeChartTimeframe(raw: string | null | undefined): Timeframe {
  *
  * ``displaySince`` / ``displayUntil`` bound the visible chart. ``since`` / ``until``
  * include extra warmup history returned by the API for indicator computation.
+ *
+ * For open trades the initial zoom starts 5 bars before entry and ends at the
+ * most recent candle (live). Closed trades keep the full display window.
  */
 export function buildTradeCandleWindow(
   trade: Pick<Trade, "open_time" | "close_time" | "state">,
@@ -47,6 +50,7 @@ export function buildTradeCandleWindow(
     displaySince?: string | null;
     displayUntil?: string | null;
   } | null,
+  timeframe?: Timeframe,
 ): TradeCandleWindow | null {
   const openedMs = parseInstant(trade.open_time);
   if (openedMs == null) return null;
@@ -63,6 +67,21 @@ export function buildTradeCandleWindow(
   const sinceMs = parseInstant(bounds?.since) ?? displaySinceMs;
   const untilMs = parseInstant(bounds?.until) ?? displayUntilMs;
 
+  // For open trades, zoom so entry is 5 bars from the left edge and the right
+  // edge is the live (most recent) candle. Ensure at least 40 candles are visible.
+  let visibleFromMs = displaySinceMs;
+  let visibleToMs = displayUntilMs;
+  if (isOpen) {
+    const barMs =
+      timeframe && isKnownTimeframe(timeframe) ? timeframeToMs(timeframe) : TRADE_CHART_PADDING_MS;
+    visibleFromMs = openedMs - 5 * barMs;
+    visibleToMs = Date.now();
+    const minSpanMs = 40 * barMs;
+    if (visibleToMs - visibleFromMs < minSpanMs) {
+      visibleFromMs = visibleToMs - minSpanMs;
+    }
+  }
+
   return {
     since: new Date(sinceMs).toISOString(),
     until: new Date(untilMs).toISOString(),
@@ -70,8 +89,8 @@ export function buildTradeCandleWindow(
     displayUntil: new Date(displayUntilMs).toISOString(),
     entryTime: Math.floor(openedMs / 1000),
     exitTime: isOpen ? null : Math.floor(closedMs / 1000),
-    visibleFromTime: Math.floor(displaySinceMs / 1000),
-    visibleToTime: Math.floor(displayUntilMs / 1000),
+    visibleFromTime: Math.floor(visibleFromMs / 1000),
+    visibleToTime: Math.floor(visibleToMs / 1000),
   };
 }
 

@@ -33,7 +33,6 @@ import { useCandleCrosshairOhlc } from "../../lib/chart/useCandleCrosshairOhlc";
 import { applyChartTimeLocalization } from "../../lib/chart/chartTimeLocalization";
 import type { Timeframe } from "../../lib/strategyParams";
 import {
-  clipExploreOverlayData,
   sliceCandlesToWindow,
   tradeChartVisibleTimeRange,
   type TradeCandleWindow,
@@ -182,14 +181,8 @@ export default function TradeCandleChart({
 
   const overlayData = useMemo(() => {
     if (overlayItems.length === 0 || warmupCandles.length === 0) return null;
-    const computed = computeExploreOverlays(overlayItems, warmupCandles);
-    if (!candleWindow) return computed;
-    return clipExploreOverlayData(
-      computed,
-      candleWindow.visibleFromTime,
-      candleWindow.visibleToTime + Math.floor(timeframeToMs(timeframe) / 1000),
-    );
-  }, [overlayItems, warmupCandles, candleWindow]);
+    return computeExploreOverlays(overlayItems, warmupCandles);
+  }, [overlayItems, warmupCandles]);
 
   const showAdxPane = Boolean(overlayData?.adxLines.some((line) => line.visible));
   const showRsiPane = Boolean(overlayData?.rsiLines.some((line) => line.visible));
@@ -421,6 +414,11 @@ export default function TradeCandleChart({
     <div className="trade-candle-chart strategy-chart-shell">
       <div className="strategy-chart-toolbar explore-chart-ohlc-toolbar">
         <ChartOhlcLegend snapshot={ohlcSnapshot} timeOptions={timeOptions} />
+        {chartReady && displayCandles.length > 0 ? (
+          <span className="settings-muted" style={{ marginLeft: 12, fontSize: "12px" }}>
+            {displayCandles.length} candles
+          </span>
+        ) : null}
       </div>
 
       <div className="strategy-chart-panes trade-candle-chart-panes">
