@@ -165,6 +165,7 @@ async def list_strategy_analysis_runs(
     before: str | None = Query(default=None),
     strategy_id: str | None = Query(default=None),
     pair: str | None = Query(default=None),
+    analysis_purpose: str | None = Query(default=None),
 ) -> JSONResponse:
     before_dt: datetime | None = None
     if before:
@@ -174,9 +175,11 @@ async def list_strategy_analysis_runs(
             before_dt = None
 
     repo = StrategyAnalysisRunsRepository()
+    purpose = analysis_purpose if analysis_purpose in {"entry", "exit"} else None
     runs = await repo.list_recent(
         strategy_id=strategy_id,
         pair=pair,
+        analysis_purpose=purpose,
         limit=limit,
         before=before_dt,
     )

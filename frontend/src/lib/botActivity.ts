@@ -15,6 +15,7 @@ export const BROAD_ACTIVITY_LABELS: Record<string, string> = {
   weekly_brief_completed: "Weekly Brief Ran",
   weekly_debrief_completed: "Weekly Debrief Ran",
   pipeline_analyze_completed: "Forex Strategies Analyzed",
+  pipeline_batch_completed: "Pipeline Batch Complete",
   market_session_open: "Session Opened",
   market_session_close: "Session Closed",
   orchestrator_started: "Orchestrator Started",

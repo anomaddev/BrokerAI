@@ -123,6 +123,7 @@ def describe_asset_settings_change(
     enabled_sessions: dict[str, bool] | None = None,
     enabled_pairs: list[str] | None = None,
     pair_order: list[str] | None = None,
+    only_one_position_per_pair: bool | None = None,
     primary_exchange: str | None = None,
 ) -> str:
     """Describe broker asset-class settings mutations."""
@@ -161,6 +162,14 @@ def describe_asset_settings_change(
 
     if primary_exchange is not None and str(before.get("primary_exchange") or "") != str(primary_exchange or ""):
         labels.append(f"Primary exchange set to {primary_exchange or 'none'}")
+
+    if only_one_position_per_pair is not None and bool(
+        before.get("only_one_position_per_pair", True)
+    ) != bool(only_one_position_per_pair):
+        labels.append(
+            "Only one position per pair "
+            f"{'enabled' if only_one_position_per_pair else 'disabled'}"
+        )
 
     return join_change_labels(labels)
 

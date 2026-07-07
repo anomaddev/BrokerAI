@@ -1175,15 +1175,6 @@ input {
   overflow-x: hidden;
 }
 
-.sidebar-advanced {
-  padding: 0.625rem;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
 .sidebar-status {
   padding: 0.625rem;
   padding-bottom: 2rem;
@@ -1370,6 +1361,28 @@ input {
   margin-left: 0;
   width: 0.4375rem;
   height: 0.4375rem;
+}
+
+.nav-external-icon {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--muted);
+  opacity: 0.75;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.nav-item--external:hover .nav-external-icon {
+  opacity: 1;
+  color: var(--text);
+}
+
+.sidebar.collapsed .nav-external-icon {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.35rem;
+  margin-left: 0;
+  width: 0.75rem;
+  height: 0.75rem;
 }
 
 .nav-icon {

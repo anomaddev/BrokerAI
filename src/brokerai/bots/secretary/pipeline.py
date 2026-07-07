@@ -155,11 +155,17 @@ class PipelineRunner:
                 await self._broker.process_analysis(analyses, context)
 
             duration_ms = int((time.monotonic() - started) * 1000)
+            batch_meta: dict[str, str] = {}
+            if revision_time:
+                batch_meta["latest_candle_time"] = str(revision_time)
+            elif context.latest_candle_time:
+                batch_meta["latest_candle_time"] = str(context.latest_candle_time)
             return PipelineResult(
                 job_id=job.job_id,
                 ok=True,
                 analyses=analyses,
                 duration_ms=duration_ms,
+                metadata=batch_meta,
             )
         except Exception as exc:
             logger.exception("Pipeline failed for %s", job.job_id)

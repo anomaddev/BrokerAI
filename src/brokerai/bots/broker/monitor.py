@@ -13,10 +13,11 @@ from brokerai.db.repositories.broker_lots import BrokerLotsRepository
 from brokerai.trading.broker.state import BrokerStateService
 from brokerai.trading.candle_context import load_candles_for_unit
 from brokerai.trading.broker.sync import run_broker_sync
+from brokerai.trading.exit_analysis import persist_exit_analysis_run, trade_requires_exit_monitor
 from brokerai.trading.indicator_cache import IndicatorCache
 from brokerai.trading.registries.exits import create_exit_monitor
 from brokerai.trading.schedule import utc_now
-from brokerai.trading.types import WorkUnit
+from brokerai.trading.types import ExitIntent, WorkUnit
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +80,16 @@ class _TradeExitAnalyzer(_SubAnalyzer):
         self._lots_repo = lots_repo
         self._monitor = create_exit_monitor(trade, params)
 
-    async def evaluate(self) -> None:
+    async def evaluate(self) -> ExitIntent | None:
         if self._monitor is None:
-            return
+            return None
         candles = await load_candles_for_unit(
             self._unit,
             service=self._data_manager,
             requester="broker_exit_monitor",
         )
         if not candles:
-            return
+            return None
         cache = self._indicator_cache.warm(
             self._unit.pair,
             self._unit.timeframe,
@@ -96,25 +97,47 @@ class _TradeExitAnalyzer(_SubAnalyzer):
             [self._params],
         )
         exit_intent = await self._monitor.evaluate(self._trade, candles, self._params, cache)
-        if exit_intent is None:
-            return
-        logger.info(
-            "ExitIntent trade=%s pair=%s reason=%s",
-            exit_intent.trade_id,
-            exit_intent.pair,
-            exit_intent.reason,
+        candle_time = candles[-1].get("time") if candles else None
+        signal_metadata = dict(exit_intent.metadata or {}) if exit_intent else {"signal": "none"}
+
+        strategy = next(
+            (
+                item
+                for item in self._unit.strategies
+                if str(item.get("id")) == str(self._trade.get("strategy_id"))
+            ),
+            {"id": self._trade.get("strategy_id"), "name": self._trade.get("strategy_name")},
         )
-        close_metadata = dict(exit_intent.metadata or {})
-        if candles:
-            candle_time = candles[-1].get("time")
+
+        exit_closed = False
+        if exit_intent is not None:
+            logger.info(
+                "ExitIntent trade=%s pair=%s reason=%s",
+                exit_intent.trade_id,
+                exit_intent.pair,
+                exit_intent.reason,
+            )
+            close_metadata = dict(exit_intent.metadata or {})
             if candle_time:
                 close_metadata["exit_candle_open"] = candle_time
-        await _close_lot(
-            self._lots_repo,
-            exit_intent.trade_id,
-            reason=exit_intent.reason,
-            metadata=close_metadata,
+            await _close_lot(
+                self._lots_repo,
+                exit_intent.trade_id,
+                reason=exit_intent.reason,
+                metadata=close_metadata,
+            )
+            exit_closed = True
+
+        await persist_exit_analysis_run(
+            self._trade,
+            strategy,
+            timeframe=self._unit.timeframe,
+            exit_intent=exit_intent,
+            signal_metadata=signal_metadata,
+            candle_time=candle_time,
+            exit_closed=exit_closed,
         )
+        return exit_intent
 
 
 class BrokerMonitor:
@@ -161,6 +184,10 @@ class BrokerMonitor:
             if strategy is None:
                 continue
             params = strategy_params(strategy)
+            if not trade_requires_exit_monitor(params):
+                continue
+            if create_exit_monitor(trade, params) is None:
+                continue
             active_ids.add(trade_id)
             if trade_id not in self._sub_analyzers:
                 self._sub_analyzers[trade_id] = _TradeExitAnalyzer(

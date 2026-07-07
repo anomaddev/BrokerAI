@@ -32,6 +32,7 @@ import {
   resolveAnalysisRunNeighbors,
   type AnalysisRunNavigationState,
 } from "../lib/analysis/analysisRunNavigation";
+import type { CandleNavigationState } from "../lib/analysis/candleTimeNavigation";
 import {
   analysisRunRecency,
   buildStaleAnalysisRunIds,
@@ -53,6 +54,8 @@ export default function StrategyAnalysisRunView() {
   const { formatInstant, timeOptions } = useGeneralSettings();
   const [run, setRun] = useState<StrategyAnalysisRun | null>(null);
   const [navRunIds, setNavRunIds] = useState<string[]>(() => navigationState?.runIds ?? []);
+  const candleKey = navigationState?.candleKey;
+  const candleKeys = navigationState?.candleKeys ?? [];
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [candles, setCandles] = useState<CandleBar[]>([]);
   const [candleWindowBounds, setCandleWindowBounds] = useState<{
@@ -109,9 +112,21 @@ export default function StrategyAnalysisRunView() {
 
   function navigateToRun(targetId: string) {
     navigate(ROUTES.research.analysisRun(targetId), {
-      state: { runIds: navRunIds } satisfies AnalysisRunNavigationState,
+      state: {
+        runIds: navRunIds,
+        candleKey,
+        candleKeys,
+      } satisfies AnalysisRunNavigationState,
     });
   }
+
+  const backHref = candleKey
+    ? ROUTES.research.analysisCandle(candleKey)
+    : ROUTES.research.analysis;
+  const backLabel = candleKey ? "Back to candle" : "Back to analysis";
+  const backState = candleKey
+    ? ({ candleKeys } satisfies CandleNavigationState)
+    : undefined;
 
   useEffect(() => {
     if (!runId) {
@@ -271,7 +286,7 @@ export default function StrategyAnalysisRunView() {
     try {
       await api.deleteStrategyAnalysisRun(runId);
       setDeleteConfirmOpen(false);
-      navigate(ROUTES.research.analysis);
+      navigate(backHref, { state: backState });
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Failed to delete analysis run");
     } finally {
@@ -282,9 +297,9 @@ export default function StrategyAnalysisRunView() {
   return (
     <div className="analysis-run-view">
       <header className="analysis-run-view-header">
-        <Link to={ROUTES.research.analysis} className="research-back-link">
+        <Link to={backHref} state={backState} className="research-back-link">
           <ArrowLeft size={16} strokeWidth={1.75} />
-          Back to analysis
+          {backLabel}
         </Link>
 
         {showInitialSkeleton ? (
