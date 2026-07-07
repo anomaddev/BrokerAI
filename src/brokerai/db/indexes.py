@@ -9,7 +9,11 @@ logger = logging.getLogger(__name__)
 
 
 async def _dedupe_strategy_analysis_runs(db) -> None:
-    """Collapse duplicate rows for the same strategy, pair, and analyzed candle."""
+    """Collapse duplicate rows for the same strategy, pair, candle, and purpose."""
+    await db.strategy_analysis_runs.update_many(
+        {"analysis_purpose": {"$exists": False}},
+        {"$set": {"analysis_purpose": "entry"}},
+    )
     pipeline = [
         {
             "$match": {
@@ -24,6 +28,8 @@ async def _dedupe_strategy_analysis_runs(db) -> None:
                     "strategy_id": "$strategy_id",
                     "pair": "$pair",
                     "candle_time": "$candle_time",
+                    "analysis_purpose": {"$ifNull": ["$analysis_purpose", "entry"]},
+                    "trade_id": {"$ifNull": ["$trade_id", None]},
                 },
                 "docs": {
                     "$push": {
@@ -217,11 +223,22 @@ async def ensure_indexes() -> None:
         name="strategy_analysis_runs_analyzed_at",
     )
     await _dedupe_strategy_analysis_runs(db)
+    # Drop legacy unique index if present (pre-analysis_purpose schema).
+    try:
+        await db.strategy_analysis_runs.drop_index("strategy_analysis_runs_strategy_pair_candle")
+    except Exception:
+        pass
     await db.strategy_analysis_runs.create_index(
-        [("strategy_id", 1), ("pair", 1), ("candle_time", 1)],
+        [
+            ("strategy_id", 1),
+            ("pair", 1),
+            ("candle_time", 1),
+            ("analysis_purpose", 1),
+            ("trade_id", 1),
+        ],
         unique=True,
         partialFilterExpression={"candle_time": {"$type": "date"}},
-        name="strategy_analysis_runs_strategy_pair_candle",
+        name="strategy_analysis_runs_strategy_pair_candle_purpose",
     )
     await db.config_backups.create_index(
         [("created_at", -1)],

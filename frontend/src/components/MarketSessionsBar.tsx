@@ -11,7 +11,7 @@ import {
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import { useMarketBarAssets } from "../hooks/useMarketBarAssets";
 import { useMarketStatus } from "../hooks/useMarketStatus";
-import { assetClassesForOpenSession, openAssetClasses } from "../lib/marketBarAssets";
+import { assetClassesForOpenSession } from "../lib/marketBarAssets";
 import { resolveSessionTooltip } from "../lib/marketSessions";
 import {
   assetClassLabel,
@@ -289,10 +289,9 @@ type AssetClassPillProps = {
   assetClass: AssetClassMarketStatus;
   serverTime?: string;
   timeOptions: TimeFormatOptions;
-  assetClasses: string[];
 };
 
-function AssetClassPill({ assetClass, serverTime, timeOptions, assetClasses }: AssetClassPillProps) {
+function AssetClassPill({ assetClass, serverTime, timeOptions }: AssetClassPillProps) {
   const pillRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
   const [coords, setCoords] = useState<TooltipCoords | null>(null);
@@ -338,7 +337,6 @@ function AssetClassPill({ assetClass, serverTime, timeOptions, assetClasses }: A
               title={tooltip.name}
               hours={tooltip.hours}
               timingLabel={tooltip.timingLabel}
-              assetClasses={assetClass.status === "open" ? assetClasses : undefined}
             />
           </div>,
           document.body,
@@ -432,7 +430,6 @@ export default function MarketSessionsBar() {
     { fxOpen: status.fx_open },
   );
   const activeAssetClasses = allAssetClasses.filter(isAssetClassIndicatorVisible);
-  const openTradingAssetClasses = openAssetClasses(assetContext);
   const inactiveEntries = buildInactiveIndicatorEntries(
     status.sessions ?? [],
     allAssetClasses,
@@ -465,7 +462,6 @@ export default function MarketSessionsBar() {
           assetClass={assetClass}
           serverTime={status.server_time}
           timeOptions={timeOptions}
-          assetClasses={openTradingAssetClasses}
         />
       ))}
     </div>

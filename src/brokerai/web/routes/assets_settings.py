@@ -18,6 +18,7 @@ class AssetSettingsBody(BaseModel):
     enabled_pairs: list[str] | None = None
     pair_order: list[str] | None = None
     enabled_sessions: dict[str, bool] | None = None
+    only_one_position_per_pair: bool | None = None
     primary_exchange: str | None = None
 
 
@@ -37,6 +38,7 @@ async def get_forex_pairs(_username: str = Depends(require_auth)) -> JSONRespons
             "enabled": bool(settings.get("enabled")),
             "primary_exchange": settings.get("primary_exchange"),
             "enabled_sessions": settings.get("enabled_sessions") or {},
+            "only_one_position_per_pair": bool(settings.get("only_one_position_per_pair", True)),
             "sessions": _forex_sessions_payload(),
         }
     )
@@ -72,6 +74,9 @@ async def save_asset_settings(
         enabled_pairs=body.enabled_pairs if asset_class == "forex" else None,
         pair_order=body.pair_order if asset_class == "forex" else None,
         primary_exchange=body.primary_exchange,
+        only_one_position_per_pair=(
+            body.only_one_position_per_pair if asset_class == "forex" else None
+        ),
     )
     await auto_backup_before(
         trigger=f"asset_settings.{asset_class}",
@@ -86,6 +91,9 @@ async def save_asset_settings(
             enabled_pairs=body.enabled_pairs if asset_class == "forex" else None,
             pair_order=body.pair_order if asset_class == "forex" else None,
             enabled_sessions=body.enabled_sessions if asset_class == "forex" else None,
+            only_one_position_per_pair=(
+                body.only_one_position_per_pair if asset_class == "forex" else None
+            ),
             primary_exchange=body.primary_exchange,
         )
     except ValueError as exc:

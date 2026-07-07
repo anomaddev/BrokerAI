@@ -20,6 +20,9 @@ import {
   runSourceClassName,
   runSourceLabel,
   signalLabel,
+  isExitAnalysisRun,
+  analysisPurposeClassName,
+  analysisPurposeLabel,
   sortAnalysisRunsForTable,
   analysisRunDirectionCategory,
   ANALYSIS_DIRECTION_FILTER_OPTIONS,
@@ -467,6 +470,7 @@ export default function StrategyAnalysis() {
                   const recency = analysisRunRecency(run, staleRunIds);
                   const rowClassName = [
                     isSelected ? "analysis-runs-table-row--selected" : undefined,
+                    isExitAnalysisRun(run) ? "analysis-runs-table-row--exit" : undefined,
                     recency === "current" ? "analysis-runs-table-row--current-bar" : undefined,
                     recency === "stale" ? "analysis-runs-table-row--stale-bar" : undefined,
                   ]
@@ -503,7 +507,16 @@ export default function StrategyAnalysis() {
                         <span className={runSourceClassName(run)}>{runSourceLabel(run)}</span>
                       </td>
                       <td>{run.strategy_name}</td>
-                      <td>{run.pair}</td>
+                      <td>
+                        <span className="analysis-pair-cell">
+                          <span>{run.pair}</span>
+                          {isExitAnalysisRun(run) ? (
+                            <span className={analysisPurposeClassName(run)}>
+                              {analysisPurposeLabel(run)}
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
                       <td className="settings-muted">{timeframeLabel(run.timeframe)}</td>
                       <td>
                         <span className={directionClassName(run.direction)}>

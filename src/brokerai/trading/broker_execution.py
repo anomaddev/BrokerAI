@@ -50,6 +50,7 @@ async def run_broker_execution(
     strategies_by_id = await _strategies_by_id_for_context(context)
     trade_counts = await BrokerLotsRepository().daily_lot_counts()
     asset_settings = await AssetSettingsRepository().get(context.asset_class)
+    only_one_position_per_pair = bool(asset_settings.get("only_one_position_per_pair", True))
     now = utc_now()
 
     ineligible = [analysis for analysis in results if not is_executor_eligible(analysis)]
@@ -59,18 +60,11 @@ async def run_broker_execution(
         trade_counts=trade_counts,
         asset_enabled_sessions=asset_settings.get("enabled_sessions"),
         when=now,
+        only_one_position_per_pair=only_one_position_per_pair,
     )
 
     actionable = [analysis for analysis in results if is_executor_eligible(analysis)]
     skipped = len(ineligible)
-    if not actionable:
-        logger.info(
-            "Broker execution skipped for %s %s — %d result(s) not executor-eligible",
-            context.symbol,
-            context.timeframe,
-            len(results),
-        )
-        return []
 
     unit = WorkUnit(
         pair=context.symbol,
@@ -86,6 +80,19 @@ async def run_broker_execution(
         evaluate_pairs={(context.symbol, context.timeframe)},
     )
 
+    # Re-query open pairs after exit monitors may have closed trades on this candle.
+    open_lots = await BrokerLotsRepository().list_open_lots()
+    open_pairs = {str(lot.get("pair")) for lot in open_lots if lot.get("pair")}
+
+    if not actionable:
+        logger.info(
+            "Broker execution — no entry signal(s) for %s %s (%d result(s)); exit monitors evaluated",
+            context.symbol,
+            context.timeframe,
+            len(results),
+        )
+        return []
+
     started = time.monotonic()
     intents = await apply_execution_gates(
         actionable,
@@ -94,6 +101,8 @@ async def run_broker_execution(
         asset_enabled_sessions=asset_settings.get("enabled_sessions"),
         when=now,
         data_manager=dm,
+        open_pairs=open_pairs,
+        only_one_position_per_pair=only_one_position_per_pair,
     )
 
     duration_ms = int((time.monotonic() - started) * 1000)

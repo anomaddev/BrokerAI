@@ -111,7 +111,7 @@ class BrokerBot(Bot):
 
         data_manager = self._require_data_manager()
         intents = await run_broker_execution(
-            actionable,
+            new_results,
             context,
             data_manager=data_manager,
         )

@@ -37,6 +37,24 @@ def passes_max_trades_gate(
     return current < max_trades
 
 
+def passes_open_position_gate(
+    pair: str,
+    *,
+    open_pairs: set[str] | frozenset[str] | None,
+    only_one_position_per_pair: bool,
+) -> bool:
+    """Block a new entry when the pair already has an open position.
+
+    Exit monitors run before entry gates, so a reverse-cross close on the same
+    candle removes the pair from ``open_pairs`` and allows a fresh entry signal.
+    """
+    if not only_one_position_per_pair:
+        return True
+    if not open_pairs:
+        return True
+    return pair not in open_pairs
+
+
 def _filter_gate_reasons(result: AnalysisResult) -> tuple[list[str], dict[str, Any]]:
     """Build gate reasons and metric details for failed strategy filters."""
     if result.metadata.get("filters_passed", True):
@@ -71,6 +89,8 @@ def passes_execution_gates(
     *,
     when=None,
     asset_enabled_sessions: dict[str, bool] | None = None,
+    open_pairs: set[str] | frozenset[str] | None = None,
+    only_one_position_per_pair: bool = False,
 ) -> tuple[bool, list[str], dict[str, Any]]:
     """Evaluate all broker gates; return pass flag, reason codes, and metric details."""
     reasons: list[str] = []
@@ -117,6 +137,14 @@ def passes_execution_gates(
             "count": current_trades,
             "max_trades_per_day": max_trades,
         }
+
+    if not passes_open_position_gate(
+        result.pair,
+        open_pairs=open_pairs,
+        only_one_position_per_pair=only_one_position_per_pair,
+    ):
+        reasons.append("open_position_exists")
+        details["open_position_exists"] = {"pair": result.pair}
 
     return len(reasons) == 0, reasons, details
 

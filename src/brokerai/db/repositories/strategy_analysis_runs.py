@@ -23,16 +23,24 @@ class StrategyAnalysisRunsRepository:
         strategy_id: str,
         pair: str,
         candle_time: datetime,
+        analysis_purpose: str = "entry",
+        trade_id: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        purpose = analysis_purpose if analysis_purpose in {"entry", "exit"} else "entry"
+        filt: dict[str, Any] = {
             "strategy_id": strategy_id,
             "pair": pair,
             "candle_time": candle_time,
+            "analysis_purpose": purpose,
         }
+        if purpose == "exit" and trade_id:
+            filt["trade_id"] = trade_id
+        return filt
 
     @staticmethod
     def _merge_fields(existing: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
         update_fields: dict[str, Any] = {}
+        purpose = str(doc.get("analysis_purpose") or "entry")
         if existing.get("run_type") != "manual":
             update_fields.update(
                 {
@@ -46,6 +54,8 @@ class StrategyAnalysisRunsRepository:
                     "analyzed_at": doc["analyzed_at"],
                 }
             )
+        if purpose == "exit" and doc.get("execution") is not None:
+            update_fields["execution"] = doc["execution"]
         if doc.get("run_type") == "manual" or existing.get("run_type") == "manual":
             update_fields["run_type"] = "manual"
         return update_fields
@@ -83,24 +93,22 @@ class StrategyAnalysisRunsRepository:
             return {**existing, **update_fields}
         return existing
 
-    async def insert_from_result(
-        self,
-        result: AnalysisResult,
-        *,
-        candle_time: datetime | str | None,
-    ) -> dict[str, Any]:
-        doc = analysis_result_to_document(result, candle_time=candle_time)
+    async def _upsert_document(self, doc: dict[str, Any]) -> dict[str, Any]:
         handle = await get_db()
         collection = handle.db[self.COLLECTION]
 
         candle_dt = doc.get("candle_time")
         strategy_id = str(doc.get("strategy_id") or "")
         pair = str(doc.get("pair") or "")
+        purpose = str(doc.get("analysis_purpose") or "entry")
+        trade_id = str(doc.get("trade_id") or "") or None
         if candle_dt is not None and strategy_id and pair:
             filter_doc = self._dedupe_filter(
                 strategy_id=strategy_id,
                 pair=pair,
                 candle_time=candle_dt,
+                analysis_purpose=purpose,
+                trade_id=trade_id,
             )
             existing = await collection.find_one(filter_doc)
             if existing is not None:
@@ -119,6 +127,19 @@ class StrategyAnalysisRunsRepository:
 
         await collection.insert_one(doc)
         return serialize_analysis_run(doc)
+
+    async def insert_from_result(
+        self,
+        result: AnalysisResult,
+        *,
+        candle_time: datetime | str | None,
+    ) -> dict[str, Any]:
+        doc = analysis_result_to_document(result, candle_time=candle_time)
+        return await self._upsert_document(doc)
+
+    async def insert_from_document(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """Insert or merge a pre-built analysis run document (e.g. exit analysis)."""
+        return await self._upsert_document(doc)
 
     async def list_recent(
         self,

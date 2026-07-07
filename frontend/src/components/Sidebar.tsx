@@ -9,6 +9,7 @@ import {
   Coins,
   Compass,
   Database,
+  ExternalLink,
   FileText,
   Gem,
   History,
@@ -173,16 +174,21 @@ function NavItemLink({
 
 function ExternalNavItemLink({ item, collapsed }: { item: ExternalNavItem; collapsed: boolean }) {
   const Icon = item.icon;
+  const title = collapsed ? `${item.label} (opens in new tab)` : "Opens in new tab";
   return (
     <a
       href={item.href}
-      className="nav-item"
-      title={collapsed ? item.label : undefined}
+      className="nav-item nav-item--external"
+      target="_blank"
+      rel="noopener noreferrer"
+      title={title}
+      aria-label={`${item.label} (opens in new tab)`}
     >
       <span className="nav-icon" aria-hidden>
         <Icon size={20} strokeWidth={1.75} />
       </span>
       <span className="nav-label">{item.label}</span>
+      <ExternalLink className="nav-external-icon" size={14} strokeWidth={1.75} aria-hidden />
     </a>
   );
 }
@@ -270,13 +276,13 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             ))}
           </div>
         ))}
+        <div className="sidebar-nav-section">
+          <span className="sidebar-section-label">External</span>
+          {advancedItems.map((item) => (
+            <ExternalNavItemLink key={item.label} item={item} collapsed={collapsed} />
+          ))}
+        </div>
       </nav>
-      <div className="sidebar-advanced">
-        <span className="sidebar-section-label">External</span>
-        {advancedItems.map((item) => (
-          <ExternalNavItemLink key={item.label} item={item} collapsed={collapsed} />
-        ))}
-      </div>
       <div className="sidebar-bottom">
         <span className="sidebar-section-label">System</span>
         {SYSTEM_ITEMS.map((item) => (

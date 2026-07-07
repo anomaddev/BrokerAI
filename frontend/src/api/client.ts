@@ -416,6 +416,7 @@ export const api = {
       enabled: boolean;
       primary_exchange: string | null;
       enabled_sessions: Record<string, boolean>;
+      only_one_position_per_pair: boolean;
       sessions: { id: string; name: string; hours: string }[];
     }>("/api/settings/assets/forex/pairs"),
   getCandles: (params: {
@@ -447,6 +448,7 @@ export const api = {
       enabled_pairs?: string[];
       pair_order?: string[];
       enabled_sessions?: Record<string, boolean>;
+      only_one_position_per_pair?: boolean;
       primary_exchange?: string | null;
     },
   ) =>
@@ -711,6 +713,11 @@ export type StrategyAnalysisExecution = {
   priority_winner: boolean;
   intent_queued: boolean;
   intent: StrategyAnalysisIntent | null;
+  analysis_purpose?: "entry" | "exit";
+  exit_triggered?: boolean;
+  exit_closed?: boolean;
+  exit_reason?: string | null;
+  trade_id?: string | null;
 };
 
 export type StrategyAnalysisRun = {
@@ -727,6 +734,8 @@ export type StrategyAnalysisRun = {
   candle_time: string | null;
   analyzed_at: string;
   run_type: string;
+  analysis_purpose?: "entry" | "exit";
+  trade_id?: string | null;
   execution: StrategyAnalysisExecution | null;
 };
 
@@ -1127,6 +1136,7 @@ export type AssetSettings = {
   pair_order?: string[];
   enabled_symbols?: string[];
   enabled_sessions?: Record<string, boolean>;
+  only_one_position_per_pair?: boolean;
   primary_exchange: string | null;
 };
 

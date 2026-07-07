@@ -50,12 +50,14 @@ class ReverseCrossoverExitMonitor:
         )
         if direction != opposite or confidence <= 0:
             return None
+        exit_metadata = dict(metadata)
+        exit_metadata["confidence"] = confidence
         return ExitIntent(
             trade_id=str(self._trade.get("id", "")),
             strategy_id=str(self._trade.get("strategy_id", "")),
             pair=str(self._trade.get("pair", "")),
             reason="reverse_crossover",
-            metadata=metadata,
+            metadata=exit_metadata,
         )
 
 

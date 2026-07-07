@@ -38,10 +38,13 @@ def analysis_result_to_document(
     *,
     candle_time: datetime | str | None,
     run_id: str | None = None,
+    analysis_purpose: str = "entry",
+    trade_id: str | None = None,
 ) -> dict[str, Any]:
     analyzed_at = _coerce_utc(result.analyzed_at) or datetime.now(timezone.utc)
     candle_dt = normalize_candle_time(candle_time)
-    return {
+    purpose = analysis_purpose if analysis_purpose in {"entry", "exit"} else "entry"
+    doc: dict[str, Any] = {
         "id": run_id or str(uuid4()),
         "strategy_id": result.strategy_id,
         "strategy_name": result.strategy_name,
@@ -55,8 +58,12 @@ def analysis_result_to_document(
         "candle_time": candle_dt,
         "analyzed_at": analyzed_at,
         "run_type": "live",
+        "analysis_purpose": purpose,
         "execution": None,
     }
+    if purpose == "exit" and trade_id:
+        doc["trade_id"] = trade_id
+    return doc
 
 
 def serialize_analysis_run(doc: dict[str, Any]) -> dict[str, Any]:
@@ -81,5 +88,7 @@ def serialize_analysis_run(doc: dict[str, Any]) -> dict[str, Any]:
         "candle_time": _format_dt(doc.get("candle_time")),
         "analyzed_at": _format_dt(doc.get("analyzed_at")),
         "run_type": doc.get("run_type", "live"),
+        "analysis_purpose": doc.get("analysis_purpose", "entry"),
+        "trade_id": doc.get("trade_id"),
         "execution": serialized_execution,
     }

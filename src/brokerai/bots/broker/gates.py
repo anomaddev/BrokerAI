@@ -30,6 +30,8 @@ async def record_execution_outcomes(
     trade_counts: dict,
     asset_enabled_sessions: list | None,
     when: datetime,
+    open_pairs: set[str] | frozenset[str] | None = None,
+    only_one_position_per_pair: bool = False,
 ) -> None:
     """Persist gate outcomes for analyses that will not enter intent dispatch."""
     for analysis in analyses:
@@ -45,6 +47,8 @@ async def record_execution_outcomes(
             trade_counts,
             when=when,
             asset_enabled_sessions=asset_enabled_sessions,
+            open_pairs=open_pairs,
+            only_one_position_per_pair=only_one_position_per_pair,
         )
         await persist_execution_outcome(
             analysis,
@@ -91,6 +95,8 @@ async def apply_execution_gates(
     asset_enabled_sessions: list | None,
     when: datetime,
     data_manager: DataManagerService,
+    open_pairs: set[str] | frozenset[str] | None = None,
+    only_one_position_per_pair: bool = False,
 ) -> list[TradeIntent]:
     gated: list[tuple[AnalysisResult, dict, dict]] = []
 
@@ -107,6 +113,8 @@ async def apply_execution_gates(
             trade_counts,
             when=when,
             asset_enabled_sessions=asset_enabled_sessions,
+            open_pairs=open_pairs,
+            only_one_position_per_pair=only_one_position_per_pair,
         )
         if passed:
             gated.append((analysis, params, strategy))

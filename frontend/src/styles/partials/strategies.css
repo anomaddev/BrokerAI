@@ -2081,6 +2081,57 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
+.analysis-source--exit {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.14);
+}
+
+.analysis-purpose {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.analysis-purpose--exit {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+.analysis-purpose--entry {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.analysis-pair-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.analysis-outcome--exit-closed {
+  color: #fbbf24;
+}
+
+.analysis-outcome--exit-triggered {
+  color: #f59e0b;
+}
+
+.analysis-runs-table-row--exit td {
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.analysis-runs-table-row--exit:hover td {
+  background: rgba(251, 191, 36, 0.08);
+}
+
 .analysis-outcome {
   display: inline-block;
   font-size: 0.85rem;

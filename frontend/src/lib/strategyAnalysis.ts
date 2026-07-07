@@ -48,6 +48,8 @@ const GATE_REASON_LABELS: Record<string, string> = {
   session_inactive: "Strategy session inactive",
   max_trades_reached: "Max trades reached",
   filters_failed: "Filters failed",
+  open_position_exists: "Open position on pair",
+  no_exit_signal: "No exit signal",
 };
 
 const FILTER_GATE_PREFIX = "filter_";
@@ -70,13 +72,31 @@ export function confidencePercent(confidence: number): string {
 
 /** Human label for how an analysis run was created (`run_type` from the API). */
 export function runSourceLabel(run: StrategyAnalysisRun): string {
+  if (isExitAnalysisRun(run)) return "Exit";
   return run.run_type === "manual" ? "User" : "Bot";
 }
 
 export function runSourceClassName(run: StrategyAnalysisRun): string {
+  if (isExitAnalysisRun(run)) {
+    return "analysis-source analysis-source--exit";
+  }
   return run.run_type === "manual"
     ? "analysis-source analysis-source--user"
     : "analysis-source analysis-source--bot";
+}
+
+export function isExitAnalysisRun(run: StrategyAnalysisRun): boolean {
+  return run.analysis_purpose === "exit" || run.execution?.analysis_purpose === "exit";
+}
+
+export function analysisPurposeLabel(run: StrategyAnalysisRun): string {
+  return isExitAnalysisRun(run) ? "Exit" : "Entry";
+}
+
+export function analysisPurposeClassName(run: StrategyAnalysisRun): string {
+  return isExitAnalysisRun(run)
+    ? "analysis-purpose analysis-purpose--exit"
+    : "analysis-purpose analysis-purpose--entry";
 }
 
 export function signalLabel(run: StrategyAnalysisRun): string {
@@ -177,6 +197,13 @@ export function isExecutorEligible(run: StrategyAnalysisRun): boolean {
 
 export function executionOutcomeLabel(run: StrategyAnalysisRun): string {
   const execution = run.execution;
+  if (isExitAnalysisRun(run)) {
+    if (!execution) return "Pending";
+    if (execution.exit_closed) return "Exit closed";
+    if (execution.exit_triggered) return "Exit triggered";
+    const reason = execution.gate_reasons[0];
+    return reason ? gateReasonLabel(reason, execution.gate_details) : "No exit";
+  }
   if (!execution) {
     if (!isExecutorEligible(run)) return "—";
     return "Pending";
@@ -195,6 +222,12 @@ export function executionOutcomeLabel(run: StrategyAnalysisRun): string {
 
 export function executionOutcomeClassName(run: StrategyAnalysisRun): string {
   const execution = run.execution;
+  if (isExitAnalysisRun(run)) {
+    if (!execution) return "analysis-outcome analysis-outcome--pending";
+    if (execution.exit_closed) return "analysis-outcome analysis-outcome--exit-closed";
+    if (execution.exit_triggered) return "analysis-outcome analysis-outcome--exit-triggered";
+    return "analysis-outcome analysis-outcome--neutral";
+  }
   if (!execution) {
     if (!isExecutorEligible(run)) return "analysis-outcome analysis-outcome--neutral";
     return "analysis-outcome analysis-outcome--pending";
@@ -310,6 +343,7 @@ export function executionOutcomeSortKey(run: StrategyAnalysisRun): number {
 }
 
 function runSourceSortKey(run: StrategyAnalysisRun): number {
+  if (isExitAnalysisRun(run)) return 2;
   return run.run_type === "manual" ? 0 : 1;
 }
 

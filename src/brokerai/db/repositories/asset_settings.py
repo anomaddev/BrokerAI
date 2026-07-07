@@ -121,6 +121,8 @@ class AssetSettingsRepository:
                     doc.get("pair_order"),
                 )
                 doc["enabled_sessions"] = normalize_enabled_sessions(doc.get("enabled_sessions"))
+                if "only_one_position_per_pair" not in doc:
+                    doc["only_one_position_per_pair"] = True
             return doc
 
         default: dict[str, Any] = {
@@ -132,6 +134,7 @@ class AssetSettingsRepository:
             default["enabled_pairs"] = []
             default["pair_order"] = default_pair_order([])
             default["enabled_sessions"] = normalize_enabled_sessions(None)
+            default["only_one_position_per_pair"] = True
         else:
             default["enabled_symbols"] = []
         return default
@@ -144,6 +147,7 @@ class AssetSettingsRepository:
         enabled_pairs: list[str] | None = None,
         pair_order: list[str] | None = None,
         enabled_sessions: dict[str, bool] | None = None,
+        only_one_position_per_pair: bool | None = None,
         primary_exchange: str | None = None,
     ) -> dict[str, Any]:
         if asset_class not in ASSET_CLASSES:
@@ -163,6 +167,13 @@ class AssetSettingsRepository:
             else:
                 existing = await self.get("forex")
                 doc["enabled_sessions"] = normalize_enabled_sessions(existing.get("enabled_sessions"))
+            if only_one_position_per_pair is not None:
+                doc["only_one_position_per_pair"] = bool(only_one_position_per_pair)
+            else:
+                existing = await self.get("forex")
+                doc["only_one_position_per_pair"] = bool(
+                    existing.get("only_one_position_per_pair", True)
+                )
         elif enabled_pairs is not None:
             doc["enabled_symbols"] = sorted(set(enabled_pairs))
 

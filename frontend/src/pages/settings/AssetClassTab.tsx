@@ -139,6 +139,7 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
   const [enabledSessions, setEnabledSessions] = useState<ForexTradingSessions>(
     DEFAULT_FOREX_TRADING_SESSIONS,
   );
+  const [onlyOnePositionPerPair, setOnlyOnePositionPerPair] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -148,9 +149,18 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
     enabledPairs,
     pairOrder,
     enabledSessions,
+    onlyOnePositionPerPair,
     assetClass,
   });
-  snapshotRef.current = { enabled, primaryExchange, enabledPairs, pairOrder, enabledSessions, assetClass };
+  snapshotRef.current = {
+    enabled,
+    primaryExchange,
+    enabledPairs,
+    pairOrder,
+    enabledSessions,
+    onlyOnePositionPerPair,
+    assetClass,
+  };
 
   const persistAssetSettings = useCallback(async () => {
     const snapshot = snapshotRef.current;
@@ -159,6 +169,8 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
       enabled_pairs: snapshot.assetClass === "forex" ? snapshot.enabledPairs : undefined,
       pair_order: snapshot.assetClass === "forex" ? snapshot.pairOrder : undefined,
       enabled_sessions: snapshot.assetClass === "forex" ? snapshot.enabledSessions : undefined,
+      only_one_position_per_pair:
+        snapshot.assetClass === "forex" ? snapshot.onlyOnePositionPerPair : undefined,
       primary_exchange: snapshot.primaryExchange || null,
     });
     if (snapshot.assetClass === "forex") {
@@ -201,6 +213,7 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
             normalizePairOrder(catalogList, enabledList, data.pair_order),
           );
           setEnabledSessions(normalizeForexTradingSessions(data.enabled_sessions));
+          setOnlyOnePositionPerPair(data.only_one_position_per_pair ?? true);
           setEnabled(data.enabled);
           const savedExchange = data.primary_exchange ?? "";
           setPrimaryExchange(
@@ -247,6 +260,12 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
 
   function schedulePairSave() {
     scheduleSave(400);
+  }
+
+  function handleOnlyOnePositionPerPairChange(next: boolean) {
+    setOnlyOnePositionPerPair(next);
+    snapshotRef.current = { ...snapshotRef.current, onlyOnePositionPerPair: next };
+    saveNow();
   }
 
   function toggleTradingSession(sessionId: string, next: boolean) {
@@ -339,6 +358,24 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
           />
           {assetClass === "forex" ? (
             <>
+              <section className="account-section-card">
+                <div className="settings-section-intro">
+                  <h3 className="settings-subtitle">Position limits</h3>
+                  <p className="settings-muted forex-pairs-hint">
+                    Prevent opening a second trade on a pair while one is already open. After a
+                    reverse-cross exit on the same candle, a new entry in the opposite direction is
+                    still allowed when gates pass.
+                  </p>
+                </div>
+                <div className="settings-enable-row">
+                  <span className="settings-enable-label">Only allow 1 position per pair</span>
+                  <ToggleSwitch
+                    label="Only allow 1 position per pair"
+                    checked={onlyOnePositionPerPair}
+                    onChange={handleOnlyOnePositionPerPairChange}
+                  />
+                </div>
+              </section>
               <section className="account-section-card">
                 <div className="settings-section-intro">
                   <h3 className="settings-subtitle">Trading sessions</h3>
