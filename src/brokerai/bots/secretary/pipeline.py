@@ -11,6 +11,10 @@ from brokerai.bots.secretary.types import CandleJob, FetchStatus, PipelineContex
 from brokerai.config.settings import get_settings
 from brokerai.core.worker_pool import get_worker_pool
 from brokerai.trading.candle_revision import GLOBAL_CANDLE_REVISIONS
+from brokerai.trading.data.market_calendar import (
+    expected_latest_closed_bar,
+    stored_time_matches_expected,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +86,32 @@ class PipelineRunner:
                     context.latest_candle_time,
                 )
             )
+            cache_complete = True
+            expected = expected_latest_closed_bar(
+                context.timeframe,
+                as_of=context.trigger_time,
+            )
+            if context.latest_candle_time and expected is not None:
+                cache_complete = stored_time_matches_expected(
+                    context.latest_candle_time,
+                    expected,
+                )
+            revision_covers_close = GLOBAL_CANDLE_REVISIONS.covers_expected(
+                context.symbol,
+                context.timeframe,
+                expected,
+            )
             if (
                 not context.bootstrap
                 and not context.catchup
-                and revision_unchanged
-                and candles_upserted == 0
+                and (
+                    revision_covers_close
+                    or (
+                        revision_unchanged
+                        and candles_upserted == 0
+                        and cache_complete
+                    )
+                )
             ):
                 logger.info(
                     "Pipeline — skipping analysis for %s %s (candle %s already analyzed)",
@@ -117,11 +142,13 @@ class PipelineRunner:
                 result_count=len(analyses),
             )
 
-            if context.latest_candle_time:
+            analyzed_through = (analyze_result.metadata or {}).get("latest_candle_time")
+            revision_time = analyzed_through or context.latest_candle_time
+            if revision_time:
                 GLOBAL_CANDLE_REVISIONS.mark_updated(
                     context.symbol,
                     context.timeframe,
-                    context.latest_candle_time,
+                    revision_time,
                 )
 
             if self._broker is not None and hasattr(self._broker, "process_analysis"):

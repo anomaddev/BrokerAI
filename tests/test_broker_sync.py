@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from brokerai.trading.broker.models import BrokerEvent, PositionLot, SyncResult
-from brokerai.trading.broker.sync import run_broker_sync
+from brokerai.trading.broker.sync import _merge_live_open_into_broker_lots, run_broker_sync
 from brokerai.trading.oanda_bootstrap import OandaBootstrapResult
 
 
@@ -17,6 +17,37 @@ def _reset_broker_sync_globals():
     sync_module._LAST_SUCCESSFUL_SYNC = None
     yield
     sync_module._LAST_SUCCESSFUL_SYNC = None
+
+
+def test_merge_live_open_into_broker_lots_adds_missing_open_positions():
+    existing = PositionLot(
+        exchange_id="oanda",
+        account_id="acct",
+        broker_lot_id="99",
+        asset_class="forex",
+        state="closed",
+        instrument="EUR_USD",
+        symbol="EUR_USD",
+        direction="long",
+        initial_qty=100,
+        current_qty=0,
+        entry_price=1.0,
+    )
+    live = PositionLot(
+        exchange_id="oanda",
+        account_id="acct",
+        broker_lot_id="35",
+        asset_class="forex",
+        state="open",
+        instrument="USD_CAD",
+        symbol="USD_CAD",
+        direction="short",
+        initial_qty=84388,
+        current_qty=84388,
+        entry_price=1.42,
+    )
+    merged = _merge_live_open_into_broker_lots([existing], [live])
+    assert {lot.broker_lot_id for lot in merged} == {"99", "35"}
 
 
 @pytest.mark.asyncio

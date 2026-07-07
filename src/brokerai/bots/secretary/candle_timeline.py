@@ -15,6 +15,7 @@ from brokerai.bots.secretary.types import CandleJob
 from brokerai.config.settings import get_settings
 from brokerai.trading.asset_runtime import get_asset_runtime
 from brokerai.trading.candle_revision import GLOBAL_CANDLE_REVISIONS
+from brokerai.trading.data.market_calendar import expected_latest_closed_bar
 from brokerai.trading.work_plan import build_work_plan
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ class CandleTimeline:
                 CandleRequirement(timeframe=timeframe, pairs=(symbol,), bar_count=bar_count)
             )
 
-        if not all_requirements:
+        if not all_requirements and not result.strategies:
             return [], warnings
 
         # (pair, timeframe, bar_count, bootstrap, incremental, fetch_due)
@@ -138,16 +139,13 @@ class CandleTimeline:
                         unit.timeframe,
                         source="oanda",
                     )
-                    if not complete:
-                        continue
-                    latest = await service.latest_candle_time(
+                    expected = expected_latest_closed_bar(unit.timeframe, as_of=when)
+                    revision_covers = GLOBAL_CANDLE_REVISIONS.covers_expected(
                         unit.pair,
                         unit.timeframe,
-                        source="oanda",
+                        expected,
                     )
-                    if latest and GLOBAL_CANDLE_REVISIONS.has_changed(
-                        unit.pair, unit.timeframe, latest
-                    ):
+                    if not complete or not revision_covers:
                         due_units.append(
                             (
                                 unit.pair,
@@ -176,16 +174,27 @@ class CandleTimeline:
             if not strategies and not bootstrap:
                 continue
 
-            latest = await service.latest_candle_time(pair, timeframe, source="oanda")
+            expected = expected_latest_closed_bar(timeframe, as_of=when)
+            revision_covers = GLOBAL_CANDLE_REVISIONS.covers_expected(
+                pair,
+                timeframe,
+                expected,
+            )
             # Fetch-due jobs must run even when the new bar is not visible yet — the
             # candle only appears after the Data Manager worker fetch step.
             if (
                 not fetch_due
-                and latest
-                and not GLOBAL_CANDLE_REVISIONS.has_changed(pair, timeframe, latest)
+                and revision_covers
                 and not bootstrap
             ):
-                continue
+                cache_complete = await service.cache.is_cache_complete_up_to(
+                    pair,
+                    timeframe,
+                    source="oanda",
+                    as_of=when,
+                )
+                if cache_complete:
+                    continue
 
             dedupe = f"{pair}|{timeframe}|{trigger_time.isoformat()}"
             if dedupe in seen:

@@ -39,6 +39,25 @@ logger = logging.getLogger(__name__)
 _SYNC_LOCK = asyncio.Lock()
 
 
+def _merge_live_open_into_broker_lots(
+    broker_lots: list[PositionLot],
+    live_open_lots: list[PositionLot],
+) -> list[PositionLot]:
+    """Include live open broker positions missing from the incremental change batch.
+
+    Reopens ledger rows that were incorrectly marked ``broker_closed`` when poll
+    state could not be parsed into full ``PositionLot`` objects.
+    """
+    if not live_open_lots:
+        return broker_lots
+    in_batch = {lot.broker_lot_id for lot in broker_lots if lot.broker_lot_id}
+    merged = list(broker_lots)
+    for lot in live_open_lots:
+        if lot.broker_lot_id and lot.broker_lot_id not in in_batch:
+            merged.append(lot)
+    return merged
+
+
 def _merge_sync_events(
     primary: list[BrokerEvent],
     extra: list[BrokerEvent],
@@ -449,6 +468,8 @@ async def run_broker_sync(
                 priced = await adapter.fetch_open_lots_with_prices(credentials, account_id)
                 if priced:
                     live_open_lots = priced
+
+            broker_lots = _merge_live_open_into_broker_lots(broker_lots, live_open_lots)
 
             events_to_persist = _merge_sync_events(events_result.events, stale_repair_events)
 

@@ -103,18 +103,19 @@ Use the same OIDC flow as production while developing:
 
 This will:
 
-1. Write OIDC settings to `.env` (`BROKERAI_AUTH_MODE=oidc`, issuer `http://localhost:9091`, etc.)
-2. Start Authelia in Docker (`brokerai-authelia-dev` on port **9091**)
+1. Write OIDC settings to `.env` (`BROKERAI_AUTH_MODE=oidc`, issuer `https://127.0.0.1:9091`, etc.)
+2. Generate a dev-only self-signed TLS certificate and start Authelia in Docker (`brokerai-authelia-dev` on port **9091**)
 3. Start BrokerAI as usual (Vite on `:5173`, API on `:1989`)
 
-Sign in at `http://localhost:5173` — you are redirected to Authelia, then back to the app.
+Sign in at `http://localhost:5173` — you are redirected to Authelia (accept the browser TLS warning once), then back to the app.
 
 | Item | Value |
 |------|-------|
-| Authelia URL | http://localhost:9091 |
+| Authelia URL | https://127.0.0.1:9091 |
 | Dev username | `dev` |
 | Dev password | `BrokerAI!2026` |
 | OIDC client secret | `brokerai-dev-local-secret` (local only) |
+| TLS verify (API → Authelia) | disabled via `BROKERAI_OIDC_TLS_VERIFY=false` (local only) |
 
 Config lives in `deploy/authelia/dev/`. **Do not reuse these secrets in production.**
 

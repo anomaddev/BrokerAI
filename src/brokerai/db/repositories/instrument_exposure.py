@@ -5,9 +5,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from brokerai.db.client import get_db
+from brokerai.trading.analysis_runs import _format_dt
 from brokerai.trading.broker.models import InstrumentExposure, PositionLot
 
 logger = logging.getLogger(__name__)
+
+
+def serialize_exposure_rollup(doc: dict[str, Any]) -> dict[str, Any]:
+    """Normalize an exposure rollup document for JSON API responses."""
+    symbol = str(doc.get("symbol") or "")
+    return {
+        **doc,
+        "pair": str(doc.get("pair") or symbol.replace("_", "/")),
+        "created_at": _format_dt(doc.get("created_at")),
+        "updated_at": _format_dt(doc.get("updated_at")),
+    }
 
 
 def _rollup_from_lot_docs(lots: list[dict[str, Any]], *, exchange_id: str) -> list[InstrumentExposure]:
@@ -102,7 +114,8 @@ class InstrumentExposureRepository:
             {"exchange_id": exchange_id, "account_id": account_id},
             {"_id": 0},
         ).sort([("symbol", 1), ("direction", 1)])
-        return await cursor.to_list(length=500)
+        rows = await cursor.to_list(length=500)
+        return [serialize_exposure_rollup(row) for row in rows]
 
     async def get_for_symbol(
         self,

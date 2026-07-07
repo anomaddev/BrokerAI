@@ -98,7 +98,7 @@ def get_current_username(request: Request) -> str | None:
     if is_oidc_mode():
         if user.oidc_sub is None:
             return None
-        if token_oidc_sub and token_oidc_sub != user.oidc_sub:
+        if not token_oidc_sub or token_oidc_sub != user.oidc_sub:
             return None
     return username
 
@@ -240,11 +240,15 @@ async def me(username: str = Depends(require_auth)) -> dict[str, str | bool | No
         and user.profile_photo
         and resolve_profile_photo_path(store.auth_dir, user.profile_photo)
     )
+    mode = auth_mode()
     return {
         "username": username,
         "has_profile_photo": has_photo,
         "first_name": user.first_name if user else None,
         "last_name": user.last_name if user else None,
+        "email": user.email if user else None,
+        "auth_mode": mode,
+        "identity_managed_by_idp": is_oidc_mode(),
     }
 
 
@@ -341,6 +345,11 @@ async def update_profile(
     body: UpdateProfileRequest,
     _username: str = Depends(require_auth),
 ) -> dict[str, str | None]:
+    if is_oidc_mode():
+        raise HTTPException(
+            status_code=409,
+            detail="Profile names are managed by your identity provider while OIDC auth is enabled",
+        )
     store = AuthStore()
     if store.get_user() is None:
         raise HTTPException(status_code=404, detail="User not found")

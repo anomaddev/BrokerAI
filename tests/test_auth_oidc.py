@@ -68,12 +68,14 @@ def test_parse_oidc_claims_extracts_names():
             "preferred_username": "trader",
             "given_name": "Pat",
             "family_name": "Lee",
+            "email": "pat@example.com",
         }
     )
     assert claims.sub == "user-1"
     assert claims.username == "trader"
     assert claims.first_name == "Pat"
     assert claims.last_name == "Lee"
+    assert claims.email == "pat@example.com"
 
 
 def test_create_or_link_oidc_user_creates_profile(oidc_settings: Settings):
@@ -98,9 +100,82 @@ def test_create_or_link_oidc_user_links_existing_profile(oidc_settings: Settings
         username="ignored",
         first_name="Pat",
         last_name=None,
+        email="pat@example.com",
     )
     assert record.username == "admin"
     assert record.oidc_sub == "oidc-sub-1"
+    assert record.email == "pat@example.com"
+
+
+def test_create_or_link_oidc_user_reconciles_identity_on_relogin(oidc_settings: Settings):
+    store = AuthStore(oidc_settings)
+    store.create_or_link_oidc_user(
+        oidc_sub="oidc-sub-1",
+        username="trader",
+        first_name="Pat",
+        last_name="Lee",
+        email="pat@example.com",
+    )
+    record = store.create_or_link_oidc_user(
+        oidc_sub="oidc-sub-1",
+        username="ignored",
+        first_name="Jordan",
+        last_name="Kim",
+        email="jordan@example.com",
+    )
+    assert record.username == "trader"
+    assert record.first_name == "Jordan"
+    assert record.last_name == "Kim"
+    assert record.email == "jordan@example.com"
+
+
+def test_update_profile_rejected_in_oidc_mode(oidc_settings: Settings):
+    store = AuthStore(oidc_settings)
+    store.create_or_link_oidc_user(
+        oidc_sub="oidc-sub-1",
+        username="trader",
+        first_name="Pat",
+    )
+    client = TestClient(app)
+    token = SessionManager(oidc_settings).create_token("trader", oidc_sub="oidc-sub-1")
+    response = client.put(
+        "/api/auth/account/profile",
+        json={"first_name": "New"},
+        cookies={"brokerai_session": token},
+    )
+    assert response.status_code == 409
+
+
+def test_me_includes_oidc_identity_fields(oidc_settings: Settings):
+    store = AuthStore(oidc_settings)
+    store.create_or_link_oidc_user(
+        oidc_sub="oidc-sub-1",
+        username="trader",
+        first_name="Pat",
+        last_name="Lee",
+        email="pat@example.com",
+    )
+    client = TestClient(app)
+    token = SessionManager(oidc_settings).create_token("trader", oidc_sub="oidc-sub-1")
+    response = client.get("/api/auth/me", cookies={"brokerai_session": token})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["auth_mode"] == "oidc"
+    assert payload["identity_managed_by_idp"] is True
+    assert payload["email"] == "pat@example.com"
+    assert payload["first_name"] == "Pat"
+
+
+def test_legacy_builtin_session_rejected_in_oidc_mode(oidc_settings: Settings):
+    store = AuthStore(oidc_settings)
+    store.create_or_link_oidc_user(
+        oidc_sub="oidc-sub-1",
+        username="trader",
+    )
+    client = TestClient(app)
+    legacy_token = SessionManager(oidc_settings).create_token("trader")
+    response = client.get("/api/auth/me", cookies={"brokerai_session": legacy_token})
+    assert response.status_code == 401
 
 
 def test_allowed_sub_rejects_unauthorized_subject(oidc_settings: Settings, monkeypatch):

@@ -74,6 +74,31 @@ async def test_reconcile_closes_stale_local_not_on_broker():
 
 
 @pytest.mark.asyncio
+async def test_reconcile_skips_when_live_empty_but_local_open():
+    lots_repo = AsyncMock()
+    lots_repo.list_open_lots.return_value = [
+        {
+            "id": "local-1",
+            "broker_lot_id": "35",
+            "pair": "USD/CAD",
+            "direction": "short",
+            "state": "open",
+            "initial_qty": 100,
+            "current_qty": 100,
+        },
+    ]
+
+    closed = await reconcile_local_open_against_broker(
+        lots_repo,
+        exchange_id="oanda",
+        live_open_lots=[],
+    )
+
+    assert closed == 0
+    lots_repo.close_lot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_reconcile_closes_duplicate_locals_for_same_broker_trade():
     lots_repo = AsyncMock()
     opened = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)

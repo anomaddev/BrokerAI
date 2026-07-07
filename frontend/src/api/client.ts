@@ -46,6 +46,9 @@ export type MeResponse = {
   has_profile_photo: boolean;
   first_name?: string | null;
   last_name?: string | null;
+  email?: string | null;
+  auth_mode?: "builtin" | "oidc";
+  identity_managed_by_idp?: boolean;
 };
 
 export type CandleBar = {

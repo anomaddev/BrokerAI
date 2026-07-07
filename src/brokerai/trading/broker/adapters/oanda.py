@@ -291,11 +291,20 @@ class OandaAdapter:
             )
             events.extend(gap_events)
 
+        poll_state = poll.get("state") or {}
+        state_trades = poll_state.get("trades") or []
         live_open_lots = open_lots_from_account_state(
-            poll.get("state") or {},
+            poll_state,
             exchange_id=self.exchange_id,
             account_id=account_id,
         )
+        # OANDA AccountChanges state.trades are often TradeSummary stubs (id + PL only,
+        # no instrument). Reconciliation needs full open trades — fetch when parsing
+        # cannot build a lot for every trade listed in state.
+        if state_trades and len(live_open_lots) < len(state_trades):
+            fetched = await self.fetch_open_lots_with_prices(credentials, account_id)
+            if fetched:
+                live_open_lots = fetched
         if not live_open_lots:
             live_open_lots = [lot for lot in applied.lots if lot.state == "open"]
         else:

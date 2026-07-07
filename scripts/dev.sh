@@ -193,7 +193,9 @@ ensure_static_build() {
 }
 
 ensure_oidc_dev() {
-  if [[ "${USE_OIDC}" != "true" ]]; then
+  # Start Authelia when --oidc is passed or .env already has OIDC auth enabled.
+  load_env
+  if [[ "${USE_OIDC}" != "true" && "${BROKERAI_AUTH_MODE:-builtin}" != "oidc" ]]; then
     return 0
   fi
   local setup_args=()
@@ -203,7 +205,11 @@ ensure_oidc_dev() {
   if [[ "${SETUP_ONLY}" == "true" ]]; then
     setup_args+=(--configure-only)
   fi
-  "${ROOT}/scripts/setup-dev-oidc.sh" "${setup_args[@]}"
+  if ((${#setup_args[@]} > 0)); then
+    "${ROOT}/scripts/setup-dev-oidc.sh" "${setup_args[@]}"
+  else
+    "${ROOT}/scripts/setup-dev-oidc.sh"
+  fi
 }
 
 preflight() {
@@ -271,7 +277,7 @@ print_banner() {
   fi
   echo "  MongoDB: mongodb://127.0.0.1:27017/brokerai"
   if [[ "${USE_OIDC}" == "true" || "${BROKERAI_AUTH_MODE:-builtin}" == "oidc" ]]; then
-    echo "  Auth:    OIDC via Authelia — http://localhost:9091"
+    echo "  Auth:    OIDC via Authelia — https://127.0.0.1:9091"
     echo "           dev / BrokerAI!2026"
   fi
   echo "  Ctrl+C to stop all"

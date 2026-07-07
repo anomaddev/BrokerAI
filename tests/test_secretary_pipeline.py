@@ -194,3 +194,121 @@ async def test_secretary_run_startup_pass_dispatches_jobs():
     # Second call is a no-op.
     await bot.run_startup_pass()
     assert run_jobs.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_runs_analysis_when_cache_stale_at_close():
+    """Do not skip analysis when MongoDB is behind the expected latest closed bar."""
+    strategy = _sample_strategy()
+    trigger = datetime(2026, 7, 6, 18, 45, 4, tzinfo=timezone.utc)
+    job = CandleJob(
+        job_id="stale-cache-1",
+        asset_class="forex",
+        symbol="AUD/CHF",
+        timeframe="M15",
+        bar_count=200,
+        trigger_time=trigger,
+        strategies=(strategy,),
+        incremental=True,
+        bootstrap=False,
+    )
+    stale_latest = "2026-07-06T18:15:00.000000000Z"
+    context_after_fetch = PipelineContext.from_job(job)
+    context_after_fetch.latest_candle_time = stale_latest
+    context_after_fetch.fetch_status = FetchStatus.OK
+
+    from brokerai.trading.candle_revision import GLOBAL_CANDLE_REVISIONS
+
+    GLOBAL_CANDLE_REVISIONS.mark_updated("AUD/CHF", "M15", stale_latest)
+
+    analysis = AnalysisResult(
+        strategy_id="strategy-1",
+        strategy_name="Test Strategy",
+        pair="AUD/CHF",
+        timeframe="M15",
+        confidence=0.0,
+        direction="none",
+        min_candles=200,
+        signal_type="ema_crossover",
+    )
+    analyzed_through = "2026-07-06T18:30:00.000000000Z"
+
+    broker = MagicMock()
+    broker.process_analysis = AsyncMock(return_value=[])
+    runner = PipelineRunner(broker=broker)
+
+    with (
+        patch(
+            "brokerai.bots.secretary.pipeline.run_asset_data_manager",
+            new_callable=AsyncMock,
+            return_value=MagicMock(ok=True, data=context_after_fetch, metadata={"candles_upserted": 0}),
+        ),
+        patch(
+            "brokerai.bots.secretary.pipeline.run_asset_analyst",
+            new_callable=AsyncMock,
+            return_value=MagicMock(
+                ok=True,
+                data=[analysis],
+                metadata={"latest_candle_time": analyzed_through},
+            ),
+        ),
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_scheduled", new_callable=AsyncMock),
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_fetch_started", new_callable=AsyncMock),
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_fetch_completed", new_callable=AsyncMock),
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_analyze_started", new_callable=AsyncMock),
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_analyze_completed", new_callable=AsyncMock),
+    ):
+        result = await runner.run_job(job)
+
+    assert result.ok
+    assert len(result.analyses) == 1
+    assert GLOBAL_CANDLE_REVISIONS.snapshot()["AUD/CHF|M15"] == analyzed_through
+
+
+@pytest.mark.asyncio
+async def test_pipeline_skips_analysis_when_revision_covers_expected_after_fetch():
+    """Do not re-analyze when fetch finally persists a bar we already analyzed live."""
+    strategy = _sample_strategy()
+    trigger = datetime(2026, 7, 6, 18, 45, 4, tzinfo=timezone.utc)
+    job = CandleJob(
+        job_id="double-analysis-1",
+        asset_class="forex",
+        symbol="AUD/CHF",
+        timeframe="M15",
+        bar_count=200,
+        trigger_time=trigger,
+        strategies=(strategy,),
+        incremental=True,
+        bootstrap=False,
+    )
+    fresh_latest = "2026-07-06T18:30:00.000000000Z"
+    context_after_fetch = PipelineContext.from_job(job)
+    context_after_fetch.latest_candle_time = fresh_latest
+    context_after_fetch.fetch_status = FetchStatus.OK
+
+    from brokerai.trading.candle_revision import GLOBAL_CANDLE_REVISIONS
+
+    GLOBAL_CANDLE_REVISIONS.mark_updated("AUD/CHF", "M15", fresh_latest)
+
+    broker = MagicMock()
+    broker.process_analysis = AsyncMock(return_value=[])
+    runner = PipelineRunner(broker=broker)
+
+    with (
+        patch(
+            "brokerai.bots.secretary.pipeline.run_asset_data_manager",
+            new_callable=AsyncMock,
+            return_value=MagicMock(ok=True, data=context_after_fetch, metadata={"candles_upserted": 1}),
+        ),
+        patch(
+            "brokerai.bots.secretary.pipeline.run_asset_analyst",
+            new_callable=AsyncMock,
+        ) as run_analyst,
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_scheduled", new_callable=AsyncMock),
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_fetch_started", new_callable=AsyncMock),
+        patch("brokerai.bots.secretary.pipeline.pipeline_activity.log_pipeline_fetch_completed", new_callable=AsyncMock),
+    ):
+        result = await runner.run_job(job)
+
+    assert result.ok
+    run_analyst.assert_not_awaited()

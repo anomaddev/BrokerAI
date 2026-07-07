@@ -54,11 +54,15 @@ class OidcClient:
         )
         self._metadata: OidcMetadata | None = None
 
+    def _httpx_verify(self) -> bool:
+        """Whether outbound OIDC HTTP clients validate TLS certificates."""
+        return self.settings.oidc_tls_verify
+
     async def metadata(self) -> OidcMetadata:
         if self._metadata is not None:
             return self._metadata
         discovery_url = f"{self.settings.oidc_issuer.rstrip('/')}/.well-known/openid-configuration"
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=self._httpx_verify()) as client:
             response = await client.get(discovery_url)
             response.raise_for_status()
             payload = response.json()
@@ -155,6 +159,7 @@ class OidcClient:
             client_id=self.settings.oidc_client_id,
             client_secret=self.settings.oidc_client_secret,
             scope=self.settings.oidc_scopes,
+            verify=self._httpx_verify(),
         )
         try:
             token = await client.fetch_token(
@@ -177,6 +182,7 @@ class OidcClient:
                 username=parsed.username,
                 first_name=parsed.first_name,
                 last_name=parsed.last_name,
+                email=parsed.email,
             )
         except ValueError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -208,7 +214,7 @@ class OidcClient:
         if not id_token:
             raise HTTPException(status_code=401, detail="OIDC provider did not return an ID token")
 
-        async with httpx.AsyncClient(timeout=15.0) as http_client:
+        async with httpx.AsyncClient(timeout=15.0, verify=self._httpx_verify()) as http_client:
             jwks_response = await http_client.get(metadata.jwks_uri)
             jwks_response.raise_for_status()
             jwks = jwks_response.json()

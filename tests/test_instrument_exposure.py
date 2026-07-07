@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -7,6 +9,7 @@ import pytest
 from brokerai.db.repositories.instrument_exposure import (
     InstrumentExposureRepository,
     _rollup_from_lot_docs,
+    serialize_exposure_rollup,
 )
 from brokerai.trading.broker.models import InstrumentExposure
 
@@ -123,3 +126,21 @@ async def test_instrument_exposure_repository_recompute():
         broker_lot_ids=["1"],
     )
     assert exposure.to_dict()["pair"] == "EUR/USD"
+
+
+def test_serialize_exposure_rollup_formats_datetimes():
+    created = datetime(2026, 7, 6, 15, 45, 4, tzinfo=timezone.utc)
+    payload = serialize_exposure_rollup(
+        {
+            "exchange_id": "oanda",
+            "account_id": "acct",
+            "symbol": "USD_CAD",
+            "direction": "short",
+            "total_qty": 84388.0,
+            "created_at": created,
+            "updated_at": created,
+        }
+    )
+    assert payload["pair"] == "USD/CAD"
+    assert payload["created_at"] == created.isoformat()
+    json.dumps(payload)

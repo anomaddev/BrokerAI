@@ -134,6 +134,9 @@ bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
 msg_ok "MongoDB ready"
 
 msg_info "Setting up Python virtual environment"
+# shellcheck source=scripts/lib/install-common.sh
+source "${BROKERAI_INSTALL_DIR}/scripts/lib/install-common.sh"
+_brokerai_require_python311 || exit 1
 cd "${BROKERAI_INSTALL_DIR}"
 python3 -m venv venv
 "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install --upgrade pip -q
@@ -148,11 +151,11 @@ msg_ok "Frontend built"
 
 msg_info "Configuring BrokerAI"
 mkdir -p "${BROKERAI_CONFIG_DIR}" "${BROKERAI_DATA_DIR}" "${BROKERAI_LOG_DIR}"
-if [[ ! -f "${BROKERAI_CONFIG_DIR}/config.env" ]]; then
-  cp "${BROKERAI_INSTALL_DIR}/config/config.env.example" "${BROKERAI_CONFIG_DIR}/config.env"
-  SECRET_KEY=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c32)
-  sed -i "s|^BROKERAI_SECRET_KEY=.*|BROKERAI_SECRET_KEY=${SECRET_KEY}|" "${BROKERAI_CONFIG_DIR}/config.env"
-fi
+_brokerai_seed_production_config \
+  "${BROKERAI_CONFIG_DIR}" \
+  "${BROKERAI_INSTALL_DIR}/config/config.env.example" \
+  "${BROKERAI_DATA_DIR}" \
+  "${BROKERAI_LOG_DIR}"
 msg_ok "Configured BrokerAI"
 
 BROKERAI_INSTALLED_COMMIT="$(git -C "${BROKERAI_INSTALL_DIR}" rev-parse HEAD)"
@@ -207,6 +210,8 @@ if [[ -n "${BROKERAI_ADMIN_USER:-}" && -n "${BROKERAI_ADMIN_PASSWORD:-}" ]]; the
   "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
   msg_ok "Admin account configured"
 fi
+
+_brokerai_install_container_update_command
 
 WEB_PORT=$(grep -E '^BROKERAI_WEB_PORT=' "${BROKERAI_CONFIG_DIR}/config.env" | cut -d= -f2 || echo "1989")
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')

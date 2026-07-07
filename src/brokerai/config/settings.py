@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     oidc_logout_url: str = ""
     oidc_allowed_sub: str = ""
     oidc_scopes: str = "openid profile email"
+    oidc_tls_verify: bool = True
     research_search_concurrency: int = 6
     research_analysis_concurrency: int = 4
     ai_confirmation_enabled: bool = False

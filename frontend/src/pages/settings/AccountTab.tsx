@@ -61,9 +61,19 @@ function FormFooter({
   );
 }
 
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="account-readonly-field">
+      <span className="account-readonly-label">{label}</span>
+      <span className="account-readonly-value">{value}</span>
+    </div>
+  );
+}
+
 export default function AccountTab() {
   const [authMode, setAuthMode] = useState<"builtin" | "oidc">("builtin");
   const [currentUsername, setCurrentUsername] = useState("");
+  const [savedEmail, setSavedEmail] = useState("");
   const [savedFirstName, setSavedFirstName] = useState("");
   const [savedLastName, setSavedLastName] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -92,20 +102,16 @@ export default function AccountTab() {
   const [profileError, setProfileError] = useState("");
 
   useEffect(() => {
-    api
-      .authConfig()
-      .then((config) => setAuthMode(config.mode))
-      .catch(() => setAuthMode("builtin"));
-
-    api
-      .me()
-      .then((user) => {
+    Promise.all([api.authConfig(), api.me()])
+      .then(([config, user]) => {
+        setAuthMode(config.mode);
         setCurrentUsername(user.username);
         setUsername(user.username);
         setSavedFirstName(user.first_name?.trim() ?? "");
         setSavedLastName(user.last_name?.trim() ?? "");
         setFirstName(user.first_name?.trim() ?? "");
         setLastName(user.last_name?.trim() ?? "");
+        setSavedEmail(user.email?.trim() ?? "");
         setInitialHasPhoto(user.has_profile_photo);
         if (user.has_profile_photo) {
           setPhotoVersion(Date.now());
@@ -126,7 +132,8 @@ export default function AccountTab() {
     initialHasPhoto && !removeRequested && !pendingFile ? profilePhotoUrl(photoVersion) : null;
   const photoDirty = Boolean(pendingFile) || removeRequested;
   const namesDirty =
-    firstName.trim() !== savedFirstName.trim() || lastName.trim() !== savedLastName.trim();
+    authMode === "builtin" &&
+    (firstName.trim() !== savedFirstName.trim() || lastName.trim() !== savedLastName.trim());
   const profileDirty = photoDirty || namesDirty;
   const usernameChanged = username.trim() !== currentUsername.trim();
   const profileDisplayName = accountDisplayName({
@@ -172,7 +179,7 @@ export default function AccountTab() {
         notifyProfilePhotoUpdated();
       }
 
-      setProfileMessage("Profile updated.");
+      setProfileMessage(authMode === "oidc" ? "Profile photo updated." : "Profile updated.");
     } catch (err) {
       setProfileError(err instanceof Error ? err.message : "Failed to update profile");
     } finally {
@@ -241,11 +248,33 @@ export default function AccountTab() {
           <p className="settings-muted">Loading account…</p>
         ) : (
           <div className="account-settings">
+            {authMode === "oidc" ? (
+              <section className="account-section-card">
+                <div className="settings-section-intro">
+                  <h3 className="settings-subsection-title">Sign-in & identity</h3>
+                  <p className="settings-panel-desc">
+                    Username, email, and legal name come from your identity provider and refresh
+                    when you sign in. Change your password or enable 2FA at your IdP.
+                  </p>
+                </div>
+                <div className="account-readonly-grid">
+                  <ReadOnlyField label="Username" value={currentUsername} />
+                  {savedEmail ? <ReadOnlyField label="Email" value={savedEmail} /> : null}
+                  {savedFirstName ? <ReadOnlyField label="First name" value={savedFirstName} /> : null}
+                  {savedLastName ? <ReadOnlyField label="Last name" value={savedLastName} /> : null}
+                </div>
+              </section>
+            ) : null}
+
             <section className="account-section-card">
               <div className="settings-section-intro">
-                <h3 className="settings-subsection-title">Profile</h3>
+                <h3 className="settings-subsection-title">
+                  {authMode === "oidc" ? "Profile photo" : "Profile"}
+                </h3>
                 <p className="settings-panel-desc">
-                  Your name and photo appear in the header and user menu across BrokerAI.
+                  {authMode === "oidc"
+                    ? "Your photo appears in the header and user menu. Other display preferences live under Display and General settings."
+                    : "Your name and photo appear in the header and user menu across BrokerAI."}
                 </p>
               </div>
               <div className="account-profile-row">
@@ -277,40 +306,42 @@ export default function AccountTab() {
                   void saveProfile();
                 }}
               >
-                <div className="account-name-grid">
-                  <label htmlFor="account-first-name">
-                    First name
-                    <input
-                      id="account-first-name"
-                      value={firstName}
-                      onChange={(e) => {
-                        setFirstName(e.target.value);
-                        setProfileMessage("");
-                        setProfileError("");
-                      }}
-                      autoComplete="given-name"
-                      disabled={profileSaving}
-                      maxLength={64}
-                      placeholder="Optional"
-                    />
-                  </label>
-                  <label htmlFor="account-last-name">
-                    Last name
-                    <input
-                      id="account-last-name"
-                      value={lastName}
-                      onChange={(e) => {
-                        setLastName(e.target.value);
-                        setProfileMessage("");
-                        setProfileError("");
-                      }}
-                      autoComplete="family-name"
-                      disabled={profileSaving}
-                      maxLength={64}
-                      placeholder="Optional"
-                    />
-                  </label>
-                </div>
+                {authMode === "builtin" ? (
+                  <div className="account-name-grid">
+                    <label htmlFor="account-first-name">
+                      First name
+                      <input
+                        id="account-first-name"
+                        value={firstName}
+                        onChange={(e) => {
+                          setFirstName(e.target.value);
+                          setProfileMessage("");
+                          setProfileError("");
+                        }}
+                        autoComplete="given-name"
+                        disabled={profileSaving}
+                        maxLength={64}
+                        placeholder="Optional"
+                      />
+                    </label>
+                    <label htmlFor="account-last-name">
+                      Last name
+                      <input
+                        id="account-last-name"
+                        value={lastName}
+                        onChange={(e) => {
+                          setLastName(e.target.value);
+                          setProfileMessage("");
+                          setProfileError("");
+                        }}
+                        autoComplete="family-name"
+                        disabled={profileSaving}
+                        maxLength={64}
+                        placeholder="Optional"
+                      />
+                    </label>
+                  </div>
+                ) : null}
                 <div className="account-form-footer">
                   {profileMessage ? <p className="settings-success">{profileMessage}</p> : null}
                   {profileError ? <p className="settings-error">{profileError}</p> : null}
@@ -319,7 +350,7 @@ export default function AccountTab() {
                     type="submit"
                     disabled={profileSaving || !profileDirty}
                   >
-                    {profileSaving ? "Saving…" : "Save profile"}
+                    {profileSaving ? "Saving…" : authMode === "oidc" ? "Save photo" : "Save profile"}
                   </button>
                 </div>
               </form>

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository, _effective_qty, _lot_last_modified, _resolve_lot_state
 from brokerai.trading.broker.models import PositionLot
+
+logger = logging.getLogger(__name__)
 
 
 def _local_broker_id(doc: dict[str, Any]) -> str:
@@ -37,6 +40,13 @@ async def reconcile_local_open_against_broker(
     closed = 0
 
     local_open = await lots_repo.list_open_lots(exchange_id=exchange_id, dedupe=False)
+
+    if not live_open_lots and local_open:
+        logger.warning(
+            "Skipping broker reconciliation — live open lots empty but %d local open lot(s) remain",
+            len(local_open),
+        )
+        return 0
 
     for local in local_open:
         if _resolve_lot_state(local) == "open" and _effective_qty(local) == 0:

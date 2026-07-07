@@ -181,7 +181,24 @@ class CandleCache:
             latest,
             count=INCREMENTAL_BAR_COUNT,
         )
-        return [candle for candle in raw if str(candle.get("time", "")) > latest]
+        new_candles = [candle for candle in raw if str(candle.get("time", "")) > latest]
+        if new_candles:
+            return new_candles
+
+        expected = expected_latest_closed_bar(timeframe)
+        if expected is None or stored_time_matches_expected(latest, expected):
+            return []
+
+        # Stale cache at a candle boundary — OANDA may not mark the just-closed bar
+        # complete on a `from=latest` request yet. Count-based fetch is more reliable.
+        fallback = await fetch_candles(
+            token,
+            environment,
+            instrument,
+            granularity,
+            INCREMENTAL_BAR_COUNT + 1,
+        )
+        return [candle for candle in fallback if str(candle.get("time", "")) > latest]
 
     async def sync(
         self,

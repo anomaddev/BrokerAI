@@ -6,6 +6,9 @@ theme: dark
 
 server:
   address: 'tcp://:9091'
+  tls:
+    certificate: /config/certs/cert.pem
+    key: /config/certs/key.pem
 
 log:
   level: info
@@ -21,16 +24,14 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
-    - domain: 'localhost'
-      policy: one_factor
     - domain: '127.0.0.1'
       policy: one_factor
 
 session:
   secret: dev-local-authelia-session-secret
   cookies:
-    - domain: 'localhost'
-      authelia_url: 'http://localhost:9091'
+    - domain: '127.0.0.1'
+      authelia_url: 'https://127.0.0.1:9091'
 
 storage:
   encryption_key: dev-local-authelia-storage-key-32chars
@@ -80,6 +81,7 @@ identity_providers:
         client_secret: '$plaintext$brokerai-dev-local-secret'
         public: false
         authorization_policy: one_factor
+        consent_mode: implicit
         redirect_uris:
           - http://localhost:5173/api/auth/oidc/callback
           - http://127.0.0.1:5173/api/auth/oidc/callback

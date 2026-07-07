@@ -20,6 +20,7 @@ class UserRecord:
     password_hash: str | None
     created_at: str
     oidc_sub: str | None = None
+    email: str | None = None
     profile_photo: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -35,6 +36,7 @@ class UserRecord:
             password_hash=changes["password_hash"] if "password_hash" in changes else self.password_hash,  # type: ignore[assignment]
             created_at=str(changes["created_at"]) if "created_at" in changes else self.created_at,
             oidc_sub=changes["oidc_sub"] if "oidc_sub" in changes else self.oidc_sub,  # type: ignore[assignment]
+            email=changes["email"] if "email" in changes else self.email,  # type: ignore[assignment]
             profile_photo=changes["profile_photo"] if "profile_photo" in changes else self.profile_photo,  # type: ignore[assignment]
             first_name=changes["first_name"] if "first_name" in changes else self.first_name,  # type: ignore[assignment]
             last_name=changes["last_name"] if "last_name" in changes else self.last_name,  # type: ignore[assignment]
@@ -73,6 +75,8 @@ class UserRecord:
             payload["password_hash"] = self.password_hash
         if self.oidc_sub:
             payload["oidc_sub"] = self.oidc_sub
+        if self.email:
+            payload["email"] = self.email
         if self.profile_photo:
             payload["profile_photo"] = self.profile_photo
         if self.first_name:
@@ -88,11 +92,13 @@ class UserRecord:
         last_name = data.get("last_name") or None
         password_hash = data.get("password_hash")
         oidc_sub = data.get("oidc_sub")
+        email = data.get("email")
         return cls(
             username=str(data["username"]),
             password_hash=str(password_hash) if password_hash else None,
             created_at=str(data["created_at"]),
             oidc_sub=str(oidc_sub) if oidc_sub else None,
+            email=str(email) if email else None,
             profile_photo=str(profile_photo) if profile_photo else None,
             first_name=str(first_name) if first_name else None,
             last_name=str(last_name) if last_name else None,
@@ -177,8 +183,14 @@ class AuthStore:
         username: str,
         first_name: str | None = None,
         last_name: str | None = None,
+        email: str | None = None,
     ) -> UserRecord:
-        """Create the local profile on first OIDC login or link an existing profile."""
+        """Create or link the local profile and reconcile IdP identity fields.
+
+        On every OIDC login, ``first_name``, ``last_name``, and ``email`` are
+        updated when the IdP sends non-empty claims. BrokerAI-local settings
+        (profile photo, timezone, display prefs) are preserved.
+        """
         allowed = self.settings.oidc_allowed_sub.strip()
         if allowed and oidc_sub != allowed:
             raise ValueError("OIDC subject is not allowed for this BrokerAI instance")
@@ -191,6 +203,7 @@ class AuthStore:
                 oidc_sub=oidc_sub,
                 first_name=first_name if first_name is not None else existing.first_name,
                 last_name=last_name if last_name is not None else existing.last_name,
+                email=email if email is not None else existing.email,
             )
             self._save_user(record)
             (self.auth_dir / "setup_complete").touch()
@@ -206,6 +219,7 @@ class AuthStore:
             created_at=datetime.now(timezone.utc).isoformat(),
             first_name=first_name,
             last_name=last_name,
+            email=email,
         )
         self._save_user(record)
         (self.auth_dir / "setup_complete").touch()

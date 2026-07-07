@@ -90,6 +90,8 @@ BROKERAI_RELEASE="${BROKERAI_RELEASE:-}"
 
 # shellcheck source=lib/update-track.sh
 source "${LIB_DIR}/update-track.sh"
+# shellcheck source=lib/install-common.sh
+source "${LIB_DIR}/install-common.sh"
 _brokerai_ensure_git_safe_directory "${INSTALL_DIR}"
 
 if [[ "${BROKERAI_AUTO_UPDATE}" != "true" && "${FORCE}" != "true" ]]; then
@@ -148,6 +150,7 @@ chmod +x "${INSTALL_DIR}/scripts/check-update.sh"
 chmod +x "${INSTALL_DIR}/scripts/provision-admin-user.sh" 2>/dev/null || true
 ln -sf "${INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
 ln -sf "${INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
+_brokerai_install_container_update_command
 
 cp "${INSTALL_DIR}/systemd/brokerai-orchestrator.service" /etc/systemd/system/
 cp "${INSTALL_DIR}/systemd/brokerai-web.service" /etc/systemd/system/

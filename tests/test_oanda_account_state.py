@@ -9,6 +9,7 @@ from brokerai.trading.oanda_account_state import (
     apply_account_changes,
     apply_account_state,
     detect_transaction_gap,
+    open_lots_from_account_state,
     summary_changed,
 )
 
@@ -38,6 +39,35 @@ def test_apply_account_state_leaves_unmentioned_fields(account_changes_payload):
     applied = apply_account_state({"trades": account_changes_payload["state"]["trades"]}, previous_summary=previous)
     assert "margin_used" not in applied.summary
     assert applied.lot_pl_updates["565"] == 55.0
+
+
+def test_open_lots_from_account_state_skips_sparse_trade_summary():
+    """OANDA poll state often lists trades without instrument/units (TradeSummary)."""
+    state = {
+        "trades": [
+            {"id": "35", "unrealizedPL": "29.40", "marginUsed": "1687.76"},
+        ]
+    }
+    lots = open_lots_from_account_state(state, exchange_id="oanda", account_id="101-001-test")
+    assert lots == []
+
+
+def test_open_lots_from_account_state_parses_full_trade_rows():
+    state = {
+        "trades": [
+            {
+                "id": "565",
+                "instrument": "EUR_USD",
+                "currentUnits": "1000",
+                "price": "1.1000",
+                "unrealizedPL": "55.00",
+            }
+        ]
+    }
+    lots = open_lots_from_account_state(state, exchange_id="oanda", account_id="101-001-test")
+    assert len(lots) == 1
+    assert lots[0].broker_lot_id == "565"
+    assert lots[0].pair == "EUR/USD"
 
 
 def test_apply_account_changes_empty(account_changes_payload):
