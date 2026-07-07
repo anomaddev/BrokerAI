@@ -557,12 +557,14 @@ export const api = {
     before?: string;
     strategy_id?: string;
     pair?: string;
+    analysis_purpose?: "entry" | "exit";
   }) => {
     const search = new URLSearchParams();
     if (params?.limit != null) search.set("limit", String(params.limit));
     if (params?.before) search.set("before", params.before);
     if (params?.strategy_id) search.set("strategy_id", params.strategy_id);
     if (params?.pair) search.set("pair", params.pair);
+    if (params?.analysis_purpose) search.set("analysis_purpose", params.analysis_purpose);
     const query = search.toString();
     return request<StrategyAnalysisRunsResponse>(
       `/api/strategy-analysis-runs${query ? `?${query}` : ""}`,

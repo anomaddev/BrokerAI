@@ -402,3 +402,18 @@ export function sortAnalysisRunsForTable(
     (a, b) => directionMultiplier * compareAnalysisRunsByColumn(a, b, sortColumn),
   );
 }
+
+/** One-line summary for grouped analysis pair rows. */
+export function analysisRunBriefSummary(run: StrategyAnalysisRun): string {
+  const parts: string[] = [];
+  parts.push(directionLabel(run.direction));
+  if (run.confidence > 0) {
+    parts.push(confidencePercent(run.confidence));
+  }
+  parts.push(signalLabel(run));
+  const outcome = executionOutcomeLabel(run);
+  if (outcome && outcome !== "—") {
+    parts.push(outcome);
+  }
+  return parts.join(" · ");
+}

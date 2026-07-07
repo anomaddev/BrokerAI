@@ -12,6 +12,8 @@ export const ANALYSIS_RUN_NAV_LIMIT = 200;
 /** Passed via router state when opening a run from the analysis table. */
 export type AnalysisRunNavigationState = {
   runIds: string[];
+  candleKey?: string;
+  candleKeys?: string[];
 };
 
 export function buildAnalysisRunNavIds(

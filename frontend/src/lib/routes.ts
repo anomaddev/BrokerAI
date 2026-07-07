@@ -9,6 +9,8 @@ export const ROUTES = {
     strategyNew: (presetId: string) => `/research/strategies/new/${presetId}`,
     strategyEdit: (id: string) => `/research/strategies/${encodeURIComponent(id)}/edit`,
     analysis: "/research/analysis",
+    analysisCandle: (candleKey: string) =>
+      `/research/analysis/candle/${encodeURIComponent(candleKey)}`,
     analysisRun: (runId: string) =>
       `/research/analysis/run/${encodeURIComponent(runId)}`,
     backtest: "/research/backtest",

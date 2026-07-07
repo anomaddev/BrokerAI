@@ -8,6 +8,7 @@ from brokerai.activity.constants import (
     ACTION_PIPELINE_ANALYZE_STARTED,
     ACTION_PIPELINE_ASSOCIATE_COMPLETED,
     ACTION_PIPELINE_ASSOCIATE_STARTED,
+    ACTION_PIPELINE_BATCH_COMPLETED,
     ACTION_PIPELINE_BROKER_COMPLETED,
     ACTION_PIPELINE_BROKER_STARTED,
     ACTION_PIPELINE_FAILED,
@@ -17,7 +18,7 @@ from brokerai.activity.constants import (
     ACTION_PIPELINE_SKIPPED,
 )
 from brokerai.activity.log import record_bot_activity
-from brokerai.bots.secretary.types import PipelineContext
+from brokerai.bots.secretary.types import CandleJob, PipelineContext, PipelineResult
 
 
 def _base_metadata(context: PipelineContext, **extra: Any) -> dict[str, Any]:
@@ -136,6 +137,37 @@ async def log_pipeline_failed(context: PipelineContext, step: str, error: str) -
         detail=error,
         source="secretary",
         metadata=_base_metadata(context, step=step, error=error),
+    )
+
+
+async def log_pipeline_batch_completed(
+    jobs: list[CandleJob],
+    results: list[PipelineResult],
+) -> None:
+    """Record that Secretary finished a concurrent pipeline batch."""
+    job_count = len(results)
+    ok_count = sum(1 for result in results if result.ok)
+    failed_count = job_count - ok_count
+    timeframes = sorted({job.timeframe for job in jobs})
+    latest_candle_times: list[str] = []
+    for result in results:
+        raw = (result.metadata or {}).get("latest_candle_time")
+        if isinstance(raw, str) and raw.strip():
+            latest_candle_times.append(raw.strip())
+    latest_candle_times = sorted(set(latest_candle_times))
+
+    label = "job" if job_count == 1 else "jobs"
+    await record_bot_activity(
+        ACTION_PIPELINE_BATCH_COMPLETED,
+        f"Pipeline batch complete ({job_count} {label})",
+        source="secretary",
+        metadata={
+            "job_count": job_count,
+            "ok_count": ok_count,
+            "failed_count": failed_count,
+            "timeframes": timeframes,
+            "latest_candle_times": latest_candle_times,
+        },
     )
 
 

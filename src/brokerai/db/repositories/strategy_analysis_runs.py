@@ -146,6 +146,7 @@ class StrategyAnalysisRunsRepository:
         *,
         strategy_id: str | None = None,
         pair: str | None = None,
+        analysis_purpose: str | None = None,
         limit: int = 50,
         before: datetime | None = None,
     ) -> list[dict[str, Any]]:
@@ -155,6 +156,8 @@ class StrategyAnalysisRunsRepository:
             query["strategy_id"] = strategy_id
         if pair:
             query["pair"] = pair
+        if analysis_purpose in {"entry", "exit"}:
+            query["analysis_purpose"] = analysis_purpose
         if before is not None:
             when = (
                 before.astimezone(timezone.utc)

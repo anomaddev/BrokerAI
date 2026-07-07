@@ -13,7 +13,10 @@ from brokerai.bots.researcher.weekly import (
     preview_weekly_brief_skip_reason,
     preview_weekly_debrief_skip_reason,
 )
-from brokerai.bots.secretary.activity import log_account_summary_updated
+from brokerai.bots.secretary.activity import (
+    log_account_summary_updated,
+    log_pipeline_batch_completed,
+)
 from brokerai.bots.secretary.candle_timeline import CandleTimeline
 from brokerai.bots.secretary.pipeline import PipelineRunner
 from brokerai.config.settings import get_settings
@@ -180,6 +183,7 @@ class SecretaryBot(Bot):
             self._queued_jobs = len(startup_jobs)
             self._active_pipelines = len(startup_jobs)
             results = await self._pipeline.run_jobs(startup_jobs)
+            await log_pipeline_batch_completed(startup_jobs, results)
             self._record_pipeline_batch(results)
             return
         logger.info("Secretary startup — cache warm, waiting for candle close")
@@ -208,6 +212,7 @@ class SecretaryBot(Bot):
         self._active_pipelines = len(jobs)
         logger.info("Secretary — running %d pipeline(s)", len(jobs))
         results = await self._pipeline.run_jobs(jobs)
+        await log_pipeline_batch_completed(jobs, results)
         self._record_pipeline_batch(results)
 
     def _record_pipeline_batch(self, results: list) -> None:

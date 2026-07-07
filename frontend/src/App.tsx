@@ -14,6 +14,7 @@ import StrategyEditPage from "./pages/strategies/StrategyEditPage";
 import Activity from "./pages/Activity";
 import CostLedger from "./pages/CostLedger";
 import StrategyAnalysis from "./pages/StrategyAnalysis";
+import StrategyAnalysisCandleView from "./pages/StrategyAnalysisCandleView";
 import StrategyAnalysisRunView from "./pages/StrategyAnalysisRunView";
 import Trades from "./pages/Trades";
 import Settings from "./pages/Settings";
@@ -132,6 +133,10 @@ export default function App() {
           <Route path="/research/strategies/new/:presetId" element={<StrategyBuilderPage />} />
           <Route path="/research/strategies/:id/edit" element={<StrategyEditPage />} />
           <Route path="/research/analysis" element={<StrategyAnalysis />} />
+          <Route
+            path="/research/analysis/candle/:candleKey"
+            element={<StrategyAnalysisCandleView />}
+          />
           <Route path="/research/analysis/run/:runId" element={<StrategyAnalysisRunView />} />
           <Route
             path="/research/analysis/:runId"
