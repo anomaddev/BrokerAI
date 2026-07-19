@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Minus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, History, Minus, Plus, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, type AssetClass, type Strategy } from "../api/client";
 import { ROUTES } from "../lib/routes";
-import { TIMEFRAME_LABELS, type Timeframe } from "../lib/strategyParams";
 import AssetClassFilterSelect from "../components/AssetClassFilterSelect";
-import StrategyTemplatesSection from "../components/strategies/StrategyTemplatesSection";
+import CreateStrategyOverlay from "../components/strategies/CreateStrategyOverlay";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import {
+  backtestStatusLabel,
+  normalizeBacktestStatus,
+} from "../lib/strategies/backtestStatus";
+import {
+  sortStrategies,
+  strategyTimeframeLabel,
+  strategyTypeLabel,
+  type SortDirection,
+  type StrategySortKey,
+} from "../lib/strategies/strategyListSort";
 import {
   ASSET_CLASS_LABELS,
   instrumentSelectionSummary,
@@ -55,21 +65,42 @@ function pnlClass(value: number): string {
   return "strategy-stat--neutral";
 }
 
-function strategyTypeLabel(strategy: Strategy): string {
-  return strategy.strategy_type === "preset" ? "Template" : "Custom";
-}
-
-function strategyTimeframeLabel(strategy: Strategy): string {
-  const timeframe = strategy.timeframe ?? strategy.params?.timeframe;
-  if (!timeframe) return "—";
-  return TIMEFRAME_LABELS[timeframe as Timeframe] ?? timeframe;
-}
-
 function normalizeStrategies(apiStrategies: Strategy[]): Strategy[] {
   return apiStrategies.map((strategy) => ({
     ...strategy,
     strategy_type: strategy.strategy_type ?? (strategy.preset_id ? "preset" : "custom"),
+    backtest_status: normalizeBacktestStatus(strategy.backtest_status),
   }));
+}
+
+type SortableHeaderProps = {
+  label: string;
+  sortKey: StrategySortKey;
+  activeKey: StrategySortKey;
+  direction: SortDirection;
+  onSort: (key: StrategySortKey) => void;
+};
+
+function SortableHeader({ label, sortKey, activeKey, direction, onSort }: SortableHeaderProps) {
+  const active = activeKey === sortKey;
+  return (
+    <th scope="col" aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        className={`strategy-table-sort-btn${active ? " strategy-table-sort-btn--active" : ""}`}
+        onClick={() => onSort(sortKey)}
+      >
+        <span>{label}</span>
+        {active ? (
+          direction === "asc" ? (
+            <ChevronUp size={14} aria-hidden />
+          ) : (
+            <ChevronDown size={14} aria-hidden />
+          )
+        ) : null}
+      </button>
+    </th>
+  );
 }
 
 export default function Strategies() {
@@ -85,6 +116,9 @@ export default function Strategies() {
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [sortKey, setSortKey] = useState<StrategySortKey>("name");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const selectAllRef = useRef<HTMLInputElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
@@ -101,7 +135,7 @@ export default function Strategies() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return strategies.filter((strategy) => {
+    const matched = strategies.filter((strategy) => {
       if (assetClassFilter.size > 0 && !assetClassFilter.has(strategy.asset_class)) {
         return false;
       }
@@ -117,7 +151,8 @@ export default function Strategies() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [strategies, query, assetClassFilter]);
+    return sortStrategies(matched, sortKey, sortDirection);
+  }, [strategies, query, assetClassFilter, sortKey, sortDirection]);
 
   const filteredIds = useMemo(() => filtered.map((strategy) => strategy.id), [filtered]);
   const selectedFilteredCount = useMemo(
@@ -194,6 +229,15 @@ export default function Strategies() {
   function clearSelection() {
     setSelectedIds(new Set());
     setBulkError(null);
+  }
+
+  function handleSort(key: StrategySortKey) {
+    if (sortKey === key) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDirection("asc");
   }
 
   async function applyBulkEnabled(enabled: boolean) {
@@ -279,6 +323,34 @@ export default function Strategies() {
     }
   }
 
+  async function applyBulkBacktest() {
+    const ids = filteredIds.filter((id) => selectedIds.has(id));
+    if (ids.length === 0) return;
+
+    setBulkPending(true);
+    setBulkError(null);
+    setActionsOpen(false);
+
+    try {
+      const result = await api.queueStrategyBacktests(ids);
+      const updatedById = new Map(
+        normalizeStrategies(result.strategies).map((strategy) => [strategy.id, strategy]),
+      );
+      setStrategies((current) =>
+        current.map((strategy) => updatedById.get(strategy.id) ?? strategy),
+      );
+      if (result.queued < ids.length) {
+        setBulkError(
+          `${result.queued} of ${ids.length} strategies were queued for backtest.`,
+        );
+      }
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "Could not queue backtests");
+    } finally {
+      setBulkPending(false);
+    }
+  }
+
   function openDeleteConfirm() {
     setActionsOpen(false);
     setDeleteConfirmOpen(true);
@@ -292,248 +364,340 @@ export default function Strategies() {
     navigate(ROUTES.research.strategyEdit(strategy.id));
   }
 
-  const hasSavedStrategies = strategies.length > 0;
   const hasFilteredResults = filtered.length > 0;
   const hasSelection = selectedFilteredCount > 0;
+  const emptyMessage = loading
+    ? "Loading strategies…"
+    : error
+      ? error
+      : strategies.length === 0
+        ? "No strategies yet. Use Build Strategy to create your first one."
+        : "No strategies match your filters.";
 
   return (
     <div>
-      <h1 className="page-title">Strategies</h1>
-
-      <StrategyTemplatesSection />
+      <div className="strategy-list-header">
+        <h1 className="page-title">Strategies</h1>
+        <button type="button" className="btn" onClick={() => setCreateOpen(true)}>
+          <Plus size={16} aria-hidden />
+          Build Strategy
+        </button>
+      </div>
 
       <div className="settings-panel strategy-saved-panel">
-        {hasSavedStrategies && (
-          <div className="research-filters">
-            <input
-              type="search"
-              className="research-search"
-              placeholder="Search by name, type, asset class, or instrument…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <AssetClassFilterSelect value={assetClassFilter} onChange={setAssetClassFilter} />
-            <div
-              className={`research-multiselect strategy-bulk-actions-menu${
-                hasSelection ? " strategy-bulk-actions-menu--active" : ""
-              }`}
-              ref={actionsRef}
-            >
-              <div className="research-multiselect-wrap">
+        <div className="research-filters">
+          <input
+            type="search"
+            className="research-search"
+            placeholder="Search by name, type, asset class, or instrument…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <AssetClassFilterSelect value={assetClassFilter} onChange={setAssetClassFilter} />
+          <div
+            className={`research-multiselect strategy-bulk-actions-menu${
+              hasSelection ? " strategy-bulk-actions-menu--active" : ""
+            }`}
+            ref={actionsRef}
+          >
+            <div className="research-multiselect-wrap">
+              <button
+                type="button"
+                className="research-multiselect-trigger strategy-bulk-actions-trigger"
+                disabled={!hasSelection || bulkPending}
+                onClick={() => setActionsOpen((prev) => !prev)}
+                aria-haspopup="menu"
+                aria-expanded={actionsOpen}
+                aria-label="Strategy bulk actions"
+              >
+                {hasSelection ? `Actions (${selectedFilteredCount})` : "Actions"}
+              </button>
+            </div>
+            {actionsOpen && hasSelection ? (
+              <div className="strategy-bulk-actions-dropdown" role="menu">
+                <p className="strategy-bulk-actions-dropdown-header">
+                  {selectedFilteredCount} selected
+                </p>
                 <button
                   type="button"
-                  className="research-multiselect-trigger strategy-bulk-actions-trigger"
-                  disabled={!hasSelection || bulkPending}
-                  onClick={() => setActionsOpen((prev) => !prev)}
-                  aria-haspopup="menu"
-                  aria-expanded={actionsOpen}
-                  aria-label="Strategy bulk actions"
+                  className="strategy-bulk-action-item strategy-bulk-action-item--enable"
+                  role="menuitem"
+                  disabled={bulkPending}
+                  onClick={() => {
+                    setActionsOpen(false);
+                    void applyBulkEnabled(true);
+                  }}
                 >
-                  {hasSelection ? `Actions (${selectedFilteredCount})` : "Actions"}
+                  <span className="strategy-bulk-action-icon" aria-hidden>
+                    <Check size={15} strokeWidth={2.25} />
+                  </span>
+                  Enable selected
+                </button>
+                <button
+                  type="button"
+                  className="strategy-bulk-action-item strategy-bulk-action-item--disable"
+                  role="menuitem"
+                  disabled={bulkPending}
+                  onClick={() => {
+                    setActionsOpen(false);
+                    void applyBulkEnabled(false);
+                  }}
+                >
+                  <span className="strategy-bulk-action-icon" aria-hidden>
+                    <Minus size={15} strokeWidth={2.25} />
+                  </span>
+                  Disable selected
+                </button>
+                <button
+                  type="button"
+                  className="strategy-bulk-action-item strategy-bulk-action-item--backtest"
+                  role="menuitem"
+                  disabled={bulkPending}
+                  onClick={() => {
+                    void applyBulkBacktest();
+                  }}
+                >
+                  <span className="strategy-bulk-action-icon" aria-hidden>
+                    <History size={15} strokeWidth={2.25} />
+                  </span>
+                  Run Backtest
+                </button>
+                <div className="strategy-bulk-actions-divider" role="separator" />
+                <button
+                  type="button"
+                  className="strategy-bulk-action-item strategy-bulk-action-item--clear"
+                  role="menuitem"
+                  disabled={bulkPending}
+                  onClick={() => {
+                    setActionsOpen(false);
+                    clearSelection();
+                  }}
+                >
+                  <span className="strategy-bulk-action-icon" aria-hidden>
+                    <X size={15} strokeWidth={2.25} />
+                  </span>
+                  Clear selection
+                </button>
+                <div className="strategy-bulk-actions-divider" role="separator" />
+                <button
+                  type="button"
+                  className="strategy-bulk-action-item strategy-bulk-action-item--delete"
+                  role="menuitem"
+                  disabled={bulkPending}
+                  onClick={openDeleteConfirm}
+                >
+                  <span className="strategy-bulk-action-icon" aria-hidden>
+                    <Trash2 size={15} strokeWidth={2.25} />
+                  </span>
+                  Delete selected
                 </button>
               </div>
-              {actionsOpen && hasSelection ? (
-                <div className="strategy-bulk-actions-dropdown" role="menu">
-                  <p className="strategy-bulk-actions-dropdown-header">
-                    {selectedFilteredCount} selected
-                  </p>
-                  <button
-                    type="button"
-                    className="strategy-bulk-action-item strategy-bulk-action-item--enable"
-                    role="menuitem"
-                    disabled={bulkPending}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      void applyBulkEnabled(true);
-                    }}
-                  >
-                    <span className="strategy-bulk-action-icon" aria-hidden>
-                      <Check size={15} strokeWidth={2.25} />
-                    </span>
-                    Enable selected
-                  </button>
-                  <button
-                    type="button"
-                    className="strategy-bulk-action-item strategy-bulk-action-item--disable"
-                    role="menuitem"
-                    disabled={bulkPending}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      void applyBulkEnabled(false);
-                    }}
-                  >
-                    <span className="strategy-bulk-action-icon" aria-hidden>
-                      <Minus size={15} strokeWidth={2.25} />
-                    </span>
-                    Disable selected
-                  </button>
-                  <div className="strategy-bulk-actions-divider" role="separator" />
-                  <button
-                    type="button"
-                    className="strategy-bulk-action-item strategy-bulk-action-item--clear"
-                    role="menuitem"
-                    disabled={bulkPending}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      clearSelection();
-                    }}
-                  >
-                    <span className="strategy-bulk-action-icon" aria-hidden>
-                      <X size={15} strokeWidth={2.25} />
-                    </span>
-                    Clear selection
-                  </button>
-                  <div className="strategy-bulk-actions-divider" role="separator" />
-                  <button
-                    type="button"
-                    className="strategy-bulk-action-item strategy-bulk-action-item--delete"
-                    role="menuitem"
-                    disabled={bulkPending}
-                    onClick={openDeleteConfirm}
-                  >
-                    <span className="strategy-bulk-action-icon" aria-hidden>
-                      <Trash2 size={15} strokeWidth={2.25} />
-                    </span>
-                    Delete selected
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            ) : null}
           </div>
-        )}
+        </div>
 
         {bulkError && !loading && <p className="settings-error">{bulkError}</p>}
 
-        {loading && <p className="settings-muted">Loading strategies…</p>}
-        {error && !loading && <p className="settings-error">{error}</p>}
-
-        {!loading && !error && !hasSavedStrategies && (
-          <div className="research-empty-callout strategy-empty-callout">
-            <p className="research-empty-callout-title">No strategies yet</p>
-            <p className="settings-muted">
-              Choose a template above to configure parameters and save your first strategy.
-            </p>
-          </div>
-        )}
-
-        {!loading && !error && hasSavedStrategies && !hasFilteredResults && (
-          <p className="settings-muted">No strategies match your filters.</p>
-        )}
-
-        {!loading && !error && hasSavedStrategies && hasFilteredResults && (
-          <div className="research-table-wrap">
-            <table className="research-table strategy-table">
-              <thead>
-                <tr>
-                  <th className="strategy-table-checkbox-col" scope="col">
-                    <label className="strategy-table-checkbox-label">
-                      <input
-                        ref={selectAllRef}
-                        type="checkbox"
-                        className="ui-checkbox-input"
-                        checked={allFilteredSelected}
-                        onChange={toggleSelectAllFiltered}
-                        aria-label="Select all visible strategies"
-                      />
-                    </label>
-                  </th>
-                  <th>Strategy</th>
-                  <th>Timeframe</th>
-                  <th>Type</th>
-                  <th>Asset class</th>
-                  <th>Status</th>
-                  <th>Instruments</th>
-                  <th>Trades</th>
-                  <th>Win rate</th>
-                  <th>Realized P&amp;L</th>
-                  <th>Open</th>
-                  <th>Last trade</th>
+        <div className="research-table-wrap">
+          <table className="research-table strategy-table">
+            <thead>
+              <tr>
+                <th className="strategy-table-checkbox-col" scope="col">
+                  <label className="strategy-table-checkbox-label">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      className="ui-checkbox-input"
+                      checked={allFilteredSelected}
+                      onChange={toggleSelectAllFiltered}
+                      disabled={!hasFilteredResults}
+                      aria-label="Select all visible strategies"
+                    />
+                  </label>
+                </th>
+                <SortableHeader
+                  label="Strategy"
+                  sortKey="name"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Timeframe"
+                  sortKey="timeframe"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Type"
+                  sortKey="type"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Asset class"
+                  sortKey="assetClass"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Status"
+                  sortKey="status"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Backtest"
+                  sortKey="backtest"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <th scope="col">Instruments</th>
+                <SortableHeader
+                  label="Trades"
+                  sortKey="trades"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Win rate"
+                  sortKey="winRate"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Realized P&L"
+                  sortKey="pnl"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Open"
+                  sortKey="open"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
+                  label="Last trade"
+                  sortKey="lastTrade"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+              </tr>
+            </thead>
+            <tbody>
+              {!hasFilteredResults ? (
+                <tr className="strategy-table-empty-row">
+                  <td colSpan={13}>
+                    <div className="strategy-table-empty">
+                      <p className={error && !loading ? "settings-error" : "settings-muted"}>
+                        {emptyMessage}
+                      </p>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map((strategy) => {
+              ) : (
+                filtered.map((strategy) => {
                   const isSelected = selectedIds.has(strategy.id);
+                  const backtestStatus = normalizeBacktestStatus(strategy.backtest_status);
                   return (
-                  <tr
-                    key={strategy.id}
-                    className={[
-                      strategy.route ? "strategy-table-row--clickable" : undefined,
-                      isSelected ? "strategy-table-row--selected" : undefined,
-                    ]
-                      .filter(Boolean)
-                      .join(" ") || undefined}
-                    onClick={() => openStrategy(strategy)}
-                    onKeyDown={(e) => {
-                      if (strategy.route && (e.key === "Enter" || e.key === " ")) {
-                        e.preventDefault();
-                        openStrategy(strategy);
-                      }
-                    }}
-                    tabIndex={strategy.route ? 0 : undefined}
-                    role={strategy.route ? "link" : undefined}
-                    aria-selected={isSelected}
-                  >
-                    <td
-                      className="strategy-table-checkbox-col"
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
+                    <tr
+                      key={strategy.id}
+                      className={[
+                        strategy.route ? "strategy-table-row--clickable" : undefined,
+                        isSelected ? "strategy-table-row--selected" : undefined,
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined}
+                      onClick={() => openStrategy(strategy)}
+                      onKeyDown={(e) => {
+                        if (strategy.route && (e.key === "Enter" || e.key === " ")) {
+                          e.preventDefault();
+                          openStrategy(strategy);
+                        }
+                      }}
+                      tabIndex={strategy.route ? 0 : undefined}
+                      role={strategy.route ? "link" : undefined}
+                      aria-selected={isSelected}
                     >
-                      <label className="strategy-table-checkbox-label">
-                        <input
-                          type="checkbox"
-                          className="ui-checkbox-input"
-                          checked={isSelected}
-                          onChange={() => toggleSelected(strategy.id)}
-                          aria-label={`Select ${strategy.name}`}
-                        />
-                      </label>
-                    </td>
-                    <td>
-                      <div className="strategy-name-cell">
-                        <span className="strategy-name">{strategy.name}</span>
-                        {strategy.description ? (
-                          <span className="strategy-description">{strategy.description}</span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td>{strategyTimeframeLabel(strategy)}</td>
-                    <td>
-                      <span
-                        className={`research-tag strategy-type-tag strategy-type-tag--${
-                          strategy.strategy_type === "preset" ? "template" : "custom"
-                        }`}
+                      <td
+                        className="strategy-table-checkbox-col"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
                       >
-                        {strategyTypeLabel(strategy)}
-                      </span>
-                    </td>
-                    <td>{strategy.asset_class_label}</td>
-                    <td>
-                      <span
-                        className={`research-tag strategy-status--${
-                          strategy.enabled ? "enabled" : "disabled"
-                        }`}
-                      >
-                        {strategy.enabled ? "Enabled" : "Disabled"}
-                      </span>
-                    </td>
-                    <td className="settings-muted">{instrumentSummary(strategy)}</td>
-                    <td>{strategy.stats.total_trades}</td>
-                    <td>{formatWinRate(strategy.stats.win_rate)}</td>
-                    <td className={pnlClass(strategy.stats.realized_pnl)}>
-                      {formatPnl(strategy.stats.realized_pnl)}
-                    </td>
-                    <td>{strategy.stats.open_positions}</td>
-                    <td className="settings-muted">
-                      {formatInstant(strategy.stats.last_trade_at, "short")}
-                    </td>
-                  </tr>
+                        <label className="strategy-table-checkbox-label">
+                          <input
+                            type="checkbox"
+                            className="ui-checkbox-input"
+                            checked={isSelected}
+                            onChange={() => toggleSelected(strategy.id)}
+                            aria-label={`Select ${strategy.name}`}
+                          />
+                        </label>
+                      </td>
+                      <td>
+                        <div className="strategy-name-cell">
+                          <span className="strategy-name">{strategy.name}</span>
+                          {strategy.description ? (
+                            <span className="strategy-description">{strategy.description}</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>{strategyTimeframeLabel(strategy)}</td>
+                      <td>
+                        <span
+                          className={`research-tag strategy-type-tag strategy-type-tag--${
+                            strategy.strategy_type === "preset" ? "template" : "custom"
+                          }`}
+                        >
+                          {strategyTypeLabel(strategy)}
+                        </span>
+                      </td>
+                      <td>{strategy.asset_class_label}</td>
+                      <td>
+                        <span
+                          className={`research-tag strategy-status--${
+                            strategy.enabled ? "enabled" : "disabled"
+                          }`}
+                        >
+                          {strategy.enabled ? "Enabled" : "Disabled"}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`research-tag strategy-backtest--${backtestStatus}`}>
+                          {backtestStatusLabel(backtestStatus)}
+                        </span>
+                      </td>
+                      <td className="settings-muted">{instrumentSummary(strategy)}</td>
+                      <td>{strategy.stats.total_trades}</td>
+                      <td>{formatWinRate(strategy.stats.win_rate)}</td>
+                      <td className={pnlClass(strategy.stats.realized_pnl)}>
+                        {formatPnl(strategy.stats.realized_pnl)}
+                      </td>
+                      <td>{strategy.stats.open_positions}</td>
+                      <td className="settings-muted">
+                        {formatInstant(strategy.stats.last_trade_at, "short")}
+                      </td>
+                    </tr>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      {createOpen ? <CreateStrategyOverlay onClose={() => setCreateOpen(false)} /> : null}
 
       {deleteConfirmOpen && (
         <div

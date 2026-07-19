@@ -41,7 +41,11 @@ def oidc_settings(tmp_path, monkeypatch):
 def test_auth_config_builtin(auth_client: TestClient):
     response = auth_client.get("/api/auth/config")
     assert response.status_code == 200
-    assert response.json() == {"mode": "builtin", "setup_complete": False}
+    assert response.json() == {
+        "mode": "builtin",
+        "setup_complete": False,
+        "mfa_available": False,
+    }
 
 
 def test_login_setup_rejected_in_oidc_mode(oidc_settings: Settings):
@@ -164,6 +168,8 @@ def test_me_includes_oidc_identity_fields(oidc_settings: Settings):
     assert payload["identity_managed_by_idp"] is True
     assert payload["email"] == "pat@example.com"
     assert payload["first_name"] == "Pat"
+    assert payload["display_name"] == "Pat"
+    assert payload["last_name"] == "Lee"
 
 
 def test_legacy_builtin_session_rejected_in_oidc_mode(oidc_settings: Settings):
@@ -249,7 +255,8 @@ async def test_oidc_callback_sets_session_cookie(oidc_settings: Settings, tmp_pa
         )
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/"
+    # New admins are seeded into the post-admin onboarding wizard.
+    assert response.headers["location"] == "/setup"
     assert "brokerai_session=" in response.headers.get("set-cookie", "")
     saved = json.loads((oidc_settings.auth_dir / "users.json").read_text())
     assert saved["oidc_sub"] == "oidc-sub-1"

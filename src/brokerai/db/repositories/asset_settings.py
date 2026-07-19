@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from brokerai.db.client import get_db
+from sqlalchemy import select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import AssetSettingsRow
 from brokerai.exchanges import validate_primary_exchange
 from brokerai.market_sessions import normalize_enabled_sessions
 
@@ -99,6 +102,16 @@ def enabled_forex_pairs(enabled_pairs: list[str]) -> list[str]:
     return [pair for pair in FOREX_PAIR_CATALOG if pair in enabled_set]
 
 
+def _normalize_forex_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    enabled = list(doc.get("enabled_pairs") or [])
+    doc["enabled_pairs"] = _dedupe_preserve_order(p for p in enabled if p in _FOREX_CATALOG_SET)
+    doc["pair_order"] = normalize_pair_order(doc["enabled_pairs"], doc.get("pair_order"))
+    doc["enabled_sessions"] = normalize_enabled_sessions(doc.get("enabled_sessions"))
+    if "only_one_position_per_pair" not in doc:
+        doc["only_one_position_per_pair"] = True
+    return doc
+
+
 class AssetSettingsRepository:
     COLLECTION = "asset_settings"
 
@@ -106,24 +119,15 @@ class AssetSettingsRepository:
         if asset_class not in ASSET_CLASSES:
             raise ValueError(f"Unknown asset class: {asset_class}")
 
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one({"asset_class": asset_class}, {"_id": 0})
-        if doc:
-            if "primary_exchange" not in doc:
-                doc["primary_exchange"] = None
-            if asset_class == "forex":
-                enabled = list(doc.get("enabled_pairs") or [])
-                doc["enabled_pairs"] = _dedupe_preserve_order(
-                    p for p in enabled if p in _FOREX_CATALOG_SET
-                )
-                doc["pair_order"] = normalize_pair_order(
-                    doc["enabled_pairs"],
-                    doc.get("pair_order"),
-                )
-                doc["enabled_sessions"] = normalize_enabled_sessions(doc.get("enabled_sessions"))
-                if "only_one_position_per_pair" not in doc:
-                    doc["only_one_position_per_pair"] = True
-            return doc
+        async with session_scope() as session:
+            row = await session.get(AssetSettingsRow, asset_class)
+            if row:
+                doc = dict(row.doc)
+                if "primary_exchange" not in doc:
+                    doc["primary_exchange"] = None
+                if asset_class == "forex":
+                    return _normalize_forex_doc(doc)
+                return doc
 
         default: dict[str, Any] = {
             "asset_class": asset_class,
@@ -150,39 +154,56 @@ class AssetSettingsRepository:
         only_one_position_per_pair: bool | None = None,
         primary_exchange: str | None = None,
     ) -> dict[str, Any]:
+        """Persist asset settings.
+
+        Pair/symbol selections are kept when omitted so toggling the asset class
+        off and on does not clear the user's enabled-pair list. Pass an explicit
+        empty list to clear selections.
+        """
         if asset_class not in ASSET_CLASSES:
             raise ValueError(f"Unknown asset class: {asset_class}")
 
+        existing = await self.get(asset_class)
         doc: dict[str, Any] = {
+            **existing,
             "asset_class": asset_class,
             "enabled": enabled,
             "primary_exchange": validate_primary_exchange(asset_class, primary_exchange),
         }
         if asset_class == "forex":
-            pairs = _dedupe_preserve_order(p for p in (enabled_pairs or []) if p in _FOREX_CATALOG_SET)
+            if enabled_pairs is not None:
+                pairs = _dedupe_preserve_order(
+                    p for p in enabled_pairs if p in _FOREX_CATALOG_SET
+                )
+            else:
+                pairs = list(existing.get("enabled_pairs") or [])
             doc["enabled_pairs"] = pairs
-            doc["pair_order"] = normalize_pair_order(pairs, pair_order)
+            order_source = pair_order if pair_order is not None else existing.get("pair_order")
+            doc["pair_order"] = normalize_pair_order(pairs, order_source)
             if enabled_sessions is not None:
                 doc["enabled_sessions"] = normalize_enabled_sessions(enabled_sessions)
             else:
-                existing = await self.get("forex")
-                doc["enabled_sessions"] = normalize_enabled_sessions(existing.get("enabled_sessions"))
+                doc["enabled_sessions"] = normalize_enabled_sessions(
+                    existing.get("enabled_sessions")
+                )
             if only_one_position_per_pair is not None:
                 doc["only_one_position_per_pair"] = bool(only_one_position_per_pair)
             else:
-                existing = await self.get("forex")
                 doc["only_one_position_per_pair"] = bool(
                     existing.get("only_one_position_per_pair", True)
                 )
         elif enabled_pairs is not None:
             doc["enabled_symbols"] = sorted(set(enabled_pairs))
 
-        handle = await get_db()
-        await handle.db[self.COLLECTION].update_one(
-            {"asset_class": asset_class},
-            {"$set": doc},
-            upsert=True,
-        )
+        if asset_class == "forex":
+            doc = _normalize_forex_doc(doc)
+
+        async with session_scope() as session:
+            row = await session.get(AssetSettingsRow, asset_class)
+            if row is None:
+                session.add(AssetSettingsRow(asset_class=asset_class, doc=doc))
+            else:
+                row.doc = doc
         return doc
 
     def forex_catalog(self) -> list[str]:

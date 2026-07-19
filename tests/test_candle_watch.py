@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from brokerai.bots.data_manager.candle_watch import collect_watch_requirements
 from brokerai.db.repositories.candle_watch import CandleWatchRepository
+
+
+pytestmark = pytest.mark.usefixtures("sqlite_db")
 
 
 @pytest.mark.asyncio
@@ -39,42 +41,10 @@ async def test_collect_watch_requirements_merges_bar_counts():
 
 @pytest.mark.asyncio
 async def test_candle_watch_repository_upsert_and_list_active():
-    stored: dict[tuple[str, str, str, str], dict] = {}
-
-    async def update_one(filter_doc, update_doc, upsert=False):
-        key = (
-            filter_doc["symbol"],
-            filter_doc["timeframe"],
-            filter_doc["source"],
-            filter_doc["requester"],
-        )
-        if upsert or key in stored:
-            stored[key] = {**filter_doc, **update_doc["$set"]}
-
-    cursor = MagicMock()
-
-    async def to_list(length=500):
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=300)
-        return [
-            doc
-            for doc in stored.values()
-            if doc.get("updated_at") and doc["updated_at"] >= cutoff
-        ]
-
-    cursor.to_list = AsyncMock(side_effect=to_list)
-    collection = MagicMock()
-    collection.update_one = AsyncMock(side_effect=update_one)
-    collection.find.return_value = cursor
-    db = MagicMock()
-    db.__getitem__.return_value = collection
-    handle = MagicMock()
-    handle.db = db
-
     repo = CandleWatchRepository()
 
-    with patch("brokerai.db.repositories.candle_watch.get_db", AsyncMock(return_value=handle)):
-        await repo.upsert_watch("EUR/USD", "M15", "oanda", "web_explore", bar_count=120)
-        active = await repo.list_active_watches(source="oanda")
+    await repo.upsert_watch("EUR/USD", "M15", "oanda", "web_explore", bar_count=120)
+    active = await repo.list_active_watches(source="oanda")
 
     assert len(active) == 1
     assert active[0]["symbol"] == "EUR/USD"

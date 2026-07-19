@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from brokerai.db.client import get_db
-from pymongo import UpdateOne
+from sqlalchemy import select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import CandleSyncStateRow
 
 
 class CandleSyncStateRepository:
@@ -20,7 +22,6 @@ class CandleSyncStateRepository:
         expected_latest: str | None = None,
         last_error: str | None = None,
     ) -> None:
-        handle = await get_db()
         now = datetime.now(timezone.utc)
         update: dict[str, Any] = {
             "symbol": symbol,
@@ -37,11 +38,26 @@ class CandleSyncStateRepository:
         else:
             update["last_error"] = None
 
-        await handle.db[self.COLLECTION].update_one(
-            {"symbol": symbol, "timeframe": timeframe, "source": source},
-            {"$set": update},
-            upsert=True,
-        )
+        async with session_scope() as session:
+            stmt = select(CandleSyncStateRow).where(
+                CandleSyncStateRow.symbol == symbol,
+                CandleSyncStateRow.timeframe == timeframe,
+                CandleSyncStateRow.source == source,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                session.add(
+                    CandleSyncStateRow(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        source=source,
+                        doc=update,
+                    )
+                )
+            else:
+                doc = dict(row.doc)
+                doc.update(update)
+                row.doc = doc
 
     async def get_state(
         self,
@@ -49,16 +65,19 @@ class CandleSyncStateRepository:
         timeframe: str,
         source: str,
     ) -> dict[str, Any] | None:
-        handle = await get_db()
-        return await handle.db[self.COLLECTION].find_one(
-            {"symbol": symbol, "timeframe": timeframe, "source": source},
-            {"_id": 0},
-        )
+        async with session_scope() as session:
+            stmt = select(CandleSyncStateRow).where(
+                CandleSyncStateRow.symbol == symbol,
+                CandleSyncStateRow.timeframe == timeframe,
+                CandleSyncStateRow.source == source,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return dict(row.doc) if row else None
 
     async def list_states(self, *, source: str | None = None) -> list[dict[str, Any]]:
-        handle = await get_db()
-        query: dict[str, Any] = {}
-        if source is not None:
-            query["source"] = source
-        cursor = handle.db[self.COLLECTION].find(query, {"_id": 0})
-        return await cursor.to_list(length=None)
+        async with session_scope() as session:
+            stmt = select(CandleSyncStateRow)
+            if source is not None:
+                stmt = stmt.where(CandleSyncStateRow.source == source)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [dict(row.doc) for row in rows]

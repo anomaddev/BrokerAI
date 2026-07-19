@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type AiModel, type ModelProviderType } from "../../api/client";
 import ToggleSwitch from "../../components/ToggleSwitch";
 import SettingsPanelHeader from "../../components/SettingsPanelHeader";
@@ -8,9 +8,7 @@ import { getProvider, MODEL_PROVIDERS, providerLabel } from "./modelProviders";
 type OverlayStep = "type" | "form" | "edit" | null;
 
 const EMPTY_FORM = {
-  title: "",
   base_url: "",
-  model_name: "",
   api_key: "",
 };
 
@@ -56,6 +54,15 @@ export default function ModelsTab() {
   formRef.current = form;
   editingIdRef.current = editingId;
 
+  const connectedTypes = useMemo(
+    () => new Set(models.map((model) => model.type)),
+    [models],
+  );
+  const availableProviders = useMemo(
+    () => MODEL_PROVIDERS.filter((item) => !connectedTypes.has(item.type)),
+    [connectedTypes],
+  );
+
   async function loadModels() {
     setLoading(true);
     setError(null);
@@ -88,7 +95,7 @@ export default function ModelsTab() {
   function startAdd() {
     setForm(EMPTY_FORM);
     setEditingId(null);
-    setSelectedType("open_webui");
+    setSelectedType(availableProviders[0]?.type ?? "open_webui");
     setMessage(null);
     setOverlay("type");
   }
@@ -98,9 +105,7 @@ export default function ModelsTab() {
     if (!provider) return;
     setSelectedType(type);
     setForm({
-      title: provider.defaults.title,
       base_url: provider.defaults.base_url,
-      model_name: provider.defaults.model_name,
       api_key: "",
     });
     setOverlay("form");
@@ -108,9 +113,7 @@ export default function ModelsTab() {
 
   function startEdit(model: AiModel) {
     setForm({
-      title: model.title,
       base_url: model.base_url,
-      model_name: model.model_name,
       api_key: "",
     });
     setSelectedType((model.type as ModelProviderType) || "open_webui");
@@ -140,9 +143,7 @@ export default function ModelsTab() {
     if (!id) return;
     const snapshot = formRef.current;
     const updated = await api.updateModel(id, {
-      title: snapshot.title,
       base_url: snapshot.base_url,
-      model_name: snapshot.model_name,
     });
     setModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
   }
@@ -152,25 +153,38 @@ export default function ModelsTab() {
     canSave: () =>
       overlay === "edit" &&
       Boolean(editingIdRef.current) &&
+      Boolean(getProvider(selectedType)?.showBaseUrl) &&
       !formRef.current.api_key.trim(),
   });
 
   useEffect(() => {
-    if (overlay === "edit" && editingId && !form.api_key.trim()) {
+    if (
+      overlay === "edit" &&
+      editingId &&
+      getProvider(selectedType)?.showBaseUrl &&
+      !form.api_key.trim()
+    ) {
       markReady();
       scheduleSave(300);
     } else {
       markNotReady();
     }
-  }, [overlay, editingId, form.title, form.base_url, form.model_name, form.api_key, markReady, markNotReady, scheduleSave]);
+  }, [
+    overlay,
+    editingId,
+    selectedType,
+    form.base_url,
+    form.api_key,
+    markReady,
+    markNotReady,
+    scheduleSave,
+  ]);
 
   async function saveAfterSuccessfulTest() {
     const snapshot = formRef.current;
     if (overlay === "edit" && editingId) {
       const updated = await api.updateModel(editingId, {
-        title: snapshot.title,
         base_url: snapshot.base_url,
-        model_name: snapshot.model_name,
         api_key: snapshot.api_key || undefined,
       });
       setModels((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
@@ -179,10 +193,9 @@ export default function ModelsTab() {
     }
 
     const created = await api.createModel({
-      title: snapshot.title,
+      title: getProvider(selectedType)?.defaults.title || providerLabel(selectedType),
       type: selectedType,
       base_url: snapshot.base_url,
-      model_name: snapshot.model_name,
       api_key: snapshot.api_key,
       enabled: true,
     });
@@ -202,10 +215,9 @@ export default function ModelsTab() {
         result = await api.testModel(editingId);
       } else if (getProvider(selectedType)?.supportsConnectionTest) {
         result = await api.testModelConnection({
-          title: form.title || "Test",
+          title: getProvider(selectedType)?.defaults.title || providerLabel(selectedType),
           type: selectedType,
           base_url: form.base_url,
-          model_name: form.model_name,
           api_key: form.api_key,
         });
       } else {
@@ -278,21 +290,26 @@ export default function ModelsTab() {
       ? `Edit ${providerLabel(selectedType)}`
       : provider
         ? `Connect ${provider.label}`
-        : "Connect model";
+        : "Connect provider";
+  const formSubtitle =
+    overlay === "edit"
+      ? provider?.apiKeyOnly
+        ? "Update your API key, then test to save."
+        : "Update connection details, then test to save."
+      : provider?.apiKeyOnly
+        ? "Enter your API key, then test to save."
+        : "Enter connection details, then test to save.";
 
   const keyDirty = Boolean(form.api_key.trim());
   const showSaveButton = Boolean(provider && !provider.supportsConnectionTest && (overlay === "form" || keyDirty));
 
   const canTest =
-    Boolean(form.base_url.trim()) &&
-    Boolean(form.model_name.trim()) &&
+    (provider?.apiKeyOnly || Boolean(form.base_url.trim())) &&
     (!provider?.apiKeyRequired || overlay === "edit" || Boolean(form.api_key.trim()));
 
   const canSaveWithoutTest =
     showSaveButton &&
-    Boolean(form.title.trim()) &&
-    Boolean(form.base_url.trim()) &&
-    Boolean(form.model_name.trim()) &&
+    (provider?.apiKeyOnly || Boolean(form.base_url.trim())) &&
     (!provider?.apiKeyRequired || overlay === "edit" || Boolean(form.api_key.trim()));
 
   const testButtonLabel =
@@ -309,19 +326,21 @@ export default function ModelsTab() {
       <div className="settings-panel">
         <SettingsPanelHeader
           title="Models"
-          description="Connected AI models for research and analysis."
+          description="API sources for research. Pick specific models under Reports."
           error={!overlay ? error : null}
           message={!overlay ? message : null}
           action={
-            <button type="button" className="btn" onClick={startAdd}>
-              Add model
-            </button>
+            availableProviders.length > 0 ? (
+              <button type="button" className="btn" onClick={startAdd}>
+                Add provider
+              </button>
+            ) : null
           }
         />
         <div className="settings-panel-body">
-        {loading && <p className="settings-muted">Loading models…</p>}
+        {loading && <p className="settings-muted">Loading providers…</p>}
         {!loading && models.length === 0 && (
-          <p className="settings-muted">No models configured yet.</p>
+          <p className="settings-muted">No API sources configured yet.</p>
         )}
         <ul className="model-list">
           {models.map((model) => {
@@ -340,7 +359,8 @@ export default function ModelsTab() {
               <div className="model-list-main">
                 <strong>{model.title}</strong>
                 <span className="settings-muted">
-                  {providerLabel(model.type)} · {model.model_name}
+                  {providerLabel(model.type)}
+                  {model.api_key_set ? " · API key set" : " · API key missing"}
                 </span>
               </div>
               <div className="model-list-actions">
@@ -379,10 +399,10 @@ export default function ModelsTab() {
 
       {overlay === "type" && (
         <Overlay onClose={closeOverlay}>
-          <h4 className="model-overlay-title">Add model</h4>
-          <p className="model-overlay-desc">Choose a provider to connect.</p>
+          <h4 className="model-overlay-title">Add provider</h4>
+          <p className="model-overlay-desc">Choose an API source to connect. One connection per provider.</p>
           <div className="model-provider-grid">
-            {MODEL_PROVIDERS.map((item) => (
+            {availableProviders.map((item) => (
               <button
                 key={item.type}
                 type="button"
@@ -406,9 +426,10 @@ export default function ModelsTab() {
       {(overlay === "form" || overlay === "edit") && provider && (
         <Overlay onClose={closeOverlay} wide>
           <div className="model-form-header">
-            <img src={provider.logo} alt="" className="model-provider-logo" width={36} height={36} />
-            <div>
+            <img src={provider.logo} alt="" className="model-provider-logo" width={48} height={48} />
+            <div className="model-form-header-copy">
               <h4 className="model-overlay-title">{formTitle}</h4>
+              <p className="model-overlay-desc">{formSubtitle}</p>
               {overlay === "form" && (
                 <button
                   type="button"
@@ -425,14 +446,6 @@ export default function ModelsTab() {
             </div>
           </div>
           <div className="settings-form model-overlay-form">
-            <label>
-              Title
-              <input
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                placeholder={`My ${provider.label}`}
-              />
-            </label>
             {provider.showBaseUrl && (
               <label>
                 Base URL
@@ -443,14 +456,6 @@ export default function ModelsTab() {
                 />
               </label>
             )}
-            <label>
-              Model name
-              <input
-                value={form.model_name}
-                onChange={(e) => setForm({ ...form, model_name: e.target.value })}
-                placeholder={provider.defaults.model_name}
-              />
-            </label>
             <label>
               API key {provider.apiKeyRequired ? "" : "(optional)"}
               <input
@@ -500,8 +505,8 @@ export default function ModelsTab() {
           >
             <h4 id="delete-model-title">Delete &ldquo;{deleteTarget.title}&rdquo;?</h4>
             <p id="delete-model-message">
-              This model will be permanently removed. If it is selected for research, you will need to
-              choose a different model in Settings → Research.
+              This API source will be permanently removed. Research settings that use it will need
+              to be updated under Settings → Reports.
             </p>
             <div className="confirm-actions">
               <button

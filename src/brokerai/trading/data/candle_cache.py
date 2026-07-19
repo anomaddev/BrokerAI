@@ -34,7 +34,7 @@ INCREMENTAL_BAR_COUNT = 2
 
 
 class CandleCache:
-    """OANDA → MongoDB candle cache with bootstrap, incremental sync, and gap repair."""
+    """OANDA → Postgres candle cache with bootstrap, incremental sync, and gap repair."""
 
     def __init__(
         self,
@@ -436,7 +436,7 @@ class CandleCache:
         until: datetime | None = None,
         price: str = "M",
     ) -> list[dict[str, Any]]:
-        """Fetch ``bar_count`` closed candles directly from OANDA (never reads MongoDB).
+        """Fetch ``bar_count`` closed candles directly from OANDA (never reads Postgres).
 
         When ``until`` is set it must be the analyzed candle **open** time; OANDA's
         exclusive ``to`` bound is derived as ``until + one bar`` so the anchor bar
@@ -485,7 +485,7 @@ class CandleCache:
         *,
         price: str = "M",
     ) -> list[dict[str, Any]]:
-        """Fetch closed candles from OANDA for ``[start, end]`` without touching MongoDB.
+        """Fetch closed candles from OANDA for ``[start, end]`` without touching Postgres.
 
         Used for trade detail charts where the lifecycle window must come directly from
         the broker rather than the explore cache.

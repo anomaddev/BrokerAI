@@ -12,6 +12,7 @@ from brokerai.integrations.oanda_client import (
     auth_headers,
     base_url,
     get_oanda_client,
+    normalize_access_token,
 )
 
 
@@ -830,41 +831,151 @@ async def list_open_trades(
     return trades
 
 
+def _environment_label(environment: str) -> str:
+    if environment == "live":
+        return "Live (fxTrade)"
+    return "Practice (fxPractice)"
+
+
+async def _list_accounts_auth_result(
+    access_token: str,
+    environment: str,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Return (accounts, None) on success, or (None, user_facing_error) on failure."""
+    try:
+        return await list_accounts(access_token, environment), None
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        detail = ""
+        try:
+            payload = exc.response.json()
+            if isinstance(payload, dict):
+                detail = str(payload.get("errorMessage") or "").strip()
+        except Exception:
+            detail = ""
+        if status in (401, 403):
+            # OANDA often returns 401 "Insufficient authorization" for both bad
+            # tokens and practice/live mismatches — keep the message generic here.
+            suffix = f" ({detail})" if detail else ""
+            return None, f"OANDA authorization failed{suffix}"
+        return None, f"OANDA returned HTTP {status}" + (f" ({detail})" if detail else "")
+    except httpx.HTTPError as exc:
+        return None, f"OANDA request failed: {exc}"
+
+
 async def test_connection(
     access_token: str,
     environment: str,
     account_id: str | None = None,
-) -> tuple[bool, str, list[dict[str, Any]]]:
+) -> tuple[bool, str, list[dict[str, Any]], str | None, dict[str, Any]]:
     """Verify OANDA credentials and optionally confirm a specific account.
 
-    Returns (ok, message, accounts).
-    """
-    if not access_token.strip():
-        return False, "OANDA access token is not configured", []
-    if environment not in OANDA_ENVIRONMENTS:
-        return False, f"Unknown OANDA environment '{environment}'", []
+    Returns ``(ok, message, accounts, suggested_environment, diagnostics)``.
 
-    try:
-        accounts = await list_accounts(access_token, environment)
-    except httpx.HTTPStatusError as exc:
-        status = exc.response.status_code
-        if status == 401:
-            return False, "Invalid OANDA access token", []
-        if status == 403:
-            return False, "Token is not authorized for this environment", []
-        return False, f"OANDA returned HTTP {status}", []
-    except httpx.HTTPError as exc:
-        return False, f"OANDA request failed: {exc}", []
+    When the selected environment rejects the token but the other environment
+    accepts it, ``suggested_environment`` is set so the UI can switch.
+    """
+    token = normalize_access_token(access_token)
+    diagnostics: dict[str, Any] = {
+        "token_length": len(token),
+        "token_looks_masked": "*" in token or "•" in token,
+        "environments_tried": [],
+    }
+    if not token:
+        return False, "OANDA access token is not configured", [], None, diagnostics
+    if environment not in OANDA_ENVIRONMENTS:
+        return False, f"Unknown OANDA environment '{environment}'", [], None, diagnostics
+
+    # Classic OANDA PATs look like ``hex-hex`` (often ~65 chars with one '-').
+    if len(token) < 40 or "-" not in token:
+        diagnostics["environments_tried"] = [environment]
+        return (
+            False,
+            f"This does not look like a full OANDA personal access token "
+            f"({len(token)} characters"
+            + (", missing '-' separator" if "-" not in token else "")
+            + "). "
+            "OANDA tokens usually look like "
+            "`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` "
+            "(two halves separated by a hyphen). In Hub: Tools → API → Generate, "
+            "then copy the entire key on one line.",
+            [],
+            None,
+            diagnostics,
+        )
+
+    diagnostics["environments_tried"].append(environment)
+    accounts, error = await _list_accounts_auth_result(token, environment)
+    suggested: str | None = None
+    if accounts is None:
+        alternate = "live" if environment == "practice" else "practice"
+        diagnostics["environments_tried"].append(alternate)
+        alt_accounts, alt_error = await _list_accounts_auth_result(token, alternate)
+        if alt_accounts is not None:
+            accounts = alt_accounts
+            environment = alternate
+            suggested = alternate
+            logger.info(
+                "OANDA token rejected for selected environment; accepted by %s",
+                alternate,
+            )
+        else:
+            hint = (
+                f"Received token length {len(token)}. Generate the token in OANDA Hub → "
+                "Tools → API while logged into the same Practice/Live account, copy the "
+                "entire key (no spaces), then retry. Revoking an old token invalidates it "
+                "immediately."
+            )
+            primary = error or "OANDA authorization failed"
+            return False, f"{primary}. {hint}", [], None, diagnostics
 
     if not accounts:
-        return False, "No OANDA accounts are accessible with this token", []
+        return False, "No OANDA accounts are accessible with this token", [], suggested, diagnostics
 
     if account_id:
         if not any(acc["id"] == account_id for acc in accounts):
-            return False, f"Account {account_id} is not accessible with this token", accounts
-        return True, f"OANDA connection successful (account {account_id})", accounts
+            return (
+                False,
+                f"Account {account_id} is not accessible with this token",
+                accounts,
+                suggested,
+                diagnostics,
+            )
+        label = _environment_label(environment)
+        if suggested:
+            return (
+                True,
+                f"OANDA connection successful on {label} (account {account_id}). "
+                f"Environment switched from the other option.",
+                accounts,
+                suggested,
+                diagnostics,
+            )
+        return (
+            True,
+            f"OANDA connection successful (account {account_id})",
+            accounts,
+            None,
+            diagnostics,
+        )
 
-    return True, f"OANDA connection successful ({len(accounts)} account(s) found)", accounts
+    label = _environment_label(environment)
+    if suggested:
+        return (
+            True,
+            f"OANDA connection successful on {label} ({len(accounts)} account(s)). "
+            f"Environment switched to match this token.",
+            accounts,
+            suggested,
+            diagnostics,
+        )
+    return (
+        True,
+        f"OANDA connection successful ({len(accounts)} account(s) found)",
+        accounts,
+        None,
+        diagnostics,
+    )
 
 
 def forex_pair_to_instrument(pair: str) -> str:

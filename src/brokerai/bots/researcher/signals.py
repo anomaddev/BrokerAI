@@ -63,8 +63,8 @@ def parse_forex_signals(content: str) -> dict[str, ForexPairSignal]:
     return signals
 
 
-def _latest_daily_report():
-    for meta in list_reports(limit=200):
+async def _latest_daily_report():
+    for meta in await list_reports(limit=200):
         if meta.report_type == "daily":
             return meta
     return None
@@ -74,14 +74,14 @@ SIGNALS_CACHE_CATEGORY = "signals-snapshot"
 
 
 async def compute_signals_snapshot() -> dict:
-    """Build signals snapshot from the latest daily report on disk."""
+    """Build signals snapshot from the latest daily report."""
     targets = [target for target in await load_broker_targets() if target.enabled]
 
-    meta = _latest_daily_report()
+    meta = await _latest_daily_report()
     forex_signals: dict[str, ForexPairSignal] = {}
     if meta is not None:
         try:
-            _, content = read_report(meta.filename)
+            _, content = await read_report(meta.filename)
         except FileNotFoundError:
             meta = None
         else:

@@ -7,18 +7,15 @@ from typing import Any
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = copy.deepcopy(base)
     for key, value in override.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-            merged[key] = _deep_merge(merged[key], value)
-        elif key == "filters" and isinstance(value, list):
+        if key == "filters" and isinstance(value, list):
+            # Client sends the full filter list; do not union with defaults.
             merged[key] = copy.deepcopy(value)
         elif key == "indicators" and isinstance(value, dict):
-            merged_indicators = copy.deepcopy(merged.get("indicators", {}))
-            for ind_id, ind_spec in value.items():
-                if ind_id in merged_indicators and isinstance(ind_spec, dict):
-                    merged_indicators[ind_id] = _deep_merge(merged_indicators[ind_id], ind_spec)
-                else:
-                    merged_indicators[ind_id] = copy.deepcopy(ind_spec)
-            merged[key] = merged_indicators
+            # Client sends the full indicator map (e.g. component ids). Replacing
+            # avoids orphaning preset defaults like fast/slow beside ema_*.
+            merged[key] = copy.deepcopy(value)
+        elif key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = copy.deepcopy(value)
     return merged

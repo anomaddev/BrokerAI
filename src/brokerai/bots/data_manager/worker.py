@@ -71,7 +71,7 @@ class DataManagerWorker(EphemeralBot[PipelineContext, PipelineContext]):
 
 
 async def fetch_account_summary(request: AccountSummaryRequest) -> WorkerResult[dict]:
-    """Fetch account summary for an asset class from MongoDB (synced every minute)."""
+    """Fetch account summary for an asset class from Postgres (synced every minute)."""
     if request.asset_class != "forex":
         return WorkerResult(
             ok=False,

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from pymongo import UpdateOne
 
+from sqlalchemy import select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import BrokerEventRow
+from brokerai.db.repositories.broker_events import BrokerEventsRepository
 from brokerai.trading.broker.models import BrokerEvent
+
+
+pytestmark = pytest.mark.usefixtures("sqlite_db")
 
 
 def _sample_event(event_id: str = "100") -> BrokerEvent:
@@ -22,34 +29,20 @@ def _sample_event(event_id: str = "100") -> BrokerEvent:
 
 @pytest.mark.asyncio
 async def test_upsert_events_bulk_writes_in_chunks():
-    from brokerai.db.repositories.broker_events import BrokerEventsRepository
-
-    collection = MagicMock()
-    collection.bulk_write = AsyncMock()
-    db_handle = MagicMock()
-    db_handle.db = {"broker_events": collection}
-
-    with patch(
-        "brokerai.db.repositories.broker_events.get_db",
-        new=AsyncMock(return_value=db_handle),
-    ):
-        repo = BrokerEventsRepository()
-        count = await repo.upsert_events_bulk(
-            [_sample_event("1"), _sample_event("2"), _sample_event("3")],
-            batch_size=2,
-        )
+    repo = BrokerEventsRepository()
+    count = await repo.upsert_events_bulk(
+        [_sample_event("1"), _sample_event("2"), _sample_event("3")],
+        batch_size=2,
+    )
 
     assert count == 3
-    assert collection.bulk_write.await_count == 2
-    first_ops = collection.bulk_write.await_args_list[0].args[0]
-    assert len(first_ops) == 2
-    assert all(isinstance(op, UpdateOne) for op in first_ops)
+    async with session_scope() as session:
+        row = (await session.execute(select(BrokerEventRow))).scalars().all()
+    assert len(row) == 3
 
 
 @pytest.mark.asyncio
 async def test_upsert_events_delegates_to_bulk():
-    from brokerai.db.repositories.broker_events import BrokerEventsRepository
-
     repo = BrokerEventsRepository()
     with patch.object(repo, "upsert_events_bulk", new=AsyncMock(return_value=1)) as mock_bulk:
         result = await repo.upsert_events([_sample_event()])
@@ -59,35 +52,57 @@ async def test_upsert_events_delegates_to_bulk():
 
 
 @pytest.mark.asyncio
-async def test_upsert_event_doc_uses_set_on_insert_for_created_at():
-    from brokerai.db.repositories.broker_events import BrokerEventsRepository
+async def test_upsert_event_doc_updates_existing_row():
+    repo = BrokerEventsRepository()
+    event = _sample_event()
+    await repo.upsert_event(event)
 
-    collection = MagicMock()
-    collection.bulk_write = AsyncMock()
-    db_handle = MagicMock()
-    db_handle.db = {"broker_events": collection}
+    updated = _sample_event()
+    updated.broker_lot_id = "566"
+    await repo.upsert_event(updated)
 
-    with patch(
-        "brokerai.db.repositories.broker_events.get_db",
-        new=AsyncMock(return_value=db_handle),
-    ):
-        repo = BrokerEventsRepository()
-        await repo.upsert_event(_sample_event())
+    async with session_scope() as session:
+        stored = (
+            await session.execute(
+                select(BrokerEventRow).where(
+                    BrokerEventRow.broker_event_id == event.broker_event_id
+                )
+            )
+        ).scalar_one()
+        assert stored.doc["broker_lot_id"] == "566"
 
-    ops = collection.bulk_write.await_args.args[0]
-    update_doc = ops[0]._doc
-    assert "$setOnInsert" in update_doc
-    assert "created_at" in update_doc["$setOnInsert"]
+
+@pytest.mark.asyncio
+async def test_list_events_filters_by_broker_lot_id():
+    repo = BrokerEventsRepository()
+    await repo.upsert_events(
+        [
+            _sample_event("1"),
+            BrokerEvent(
+                exchange_id="oanda",
+                account_id="101-001-test",
+                broker_event_id="2",
+                event_type="ORDER_FILL",
+                time=datetime(2026, 7, 2, 20, 28, 0, tzinfo=timezone.utc),
+                broker_lot_id="999",
+            ),
+        ]
+    )
+
+    docs = await repo.list_events(
+        exchange_id="oanda",
+        account_id="101-001-test",
+        broker_lot_id="565",
+    )
+
+    assert len(docs) == 1
+    assert docs[0]["broker_event_id"] == "1"
+    assert docs[0]["broker_lot_id"] == "565"
 
 
 @pytest.mark.asyncio
 async def test_trade_linked_event_unsets_retention_expires_at():
-    from brokerai.db.repositories.broker_events import BrokerEventsRepository
-
-    collection = MagicMock()
-    collection.bulk_write = AsyncMock()
-    db_handle = MagicMock()
-    db_handle.db = {"broker_events": collection}
+    repo = BrokerEventsRepository()
 
     low_value = BrokerEvent(
         exchange_id="oanda",
@@ -105,15 +120,14 @@ async def test_trade_linked_event_unsets_retention_expires_at():
         broker_lot_id="565",
     )
 
-    with patch(
-        "brokerai.db.repositories.broker_events.get_db",
-        new=AsyncMock(return_value=db_handle),
-    ):
-        repo = BrokerEventsRepository()
-        await repo.upsert_event(low_value)
-        await repo.upsert_event(trade_linked)
+    await repo.upsert_event(low_value)
+    await repo.upsert_event(trade_linked)
 
-    second_ops = collection.bulk_write.await_args_list[1].args[0]
-    second_update = second_ops[0]._doc
-    assert "retention_expires_at" not in second_update["$set"]
-    assert second_update["$unset"] == {"retention_expires_at": ""}
+    async with session_scope() as session:
+        stored = (
+            await session.execute(
+                select(BrokerEventRow).where(BrokerEventRow.broker_event_id == "99")
+            )
+        ).scalar_one()
+        assert stored.retention_expires_at is None
+        assert "retention_expires_at" not in stored.doc

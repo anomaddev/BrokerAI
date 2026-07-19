@@ -28,12 +28,14 @@ def test_serialize_lot_formats_datetimes():
         "trade_date": "2026-06-30",
         "open_time": datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc),
         "close_time": None,
+        "synced_at": "2026-06-30T12:05:00+00:00",
         "created_at": datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc),
         "updated_at": datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc),
     }
     serialized = serialize_lot(doc)
     assert serialized["open_time"] == "2026-06-30T12:00:00+00:00"
     assert serialized["close_time"] is None
+    assert serialized["synced_at"] == "2026-06-30T12:05:00+00:00"
 
 
 def test_list_lots_all_sorted_open_first_then_last_modified():

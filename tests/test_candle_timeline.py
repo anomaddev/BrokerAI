@@ -215,7 +215,7 @@ async def test_stale_cache_gets_catchup_job_between_scheduled_fetches():
 
 
 @pytest.mark.asyncio
-async def test_catchup_skipped_when_revision_ahead_of_mongo_latest():
+async def test_catchup_skipped_when_revision_ahead_of_cache_latest():
     """Catch-up should not run when revision already covers the expected close."""
     timeline = CandleTimeline()
     service = MagicMock()
@@ -434,7 +434,7 @@ async def test_startup_jobs_bootstrap_stale_cache():
 
 @pytest.mark.asyncio
 async def test_due_jobs_idle_cache_avoids_repeated_strategy_loads():
-    """When nothing can run, log once and skip MongoDB strategy reloads between rechecks."""
+    """When nothing can run, log once and skip strategy reloads between rechecks."""
     timeline = CandleTimeline()
     service = MagicMock()
     service.registered_demand.return_value = []

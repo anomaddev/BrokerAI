@@ -17,6 +17,8 @@ export const DEFAULT_CUSTOM_BUILDER_PARAMS: CustomBuilderParams = {
   hasAtr: false,
   adxFilter: true,
   atrFilter: true,
+  stopLossEnabled: false,
+  takeProfitEnabled: false,
 };
 
 function buildFilters(params: CustomBuilderParams) {
@@ -91,6 +93,11 @@ export function v1ToCustomBuilderParams(v1: StrategyParamsV1): CustomBuilderPara
       atrFilter: atr?.type === "atr" ? atr.enabled : true,
       atrPeriod: atr?.type === "atr" ? atr.period : 14,
       minAtr: atr?.type === "atr" ? (atr.min_value ?? 0.0008) : 0.0008,
+      overlays: {
+        ...ema.overlays,
+        adx: Boolean(adx) && (adx?.type === "adx" ? adx.enabled : true),
+        atr: Boolean(atr) && (atr?.type === "atr" ? atr.enabled : true),
+      },
     };
   }
 
@@ -120,6 +127,11 @@ export function v1ToCustomBuilderParams(v1: StrategyParamsV1): CustomBuilderPara
     atrFilter: atr?.type === "atr" ? atr.enabled : true,
     atrPeriod: atr?.type === "atr" ? atr.period : 14,
     minAtr: atr?.type === "atr" ? (atr.min_value ?? 0.0008) : 0.0008,
+    overlays: {
+      ...ema.overlays,
+      adx: Boolean(adx) && (adx?.type === "adx" ? adx.enabled : true),
+      atr: Boolean(atr) && (atr?.type === "atr" ? atr.enabled : true),
+    },
   };
 }
 

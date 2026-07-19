@@ -15,7 +15,13 @@ from brokerai.config_backup.restore_scopes import extract_scoped_sections
 from brokerai.config_backup.service import AUTO_BACKUP_RETENTION, ConfigBackupService
 from brokerai.config_backup.summary import summarize_payload
 from brokerai.config_backup.validate import parse_import_bytes, validate_payload
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import AssetSettingsRow, BrokerLotRow, StrategyRow
 from brokerai.db.repositories.config_backups import ConfigBackupsRepository
+from sqlalchemy import select
+
+
+pytestmark = pytest.mark.usefixtures("sqlite_db")
 
 
 def _sample_payload() -> dict[str, Any]:
@@ -37,12 +43,30 @@ def _sample_payload() -> dict[str, Any]:
             "auto_update": True,
         },
         "asset_settings": [{"asset_class": "forex", "enabled": True, "enabled_pairs": ["EUR/USD"]}],
-        "strategies": [{"id": "s1", "name": "Test", "enabled": True, "params": {}}],
+        "strategies": [{"id": "s1", "name": "Test", "enabled": True, "params": {}, "asset_class": "forex"}],
         "exchange_connections": [{"exchange_id": "oanda", "access_token": "tok"}],
         "research_settings": {"id": "default", "daily_report_enabled": False},
         "data_connections": [{"id": "default", "type": "newsapi", "enabled": False}],
         "ai_models": [{"id": "m1", "title": "Model", "enabled": True}],
     }
+
+
+async def _list_strategy_docs() -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        rows = (await session.execute(select(StrategyRow))).scalars().all()
+        return [dict(row.doc) for row in rows]
+
+
+async def _list_asset_settings_docs() -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        rows = (await session.execute(select(AssetSettingsRow))).scalars().all()
+        return [dict(row.doc) for row in rows]
+
+
+async def _list_broker_lot_docs() -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        rows = (await session.execute(select(BrokerLotRow))).scalars().all()
+        return [dict(row.doc) for row in rows]
 
 
 def _match_query(doc: dict[str, Any], query: dict[str, Any]) -> bool:
@@ -238,10 +262,9 @@ def service(fake_db: _FakeDb) -> ConfigBackupService:
 
 @pytest.mark.asyncio
 async def test_create_manual_backup_stores_full_payload(fake_db: _FakeDb, service: ConfigBackupService):
-    fake_db.strategies.docs = [{"id": "s1", "name": "EMA"}]
+    fake_db.strategies.docs = [{"id": "s1", "name": "EMA", "asset_class": "forex"}]
 
-    with patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))):
-        backup = await service.create_manual_backup(label="Before tweak")
+    backup = await service.create_manual_backup(label="Before tweak")
 
     assert backup["kind"] == "full"
     assert backup["source"] == "manual"
@@ -255,14 +278,13 @@ async def test_create_manual_backup_stores_full_payload(fake_db: _FakeDb, servic
 @pytest.mark.asyncio
 async def test_auto_backup_before_stores_incremental_change(fake_db: _FakeDb, service: ConfigBackupService):
     payload = _sample_payload()
-    with patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))):
-        with patch.object(service, "capture_snapshot", AsyncMock(return_value=payload)):
-            await service.create_manual_backup(label="base")
-            change = await service.auto_backup_before(
-                trigger="account.general",
-                summary="General settings",
-                change_label="Timezone set to UTC",
-            )
+    with patch.object(service, "capture_snapshot", AsyncMock(return_value=payload)):
+        await service.create_manual_backup(label="base")
+        change = await service.auto_backup_before(
+            trigger="account.general",
+            summary="General settings",
+            change_label="Timezone set to UTC",
+        )
 
     assert change["kind"] == "change"
     assert change["payload_type"] == "incremental"
@@ -273,23 +295,22 @@ async def test_auto_backup_before_stores_incremental_change(fake_db: _FakeDb, se
 
 @pytest.mark.asyncio
 async def test_list_backups_splits_changes_and_full(fake_db: _FakeDb, service: ConfigBackupService):
-    with patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))):
-        await service._repo.insert(
-            kind="full",
-            trigger="manual",
-            summary="full",
-            payload={"schema_version": 2},
-            source="manual",
-            payload_type="full",
-        )
-        await service._repo.insert(
-            kind="change",
-            trigger="account.general",
-            summary="change",
-            payload={"schema_version": 2, "user_preferences": {"general_settings": {}}},
-            payload_type="incremental",
-        )
-        result = await service.list_backups()
+    await service._repo.insert(
+        kind="full",
+        trigger="manual",
+        summary="full",
+        payload={"schema_version": 2},
+        source="manual",
+        payload_type="full",
+    )
+    await service._repo.insert(
+        kind="change",
+        trigger="account.general",
+        summary="change",
+        payload={"schema_version": 2, "user_preferences": {"general_settings": {}}},
+        payload_type="incremental",
+    )
+    result = await service.list_backups()
 
     assert len(result["full_backups"]) == 1
     assert len(result["changes"]) == 1
@@ -297,16 +318,15 @@ async def test_list_backups_splits_changes_and_full(fake_db: _FakeDb, service: C
 
 @pytest.mark.asyncio
 async def test_list_timeline_all(fake_db: _FakeDb, service: ConfigBackupService):
-    with patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))):
-        for index in range(30):
-            await service._repo.insert(
-                kind="change",
-                trigger=f"t{index}",
-                summary=f"change {index}",
-                payload={"schema_version": 2},
-                payload_type="incremental",
-            )
-        timeline = await service.list_timeline_all()
+    for index in range(30):
+        await service._repo.insert(
+            kind="change",
+            trigger=f"t{index}",
+            summary=f"change {index}",
+            payload={"schema_version": 2},
+            payload_type="incremental",
+        )
+    timeline = await service.list_timeline_all()
 
     assert len(timeline["items"]) == 30
     assert timeline["total"] == 30
@@ -368,8 +388,6 @@ async def test_restore_user_preferences(fake_db: _FakeDb, service: ConfigBackupS
     mock_store._save_user.side_effect = lambda record: record
 
     with (
-        patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-        patch("brokerai.config_backup.service.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
         patch("brokerai.config_backup.service.AuthStore", return_value=mock_store),
         patch("brokerai.config_backup.service.config_file_writable", return_value=False),
     ):
@@ -392,14 +410,13 @@ async def test_restore_user_preferences(fake_db: _FakeDb, service: ConfigBackupS
 
 @pytest.mark.asyncio
 async def test_restore_backup_replaces_collections(fake_db: _FakeDb, service: ConfigBackupService):
-    fake_db.strategies.docs = [{"id": "old", "name": "Old"}]
-    payload = _sample_payload()
+    from brokerai.config_backup.service import _strategy_row
 
-    with (
-        patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-        patch("brokerai.config_backup.service.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-        patch.object(service, "capture_snapshot", AsyncMock(return_value=payload)),
-    ):
+    payload = _sample_payload()
+    async with session_scope() as session:
+        session.add(_strategy_row({"id": "old", "name": "Old", "asset_class": "forex", "enabled": False}))
+
+    with patch.object(service, "capture_snapshot", AsyncMock(return_value=payload)):
         backup = await service._repo.insert(
             kind="full",
             trigger="test",
@@ -409,24 +426,22 @@ async def test_restore_backup_replaces_collections(fake_db: _FakeDb, service: Co
             payload_type="full",
             source="manual",
         )
-        fake_db.strategies.docs = [{"id": "bad", "name": "Bad"}]
+        async with session_scope() as session:
+            session.add(_strategy_row({"id": "bad", "name": "Bad", "asset_class": "forex", "enabled": False}))
         result = await service.restore_backup(backup["id"])
 
     assert result["restored_id"] == backup["id"]
     assert result["safety_backup_id"]
-    assert fake_db.strategies.docs == payload["strategies"]
-    assert fake_db.asset_settings.docs == payload["asset_settings"]
-    assert len(fake_db.config_backups.docs) == 2
+    assert await _list_strategy_docs() == payload["strategies"]
+    assert await _list_asset_settings_docs() == payload["asset_settings"]
+    assert await service._repo.count() == 2
 
 
 @pytest.mark.asyncio
 async def test_change_backup_prunes_oldest(fake_db: _FakeDb, service: ConfigBackupService):
-    with (
-        patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-        patch(
-            "brokerai.config_backup.service.get_backup_schedule_settings",
-            AsyncMock(return_value={"change_retention": AUTO_BACKUP_RETENTION, "full_retention": 30}),
-        ),
+    with patch(
+        "brokerai.config_backup.service.get_backup_schedule_settings",
+        AsyncMock(return_value={"change_retention": AUTO_BACKUP_RETENTION, "full_retention": 30}),
     ):
         for index in range(AUTO_BACKUP_RETENTION + 5):
             await service.create_backup(
@@ -437,46 +452,52 @@ async def test_change_backup_prunes_oldest(fake_db: _FakeDb, service: ConfigBack
                 payload_type="incremental",
             )
 
-    change_backups = [doc for doc in fake_db.config_backups.docs if doc["kind"] == "change"]
-    assert len(change_backups) == AUTO_BACKUP_RETENTION
+    listed = await service.list_backups()
+    assert len(listed["changes"]) == AUTO_BACKUP_RETENTION
 
 
 @pytest.mark.asyncio
 async def test_ensure_baseline_backup_creates_once(fake_db: _FakeDb, service: ConfigBackupService):
-    with (
-        patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-        patch("brokerai.config_backup.service.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-    ):
-        first = await service.ensure_baseline_backup()
-        second = await service.ensure_baseline_backup()
+    first = await service.ensure_baseline_backup()
+    second = await service.ensure_baseline_backup()
 
     assert first is not None
     assert first["label"] == "Initial baseline"
     assert first["kind"] == "full"
     assert second is None
-    assert len(fake_db.config_backups.docs) == 1
+    assert await service._repo.count() == 1
 
 
 @pytest.mark.asyncio
 async def test_restore_does_not_touch_broker_lots(fake_db: _FakeDb, service: ConfigBackupService):
-    fake_db.broker_lots.docs = [{"id": "lot-1"}]
     payload = _sample_payload()
+    async with session_scope() as session:
+        session.add(
+            BrokerLotRow(
+                id="lot-1",
+                exchange_id="oanda",
+                account_id="acct",
+                broker_lot_id="1",
+                state="open",
+                doc={"id": "lot-1"},
+            )
+        )
 
-    with (
-        patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-        patch("brokerai.config_backup.service.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-    ):
-        with patch.object(service, "capture_snapshot", AsyncMock(return_value=payload)):
-            backup = await service.create_manual_backup(label="snapshot")
-        await service.restore_backup(backup["id"])
+    with patch.object(service, "capture_snapshot", AsyncMock(return_value=payload)):
+        backup = await service.create_manual_backup(label="snapshot")
+    await service.restore_backup(backup["id"])
 
-    assert fake_db.broker_lots.docs == [{"id": "lot-1"}]
+    assert await _list_broker_lot_docs() == [{"id": "lot-1"}]
 
 
 @pytest.mark.asyncio
 async def test_resolve_payload_at_change_reconstructs_state(fake_db: _FakeDb, service: ConfigBackupService):
     payload = _sample_payload()
-    with patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))):
+    backup_times = [
+        datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+    ]
+    with patch("brokerai.db.repositories.config_backups._now", side_effect=backup_times):
         base = await service._repo.insert(
             kind="full",
             trigger="manual",
@@ -495,7 +516,7 @@ async def test_resolve_payload_at_change_reconstructs_state(fake_db: _FakeDb, se
             payload_type="incremental",
             base_backup_id=base["id"],
         )
-        resolved = await resolve_payload_at_change(change["id"], repo=service._repo)
+    resolved = await resolve_payload_at_change(change["id"], repo=service._repo)
 
     assert resolved["user_preferences"]["general_settings"]["timezone"] == "Europe/London"
 
@@ -529,36 +550,36 @@ async def test_auto_backup_before_flattens_redundant_toggle_pair(fake_db: _FakeD
         _general_snapshot(show_utc=False),
         _general_snapshot(show_utc=True),
     ]
-    with patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))):
-        with patch.object(service, "capture_snapshot", AsyncMock(side_effect=snapshots)):
-            await service.create_manual_backup(label="base")
-            first = await service.auto_backup_before(
-                trigger="account.general",
-                summary="General settings",
-                change_label="UTC times enabled",
-            )
-            second = await service.auto_backup_before(
-                trigger="account.general",
-                summary="General settings",
-                change_label="UTC times disabled",
-            )
-            third = await service.auto_backup_before(
-                trigger="account.general",
-                summary="General settings",
-                change_label="UTC times enabled",
-            )
-            fourth = await service.auto_backup_before(
-                trigger="account.general",
-                summary="General settings",
-                change_label="UTC times disabled",
-            )
+    with patch.object(service, "capture_snapshot", AsyncMock(side_effect=snapshots)):
+        await service.create_manual_backup(label="base")
+        first = await service.auto_backup_before(
+            trigger="account.general",
+            summary="General settings",
+            change_label="UTC times enabled",
+        )
+        second = await service.auto_backup_before(
+            trigger="account.general",
+            summary="General settings",
+            change_label="UTC times disabled",
+        )
+        third = await service.auto_backup_before(
+            trigger="account.general",
+            summary="General settings",
+            change_label="UTC times enabled",
+        )
+        fourth = await service.auto_backup_before(
+            trigger="account.general",
+            summary="General settings",
+            change_label="UTC times disabled",
+        )
 
     assert first is not None
     assert second is not None
     assert third is None
     assert fourth is not None
 
-    change_backups = [doc for doc in fake_db.config_backups.docs if doc["kind"] == "change"]
+    listed = await service.list_backups()
+    change_backups = sorted(listed["changes"], key=lambda doc: doc["created_at"])
     assert len(change_backups) == 2
     assert change_backups[0]["change_label"] == "UTC times enabled"
     assert change_backups[1]["change_label"] == "UTC times disabled"

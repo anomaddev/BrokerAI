@@ -8,7 +8,7 @@
 >
 > By using BrokerAI, you accept all risk. The authors and contributors provide no warranty and are not liable for trading losses, account damage, or any other financial harm.
 
-Multi-bot trading platform for Proxmox LXC. BrokerAI runs a **Secretary-coordinated trading loop** for forex: strategy-driven candle analysis, OANDA order execution, a MongoDB trade ledger, daily research reports, and a full React dashboard — all managed via the `brokerai` CLI.
+Multi-bot trading platform for Proxmox LXC. BrokerAI runs a **Secretary-coordinated trading loop** for forex: strategy-driven candle analysis, OANDA order execution, a Postgres trade ledger (self-hosted Supabase), daily research reports, and a full React dashboard — all managed via the `brokerai` CLI.
 
 **Alpha 0.0.8** — Strategy analysis workspace, recency badges, multi-select filters, rich OHLC charts with market closure markers and legends, forex market calendar, `at_time` indicator, EMA crossover refinements, and Secretary pipeline updates. See [`docs/releases/v0.0.8.md`](docs/releases/v0.0.8.md). Prior major release: [`v0.0.7.md`](docs/releases/v0.0.7.md).
 
@@ -21,7 +21,7 @@ Multi-bot trading platform for Proxmox LXC. BrokerAI runs a **Secretary-coordina
 | **Broker** | Execution gates, exit monitors, associate dispatch, OANDA sync |
 | **Web UI** | React dashboard + REST API on port **1989** (auth required) |
 | **CLI** | `brokerai` — status, bot control, research, candle cache, updates |
-| **MongoDB** | Market data, strategies, trade ledger, research, bot activity |
+| **Supabase** | Self-hosted Postgres + Auth + Studio (market data, strategies, ledger) |
 | **Auto-update** | Systemd timer checks GitHub every 6 hours |
 
 ### Bot taxonomy
@@ -49,10 +49,12 @@ See [`docs/architecture/the-loop.md`](docs/architecture/the-loop.md) for full de
 
 ```
 Proxmox Host
-  └── ct/brokerai.sh  →  LXC Container (Debian 13)
-                            ├── brokerai-orchestrator.service
-                            ├── brokerai-web.service  (:1989)
-                            ├── mongod  (:27017, localhost)
+  └── ct/brokerai.sh  →  LXC Container (Debian 13, nesting+keyctl, 40GB+)
+                            ├── brokerai-orchestrator.service  (After docker.service)
+                            ├── brokerai-web.service  (:1989; 127.0.0.1 when Caddy TLS)
+                            ├── Caddy (optional HTTPS: BROKERAI_DOMAIN + optional BROKERAI_SUPABASE_DOMAIN)
+                            ├── Docker: Supabase on 127.0.0.1 (Postgres :5432, Kong :8000, Studio :3000)
+                            ├── brokerai-postgres-backup.timer
                             ├── brokerai-update.timer
                             └── /usr/local/bin/brokerai
 ```
@@ -60,7 +62,7 @@ Proxmox Host
 **Data flow (Secretary mode):**
 
 ```
-Secretary ──► Data Manager worker ──► MongoDB (market_data)
+Secretary ──► Data Manager worker ──► Postgres market_candles
          ──► Data Analyst worker ──► strategy_analysis_runs
          ──► Broker ──► Associate workers ──► broker_lots
 Researcher worker (on demand) ──► research_cache
@@ -69,7 +71,7 @@ Researcher worker (on demand) ──► research_cache
 At each due candle close (e.g. M15):
 
 1. Secretary creates a `CandleJob` and dispatches parallel pipelines (capped by `BROKERAI_PIPELINE_CONCURRENCY`)
-2. Data Manager worker upserts closed bars into `market_data`
+2. Data Manager worker upserts closed bars into `market_candles`
 3. Data Analyst worker evaluates enabled strategies
 4. Broker applies execution gates, resolves priority conflicts, dispatches Associates
 5. Broker exit monitors evaluate open lots for crossover / trail stops
@@ -84,23 +86,26 @@ Broker also syncs OANDA state on startup and on a slow tick (~30s). The web API 
 | `/etc/brokerai/config.env` | Configuration |
 | `/var/lib/brokerai/data/` | Heartbeat, control IPC, auth, research reports |
 | `/var/log/brokerai/` | Update and application logs |
-| `/var/lib/mongodb` | MongoDB data files |
+| `deploy/supabase/` | Self-hosted Supabase Docker stack + Postgres volumes |
 
 ## Web UI
 
-Open **http://\<container-ip\>:1989** (or `http://localhost:5173` in dev).
+Open **http://\<container-ip\>:1989**, or **https://\<BROKERAI_DOMAIN\>** when TLS was configured at install (dev: `http://localhost:5173`). When `BROKERAI_SUPABASE_DOMAIN` is set, Kong/Studio are at **https://\<BROKERAI_SUPABASE_DOMAIN\>** (Studio uses basic auth).
 
 | Page | Path | Description |
 |------|------|-------------|
 | **Dashboard** | `/` | OANDA account summary, exchange connection status |
-| **Reports** | `/daily-reports` | Daily/weekly research reports, signals panel, run/rerun |
+| **Reports** | `/research/reports` | Daily/weekly research reports, signals panel, run/rerun |
+| **Strategies** | `/research/strategies` | List, enable/disable, create from preset, edit |
+| **Analysis** | `/research/analysis` | Analyzer run history with recency, filters, direction, confidence, gate results, and candle context |
+| **Backtesting** | `/research/backtest` | Placeholder — coming next |
 | **Explore** | `/trading/explore` | Candle chart, pair search, timeframe/history, live revision stream |
-| **Strategies** | `/trading/strategies` | List, enable/disable, create from preset, edit |
-| **Trades** | `/trading/trades` | Trade ledger with filters, sync, reconciliation badges, detail chart |
-| **Live Analysis** | `/trading/analysis` | Analyzer run history with recency, filters, direction, confidence, gate results, and candle context |
+| **Forex** | `/trading/forex` | Trade ledger with filters, sync, reconciliation badges, detail chart |
 | **Activity** | `/activity` | Bot event timeline with job-ID correlation |
-| **Settings** | `/settings/*` | Models, connections, research, broker asset classes, system |
-| **Backtesting** | `/research/backtesting` | Placeholder — coming next |
+| **Cost Ledger** | `/cost-ledger` | Cost / fee ledger |
+| **Settings** | `/settings/*` | Account, models, connections, research, broker, system, backup |
+
+Older paths such as `/daily-reports`, `/trading/strategies`, and `/trading/trades` redirect to the canonical routes above.
 
 **App chrome:** market sessions bar (forex + optional asset-class indicators), bot status pills, background task progress for sync/research jobs, collapsible sidebar.
 
@@ -108,12 +113,15 @@ Open **http://\<container-ip\>:1989** (or `http://localhost:5173` in dev).
 
 | Section | What you configure |
 |---------|-------------------|
-| **General** | Profile photo, username/password, display name, timezone, time format |
+| **General** | Profile photo, display preferences |
+| **Account** | Username/password (builtin), display name |
+| **Display** | Timezone, time format |
 | **Models** | LLM providers (Open WebUI functional; OpenAI/Claude/Grok UI stubs) |
 | **Connections** | OANDA exchange, NewsAPI, Massive (Polygon) market status |
 | **Research** | Contributor/synthesis models, daily/weekly scheduling, data sources |
 | **Broker** | Per-asset-class enable, forex pairs, session windows |
-| **System** | Bot status, MongoDB stats, updates, reboot/shutdown |
+| **System** | Bot status, Postgres stats, updates, reboot/shutdown |
+| **Backup** | Config / data backup helpers |
 
 ## Trading
 
@@ -142,9 +150,9 @@ Before placing an order, Broker checks signal direction, confidence threshold, a
 
 ### Trade ledger
 
-Open and closed trades are stored in MongoDB (`broker_lots` collection) with strategy linkage, direction, pair, units, entry/exit prices, reason codes, and P&L.
+Open and closed trades are stored in Postgres (`broker_lots`) with strategy linkage, direction, pair, units, entry/exit prices, reason codes, and P&L.
 
-**OANDA sync** reconciles the ledger against live broker state: import missing trades, update open lots, close drifted positions, backfill exit details. Runs automatically on the Broker slow tick and via **Trading → Trades → Sync OANDA** (background task).
+**OANDA sync** reconciles the ledger against live broker state: import missing trades, update open lots, close drifted positions, backfill exit details. Runs automatically on the Broker slow tick and via **Trading → Forex → Sync OANDA** (background task).
 
 **Reconciliation** compares ledger open lots vs OANDA snapshot (`matched`, `ledger_only`, `broker_only` badges in the UI).
 
@@ -157,25 +165,25 @@ Open and closed trades are stored in MongoDB (`broker_lots` collection) with str
 
 Configure in **Settings → Research** and **Settings → Models**. Requires NewsAPI in **Settings → Connections** and at least one enabled forex pair.
 
-## MongoDB
+## Self-hosted Supabase (Postgres)
 
-Local MongoDB binds to **127.0.0.1:27017** only. Browse data with [MongoDB Compass](https://www.mongodb.com/products/compass):
+BrokerAI uses the Docker stack under [`deploy/supabase/`](deploy/supabase/) (see [`deploy/supabase/BROKERAI.md`](deploy/supabase/BROKERAI.md)). FastAPI talks to Postgres directly; trading tables are not exposed via PostgREST.
 
 ```bash
-ssh -L 27017:127.0.0.1:27017 youruser@<container-ip>
+./scripts/setup-supabase.sh --start
+# Schema is created on API/orchestrator startup (SQLAlchemy create_all)
+# Studio: http://127.0.0.1:3000  —  Postgres: 127.0.0.1:5432
 ```
 
-Connect Compass to `mongodb://127.0.0.1:27017/brokerai`.
-
-| Collection | Purpose |
-|------------|---------|
-| `market_data` | Cached OHLCV bars (timeseries; symbol, timeframe, source, time) |
+| Table (schema `brokerai`) | Purpose |
+|---------------------------|---------|
+| `market_candles` | Cached OHLCV bars (`UNIQUE` symbol/timeframe/source/ts) |
 | `candle_sync_state` | Per-pair/timeframe fetch scheduling state |
 | `candle_watch` | Candle close watch registry (e.g. Explore page) |
 | `strategies` | Saved strategy definitions (params v1, instruments, enabled) |
 | `strategy_analysis_runs` | Per-candle analyzer output and gate results |
 | `broker_lots` | Open/closed trade ledger |
-| `broker_events` | Normalized broker transaction events (`retention_expires_at` TTL on low-value admin types) |
+| `broker_events` | Normalized broker transaction events |
 | `instrument_exposure` | Materialized per-instrument long/short rollups |
 | `broker_sync_state` | Per-exchange/account sync cursor |
 | `oanda_account_summaries` | OANDA account summary snapshots from sync |
@@ -186,17 +194,50 @@ Connect Compass to `mongodb://127.0.0.1:27017/brokerai`.
 | `exchange_connections` | OANDA credentials |
 | `research_settings` | Research scheduling and model selection |
 | `asset_settings` | Per-asset-class broker config (forex pairs, sessions) |
+| `user_profiles` / `onboarding` | Auth profile prefs + wizard progress |
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BROKERAI_MONGODB_URI` | `mongodb://127.0.0.1:27017` | MongoDB connection |
-| `BROKERAI_MONGODB_DB` | `brokerai` | Database name |
+| `BROKERAI_DATABASE_URL` | `postgresql+asyncpg://…@127.0.0.1:5432/postgres` | Async Postgres URL |
+| `BROKERAI_SUPABASE_URL` | `http://127.0.0.1:8000` | Kong / Auth API |
+| `BROKERAI_SUPABASE_ANON_KEY` | _(generated)_ | Publishable key |
+| `BROKERAI_SUPABASE_SERVICE_ROLE_KEY` | _(generated)_ | Server-only Admin API key |
+| `BROKERAI_SUPABASE_JWT_SECRET` | _(generated)_ | JWT verification secret |
+
+## Authentication
+
+| Mode | Env | Notes |
+|------|-----|-------|
+| `builtin` (default) | `BROKERAI_AUTH_MODE=builtin` | Username/password; signed `brokerai_session` cookie |
+| `oidc` | `BROKERAI_AUTH_MODE=oidc` + issuer/client | External IdP (Authentik, Keycloak, …); same session cookie after PKCE |
+
+Profiles live in Postgres `brokerai.user_profiles` (file fallback under `data/auth/`). When Supabase keys are set, builtin setup/login can also create a GoTrue user and enable **TOTP MFA**. See [`docs/auth/self-hosted-oidc.md`](docs/auth/self-hosted-oidc.md).
 
 ## First-run setup
 
-**Proxmox install:** When running [`ct/brokerai.sh`](ct/brokerai.sh), after you pick **Default Install** (or Advanced / App Defaults), a **BrokerAI Setup** screen asks for an optional admin account before the container is created. If you configure it there, the Web UI opens straight to login.
+On first visit the Web UI runs a guided onboarding wizard:
 
-Pre-set credentials without prompts:
+1. **Welcome / Admin** — create the admin account (also used for SSH on LXC)
+2. **Profile photo** — optional avatar
+3. **MFA** — optional TOTP when Supabase Auth is configured
+4. **Exchange** — connect an available broker module (OANDA / forex today; others Coming soon)
+5. **Instruments** — enable pairs/symbols for that exchange
+6. **Data sources** — optional market data / news APIs
+7. **Models** — optional AI providers for research
+8. **Finish** — open the dashboard
+
+**Local design / QA:** reset first-run state and walk the wizard with:
+
+```bash
+./scripts/dev-onboarding.sh
+./scripts/dev-onboarding.sh --step exchange
+```
+
+See [`docs/dev/onboarding-preview.md`](docs/dev/onboarding-preview.md).
+
+**Proxmox install:** When running [`ct/brokerai.sh`](ct/brokerai.sh), after you pick **Default Install** (or Advanced / App Defaults), an optional host dialog can pre-create the admin account. Prefer skipping it so the web wizard handles the full first-run path.
+
+Pre-set admin credentials without prompts (still complete remaining wizard steps in the UI):
 
 ```bash
 BROKERAI_ADMIN_USER=admin BROKERAI_ADMIN_PASSWORD='YourStr0ng!Pass' \
@@ -205,13 +246,9 @@ BROKERAI_ADMIN_USER=admin BROKERAI_ADMIN_PASSWORD='YourStr0ng!Pass' \
 
 **Standalone install:** Same env vars work with [`scripts/install-lxc.sh`](scripts/install-lxc.sh).
 
-1. Open **http://\<container-ip\>:1989**
-2. If no admin was pre-configured, complete the setup wizard (username + strong password).
-3. Otherwise, sign in with the credentials you set at install time.
-4. Configure OANDA in **Settings → Connections** (practice account recommended).
-5. Enable forex pairs in **Settings → Broker → Forex**.
-6. Create and enable at least one strategy in **Trading → Strategies**.
-7. SSH with the same username and password: `ssh youruser@<container-ip>`
+1. Open **http://\<container-ip\>:1989** (or **https://\<domain\>** if `BROKERAI_DOMAIN` was set)
+2. Complete the onboarding wizard (or sign in if admin was pre-configured, then finish remaining steps).
+3. SSH with the same username and password: `ssh youruser@<container-ip>`
 
 ## Installation
 
@@ -223,6 +260,19 @@ Run on the **Proxmox host**:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/ct/brokerai.sh)"
 ```
 
+Creates an unprivileged Debian LXC with Docker nesting, installs self-hosted Supabase (Postgres), optional Caddy TLS when you set a hostname, and enables daily Postgres backups.
+
+Optional env before running:
+
+```bash
+BROKERAI_ADMIN_USER=admin BROKERAI_ADMIN_PASSWORD='YourStr0ng!Pass' \
+BROKERAI_DOMAIN=broker.example.com \
+BROKERAI_SUPABASE_DOMAIN=supabase.example.com \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/ct/brokerai.sh)"
+```
+
+Point DNS A/AAAA for both hostnames at the LXC and open TCP 80/443 for Let’s Encrypt. See [`deploy/supabase/BROKERAI.md`](deploy/supabase/BROKERAI.md).
+
 ### Option 2: Standalone (existing container or VM)
 
 Run **inside** Debian/Ubuntu as root:
@@ -231,7 +281,7 @@ Run **inside** Debian/Ubuntu as root:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/scripts/install-lxc.sh)"
 ```
 
-Installs MongoDB, Node.js (frontend build), Python venv, and systemd units.
+Installs Docker + self-hosted Supabase, Node.js (frontend build), Python venv, systemd units, backup timer, and optional Caddy when `BROKERAI_DOMAIN` is set (`BROKERAI_SUPABASE_DOMAIN` for public Kong/Studio).
 
 ## CLI
 
@@ -266,13 +316,18 @@ Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev). Template: [`co
 |----------|---------|-------------|
 | `BROKERAI_SECRET_KEY` | _(generated on install)_ | Session signing secret |
 | `BROKERAI_WEB_PORT` | `1989` | Web UI port |
+| `BROKERAI_WEB_BIND` | `0.0.0.0` | Uvicorn bind (`127.0.0.1` when Caddy TLS is enabled) |
+| `BROKERAI_DOMAIN` | _(empty)_ | Public hostname — Caddy TLS at install or Settings → System |
+| `BROKERAI_SUPABASE_DOMAIN` | _(empty)_ | Optional second hostname — host Caddy → Kong + Studio (basic auth) |
+| `BROKERAI_BACKUP_DIR` | `/var/lib/brokerai/backups/postgres` | `pg_dump` output directory |
+| `BROKERAI_BACKUP_RETENTION_DAYS` | `7` | Days to keep logical dumps |
 | `BROKERAI_ENABLED_BOTS` | `secretary,broker,researcher` | Active persistent bots |
 | `BROKERAI_PIPELINE_CONCURRENCY` | `10` | Max parallel symbol pipelines |
 | `BROKERAI_SECRETARY_TICK_INTERVAL_SECONDS` | `5` | Secretary tick interval |
 | `BROKERAI_BROKER_SYNC_INTERVAL_SECONDS` | `30` | Broker OANDA sync interval |
 | `BROKERAI_TRADE_SYNC_INTERVAL_SECONDS` | `300` | Web API background sync interval |
-| `BROKERAI_MONGODB_URI` | `mongodb://127.0.0.1:27017` | MongoDB URI |
-| `BROKERAI_MONGODB_DB` | `brokerai` | MongoDB database |
+| `BROKERAI_DATABASE_URL` | `postgresql+asyncpg://…` | Postgres (Supabase; always loopback) |
+| `BROKERAI_SUPABASE_URL` | `http://127.0.0.1:8000` | Kong URL (`https://…` when `BROKERAI_SUPABASE_DOMAIN` is set) |
 | `BROKERAI_DATA_DIR` | `/var/lib/brokerai/data` | Runtime state |
 | `BROKERAI_LOG_DIR` | `/var/log/brokerai` | Logs |
 | `BROKERAI_AUTO_UPDATE` | `true` | Enable automatic updates |
@@ -283,7 +338,7 @@ Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev). Template: [`co
 | Endpoint group | Auth | Description |
 |----------------|------|-------------|
 | `/api/auth/*` | Mixed | Setup, login, logout, profile, account settings |
-| `/api/health` | No | Health, version, MongoDB status |
+| `/api/health` | No | Health, version, Postgres status |
 | `/api/bots`, `/api/bots/{name}/start\|stop` | Yes | Sub-bot statuses and IPC control |
 | `/api/pipeline/status` | Yes | Secretary pipeline state |
 | `/api/trades` | Yes | Ledger list, detail, candles, sync, reconciliation, close |
@@ -305,12 +360,12 @@ Quick start (recommended):
 ```bash
 git clone https://github.com/anomaddev/BrokerAI.git
 cd BrokerAI
-./scripts/dev.sh              # Bootstrap venv, .env, MongoDB, npm; start all services
+./scripts/dev.sh              # Bootstrap venv, .env, Supabase, npm; start all services
 ```
 
-`dev.sh` options: `--setup` (bootstrap only), `--backend-only` (no Vite), `--no-mongo`, `--no-open`.
+`dev.sh` options: `--setup` (bootstrap only), `--backend-only` (no Vite), `--no-supabase`, `--no-open`.
 
-Opens **http://localhost:5173** (Vite proxies `/api` → `:1989`). Setup wizard on first run; password ≥12 chars with upper+lower+digit+special.
+Opens **http://localhost:5173** (Vite proxies `/api` → `:1989`). Setup wizard on first run; password 8–32 chars with upper+lower+digit+special.
 
 Manual equivalent:
 
@@ -320,7 +375,7 @@ pip install -r requirements.txt && pip install -e .
 cp config/config.env.example .env   # append BROKERAI_DATA_DIR, LOG_DIR, SECRET_KEY per scripts/dev.sh
 mkdir -p data logs
 
-docker run -d --name brokerai-mongo -p 27017:27017 mongo:7   # or local mongod
+./scripts/setup-supabase.sh --start   # Postgres :5432, Kong :8000, Studio :3000
 
 brokerai run orchestrator                                        # terminal 1
 uvicorn brokerai.web.app:app --reload --port 1989               # terminal 2
@@ -341,15 +396,19 @@ cd frontend && npm install && npm run dev -- --host 127.0.0.1   # terminal 3
 
 ### Architecture docs
 
+Index: [`docs/README.md`](docs/README.md).
+
 | Doc | Topic |
 |-----|-------|
 | [`docs/architecture/the-loop.md`](docs/architecture/the-loop.md) | Secretary pipeline design |
 | [`docs/architecture/orchestrator-and-bot-loops.md`](docs/architecture/orchestrator-and-bot-loops.md) | Orchestrator and tick loops |
-| [`docs/architecture/data-manager.md`](docs/architecture/data-manager.md) | Candle fetch and cache |
-| [`docs/architecture/data-analyzer.md`](docs/architecture/data-analyzer.md) | Strategy analysis |
+| [`docs/architecture/data-manager.md`](docs/architecture/data-manager.md) | Candle fetch worker + service |
+| [`docs/architecture/data-analyzer.md`](docs/architecture/data-analyzer.md) | Strategy analysis worker |
 | [`docs/architecture/caching.md`](docs/architecture/caching.md) | Cache behavior |
 | [`docs/architecture/oanda-entity-linkages.md`](docs/architecture/oanda-entity-linkages.md) | OANDA sync, broker ledger, entity mapping |
 | [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md) | Strategy params v1 |
+| [`docs/auth/self-hosted-oidc.md`](docs/auth/self-hosted-oidc.md) | Builtin vs OIDC auth |
+| [`docs/dev/onboarding-preview.md`](docs/dev/onboarding-preview.md) | Clean-DB onboarding preview |
 
 ## Project structure
 
@@ -357,23 +416,28 @@ cd frontend && npm install && npm run dev -- --host 127.0.0.1   # terminal 3
 BrokerAI/
 ├── frontend/                       React + Vite dashboard
 ├── src/brokerai/
-│   ├── auth/                       Setup, login, sessions
-│   ├── bots/                       Secretary, Broker, Researcher + legacy bots
-│   │   ├── secretary/              Pipeline dispatch, workers
+│   ├── auth/                       Setup, login, sessions, MFA helpers
+│   ├── bots/                       Persistent bots + ephemeral workers
+│   │   ├── secretary/              Pipeline dispatch, timeline
 │   │   ├── broker/                 Gates, exit monitors, sync
+│   │   ├── researcher/             Research host bot
+│   │   ├── data_manager/           Candle fetch worker + service
+│   │   ├── data_analyzer/          Strategy analysis worker
 │   │   └── associate/              Per-asset-class order placement
 │   ├── strategies/                 Presets, params v1, evaluators
 │   ├── trading/                    Indicators, broker models, sync
-│   ├── db/                         MongoDB client + repositories
+│   ├── db/                         Postgres client + repositories (SQLAlchemy)
 │   ├── cli/                        brokerai command
 │   ├── core/                       Orchestrator + control IPC
 │   └── web/                        FastAPI + static SPA
-├── docs/                           Architecture and release notes
+├── deploy/supabase/                Self-hosted Supabase Docker stack
+├── docs/                           Architecture, auth, strategies (see docs/README.md)
 ├── scripts/
 │   ├── dev.sh                      Local dev bootstrap
+│   ├── setup-supabase.sh
 │   ├── install-lxc.sh
 │   ├── build-frontend.sh
-│   └── lib/install-mongodb.sh
+│   └── lib/install-supabase.sh
 ├── config/
 └── systemd/
 ```
@@ -382,7 +446,7 @@ BrokerAI/
 
 Planned improvements that are not implemented yet:
 
-- **Analysis run retention (`strategy_analysis_runs`)** — Runs are deduped per `(strategy, pair, candle_time)` and updated in place on re-analysis, so growth is roughly `strategies × pairs × bars_per_day` (not one row per bot poll). For watchlists and future ML (crosses, approaching signals, filter/gate context), keep a long history rather than aggressive pruning. A sensible default when volume matters: retain all signal-bearing runs (cross, approaching, actionable direction) indefinitely; trim old `none` runs after 90–180 days; optionally archive signal runs to Parquet/JSON before prune. Revisit when the collection exceeds ~5–10M documents or ~20–50 GB.
+- **Analysis run retention (`strategy_analysis_runs`)** — Runs are deduped per `(strategy, pair, candle_time)` and updated in place on re-analysis, so growth is roughly `strategies × pairs × bars_per_day` (not one row per bot poll). For watchlists and future ML (crosses, approaching signals, filter/gate context), keep a long history rather than aggressive pruning. A sensible default when volume matters: retain all signal-bearing runs (cross, approaching, actionable direction) indefinitely; trim old `none` runs after 90–180 days; optionally archive signal runs to Parquet/JSON before prune. Revisit when the table exceeds ~5–10M rows or ~20–50 GB.
 
 ## Known limitations (Alpha)
 

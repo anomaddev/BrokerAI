@@ -7,6 +7,7 @@ import {
   type ResearchSettings,
 } from "../api/client";
 import {
+  ASSET_CLASS_STATUSES_UPDATED,
   loadAssetClassStatuses,
   type AssetClassStatus,
 } from "../lib/assetClassStatus";
@@ -145,9 +146,27 @@ export default function OverallBotStatus() {
       void loadForexTradingSessions();
     }
 
+    async function loadAssetStatuses() {
+      try {
+        const assetStatuses = await loadAssetClassStatuses();
+        if (!cancelled) {
+          setAssetClassStatuses(assetStatuses);
+        }
+      } catch {
+        if (!cancelled) {
+          setAssetClassStatuses([]);
+        }
+      }
+    }
+
+    function handleAssetClassStatusesUpdated() {
+      void loadAssetStatuses();
+    }
+
     function handleConfigRestored() {
       void (async () => {
         await loadForexTradingSessions();
+        await loadAssetStatuses();
         try {
           const researchData = await api.getResearchSettings();
           if (!cancelled) {
@@ -162,10 +181,12 @@ export default function OverallBotStatus() {
     }
 
     window.addEventListener(FOREX_TRADING_SESSIONS_UPDATED, handleForexSessionsUpdated);
+    window.addEventListener(ASSET_CLASS_STATUSES_UPDATED, handleAssetClassStatusesUpdated);
     window.addEventListener(CONFIG_RESTORED, handleConfigRestored);
     return () => {
       cancelled = true;
       window.removeEventListener(FOREX_TRADING_SESSIONS_UPDATED, handleForexSessionsUpdated);
+      window.removeEventListener(ASSET_CLASS_STATUSES_UPDATED, handleAssetClassStatusesUpdated);
       window.removeEventListener(CONFIG_RESTORED, handleConfigRestored);
     };
   }, []);
@@ -196,6 +217,7 @@ export default function OverallBotStatus() {
         }
 
         const currentMarket = marketStatusRef.current;
+        const anyAssetClassEnabled = assetStatuses.some((row) => row.enabled);
         const statusForPreview = computeOverallStatus({
           orchestratorRunning: Boolean(health.orchestrator_running),
           bots: sortBots(botData.bots),
@@ -205,6 +227,7 @@ export default function OverallBotStatus() {
             : DEFAULT_FOREX_TRADING_SESSIONS,
           marketAvailable: currentMarket?.available !== false,
           marketServerTime: currentMarket?.server_time,
+          anyAssetClassEnabled,
         });
         const previewNext =
           statusForPreview === "running" && Boolean(health.orchestrator_running);
@@ -268,6 +291,7 @@ export default function OverallBotStatus() {
 
   const marketSessions = marketStatus?.sessions ?? [];
   const marketAvailable = marketStatus?.available !== false;
+  const anyAssetClassEnabled = assetClassStatuses.some((row) => row.enabled);
 
   const status: OverallBotStatus = computeOverallStatus({
     orchestratorRunning,
@@ -276,6 +300,7 @@ export default function OverallBotStatus() {
     enabledTradingSessions,
     marketAvailable,
     marketServerTime: marketStatus?.server_time,
+    anyAssetClassEnabled,
   });
 
   const tone = overallStatusTone(status);
@@ -304,7 +329,10 @@ export default function OverallBotStatus() {
   const remainingPercent = nextAction
     ? computeProgress(now, nextAction.windowStartAt, nextAction.targetAt)
     : 0;
-  const explainer = resolveOverallStatusExplainer(status, nextAction);
+  const explainer = resolveOverallStatusExplainer(status, nextAction, {
+    orchestratorRunning,
+    anyAssetClassEnabled,
+  });
   const nextActionLabel =
     showNextAction && nextAction && nextAction.kind !== "none"
       ? formatNextActionDisplay(nextAction)

@@ -12,8 +12,19 @@ from brokerai.trading.broker.models import BrokerEvent
 logger = logging.getLogger(__name__)
 
 
-def as_utc_aware(value: datetime | None) -> datetime | None:
+def as_utc_aware(value: datetime | str | None) -> datetime | None:
+    """Normalize a datetime or ISO string (from JSONB docs) to UTC-aware."""
     if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
         return None
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)

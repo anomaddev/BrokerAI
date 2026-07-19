@@ -1,11 +1,6 @@
-import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ROUTES } from "../../lib/routes";
 import StrategyOverlay from "./StrategyOverlay";
-import StrategyModeStep from "./StrategyModeStep";
 import StrategyPresetStep from "./StrategyPresetStep";
-
-type CreateStep = "mode" | "preset";
 
 type CreateStrategyOverlayProps = {
   onClose: () => void;
@@ -13,7 +8,6 @@ type CreateStrategyOverlayProps = {
 
 export default function CreateStrategyOverlay({ onClose }: CreateStrategyOverlayProps) {
   const navigate = useNavigate();
-  const [step, setStep] = useState<CreateStep>("mode");
 
   function handleSelectPreset(route: string) {
     onClose();
@@ -21,27 +15,8 @@ export default function CreateStrategyOverlay({ onClose }: CreateStrategyOverlay
   }
 
   return (
-    <StrategyOverlay
-      onClose={onClose}
-      wide
-      titleId={step === "mode" ? "create-strategy-title" : "create-strategy-preset-title"}
-    >
-      {step === "mode" ? (
-        <StrategyModeStep
-          onSelectPreset={() => setStep("preset")}
-          onSelectCustom={() => {
-            onClose();
-            navigate(ROUTES.research.strategyNew("custom"));
-          }}
-          onCancel={onClose}
-        />
-      ) : (
-        <StrategyPresetStep
-          onSelect={handleSelectPreset}
-          onBack={() => setStep("mode")}
-          onCancel={onClose}
-        />
-      )}
+    <StrategyOverlay onClose={onClose} wide titleId="create-strategy-preset-title">
+      <StrategyPresetStep onSelect={handleSelectPreset} onCancel={onClose} />
     </StrategyOverlay>
   );
 }

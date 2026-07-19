@@ -5,6 +5,7 @@ from typing import Any
 from brokerai.strategies.base import StrategyPreset
 from brokerai.strategies.params.sections import (
     ParamsValidationError,
+    validate_additional_timeframes,
     validate_execution,
     validate_exits,
     validate_filter,
@@ -51,6 +52,10 @@ def validate_params(preset: StrategyPreset, params: dict[str, Any]) -> dict[str,
 
     version = validate_schema_version(params.get("schema_version"))
     timeframe = validate_timeframe(params.get("timeframe"))
+    additional_timeframes = validate_additional_timeframes(
+        params.get("additional_timeframes"),
+        primary=timeframe,
+    )
 
     indicators_raw = params.get("indicators") or {}
     if not isinstance(indicators_raw, dict):
@@ -101,19 +106,37 @@ def validate_params(preset: StrategyPreset, params: dict[str, Any]) -> dict[str,
         seen_ids.add(normalized["id"])
         filters.append(normalized)
 
-    partial = {
+    partial: dict[str, Any] = {
         "schema_version": version,
         "timeframe": timeframe,
         "indicators": indicators,
         "signal": signal,
         "filters": filters,
     }
+    if additional_timeframes is not None:
+        partial["additional_timeframes"] = additional_timeframes
 
     exits = validate_exits(
         params.get("exits"),
         schema=schema.get("exits"),
         signal_type=signal_type,
     )
+    # Keep trail EMA aligned with the (possibly auto-swapped) slow leg.
+    take_profit = exits.get("take_profit") if isinstance(exits.get("take_profit"), dict) else None
+    if (
+        signal_type == "ema_crossover"
+        and isinstance(take_profit, dict)
+        and take_profit.get("trail_mode") == "ema_slow"
+        and isinstance(signal.get("slow_ref"), str)
+    ):
+        exits = {
+            **exits,
+            "take_profit": {
+                **take_profit,
+                "trail_ema_ref": signal["slow_ref"],
+            },
+        }
+
     risk = validate_risk(params.get("risk"), schema=schema.get("risk"))
     execution = validate_execution(params.get("execution"), schema=schema.get("execution"))
     min_candles = validate_min_candles(params.get("min_candles"), params={**partial, "exits": exits})

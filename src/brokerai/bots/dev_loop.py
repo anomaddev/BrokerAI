@@ -43,7 +43,7 @@ async def run_bot_loop(
 
         await ensure_indexes()
     except Exception:
-        logger.warning("MongoDB unavailable — indexes not ensured", exc_info=True)
+        logger.warning("Postgres unavailable — schema/indexes not ensured", exc_info=True)
 
     await bot.start()
     tick = 0

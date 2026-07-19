@@ -251,7 +251,7 @@ async def run_orchestrator() -> None:
 
         await ensure_indexes()
     except Exception:
-        logger.warning("MongoDB unavailable — indexes not ensured", exc_info=True)
+        logger.warning("Postgres unavailable — schema/indexes not ensured", exc_info=True)
 
     heartbeat_task = asyncio.create_task(orchestrator.heartbeat_loop())
     control_task = asyncio.create_task(orchestrator.control_loop())

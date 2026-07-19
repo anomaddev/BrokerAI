@@ -9,7 +9,7 @@ User=brokerai
 Group=brokerai
 WorkingDirectory=/opt/brokerai
 EnvironmentFile=/etc/brokerai/config.env
-ExecStart=/bin/bash -c 'exec /opt/brokerai/venv/bin/uvicorn brokerai.web.app:app --host 0.0.0.0 --port ${BROKERAI_WEB_PORT:-1989}'
+ExecStart=/bin/bash -c 'exec /opt/brokerai/venv/bin/uvicorn brokerai.web.app:app --host ${BROKERAI_WEB_BIND:-0.0.0.0} --port ${BROKERAI_WEB_PORT:-1989}'
 Restart=always
 RestartSec=5
 

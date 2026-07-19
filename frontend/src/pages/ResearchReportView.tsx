@@ -3,9 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type ResearchReportContent } from "../api/client";
+import {
+  api,
+  notifyResearchReportsUnreadUpdated,
+  type ResearchReportContent,
+} from "../api/client";
 import { ROUTES } from "../lib/routes";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import { fetchReportMarkdownFromSignedUrl } from "../lib/supabaseClient";
 
 const TYPE_LABELS: Record<string, string> = {
   daily: "Daily report",
@@ -13,6 +18,8 @@ const TYPE_LABELS: Record<string, string> = {
   weekly_brief: "Weekly brief",
   weekly_debrief: "Weekly debrief",
 };
+
+const COUNTABLE = new Set(["daily", "daily_model", "weekly_brief", "weekly_debrief"]);
 
 function reportTitle(report: ResearchReportContent): string {
   const typeLabel = report.type ? TYPE_LABELS[report.type] ?? report.type : "Report";
@@ -27,6 +34,7 @@ export default function ResearchReportView() {
   const params = useParams();
   const filename = params["*"] ?? "";
   const [report, setReport] = useState<ResearchReportContent | null>(null);
+  const [content, setContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -37,15 +45,38 @@ export default function ResearchReportView() {
       setLoading(false);
       return;
     }
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    api
-      .getResearchReport(filename)
-      .then((data) => setReport(data))
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load report"),
-      )
-      .finally(() => setLoading(false));
+    (async () => {
+      try {
+        const data = await api.getResearchReport(filename);
+        let markdown = data.content ?? "";
+        if (!markdown && data.signed_url) {
+          markdown = await fetchReportMarkdownFromSignedUrl(data.signed_url);
+        }
+        if (cancelled) return;
+        setReport(data);
+        setContent(markdown);
+        if (data.type && COUNTABLE.has(data.type)) {
+          try {
+            await api.markResearchReportRead(data.filename);
+            notifyResearchReportsUnreadUpdated();
+          } catch {
+            /* viewing still succeeds if mark-read fails */
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load report");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [filename]);
 
   return (
@@ -81,10 +112,10 @@ export default function ResearchReportView() {
               : ""}
           </p>
           {showRaw ? (
-            <pre className="research-report-raw">{report.content}</pre>
+            <pre className="research-report-raw">{content}</pre>
           ) : (
             <div className="research-report-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
             </div>
           )}
         </article>

@@ -68,10 +68,12 @@ PRICE_SOURCES = frozenset({"close", "open", "high", "low", "hl2", "hlc3", "ohlc4
 SECTIONS = (
     "schema_version",
     "timeframe",
+    "additional_timeframes",
     "indicators",
     "signal",
     "filters",
     "exits",
     "risk",
     "execution",
+    "min_candles",
 )

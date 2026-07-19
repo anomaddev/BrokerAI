@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from brokerai.db.repositories.market_data import MarketDataRepository
+
+
+pytestmark = pytest.mark.usefixtures("sqlite_db")
 
 
 @pytest.mark.asyncio
@@ -30,57 +33,53 @@ async def test_find_latest_candles_returns_newest_window():
 @pytest.mark.asyncio
 async def test_find_candles_after_uses_gt_filter():
     repo = MarketDataRepository()
-    rows = [
-        {
-            "meta": {"symbol": "EUR/USD", "timeframe": "M15", "source": "oanda"},
-            "ts": datetime(2026, 1, 7, 15, 15, tzinfo=timezone.utc),
-            "time": "2026-01-07T15:15:00.000000000Z",
-            "open": 1.1,
-            "high": 1.2,
-            "low": 1.0,
-            "close": 1.15,
-            "volume": 0,
-        }
-    ]
-
-    cursor = AsyncMock()
-    cursor.to_list = AsyncMock(return_value=rows)
-    find_cursor = MagicMock()
-    find_cursor.sort.return_value.limit.return_value = cursor
-    collection = MagicMock()
-    collection.find.return_value = find_cursor
-    db = {"market_data": collection}
-    handle = AsyncMock()
-    handle.db = db
-
-    with patch("brokerai.db.repositories.market_data.get_db", AsyncMock(return_value=handle)):
-        result = await repo.find_candles_after(
-            "EUR/USD",
-            "M15",
-            "oanda",
-            "2026-01-07T15:00:00.000000000Z",
-            limit=5,
-        )
-
-    collection.find.assert_called_once_with(
-        {
-            "meta.symbol": "EUR/USD",
-            "meta.timeframe": "M15",
-            "meta.source": "oanda",
-            "ts": {"$gt": datetime(2026, 1, 7, 15, 0, tzinfo=timezone.utc)},
-        },
-        {"_id": 0},
+    fetched_at = datetime(2026, 1, 7, 15, 0, tzinfo=timezone.utc)
+    await repo.upsert_candles(
+        "EUR/USD",
+        "M15",
+        "oanda",
+        [
+            {
+                "time": "2026-01-07T15:15:00.000000000Z",
+                "open": 1.1,
+                "high": 1.2,
+                "low": 1.0,
+                "close": 1.15,
+                "volume": 0,
+                "fetched_at": fetched_at,
+            }
+        ],
     )
-    assert result == [
-        {
-            "symbol": "EUR/USD",
-            "timeframe": "M15",
-            "source": "oanda",
-            "time": "2026-01-07T15:15:00.000000000Z",
-            "open": 1.1,
-            "high": 1.2,
-            "low": 1.0,
-            "close": 1.15,
-            "volume": 0,
-        }
-    ]
+
+@pytest.mark.asyncio
+async def test_find_candles_after_uses_gt_filter():
+    repo = MarketDataRepository()
+    fetched_at = datetime(2026, 1, 7, 15, 0, tzinfo=timezone.utc)
+    await repo.upsert_candles(
+        "EUR/USD",
+        "M15",
+        "oanda",
+        [
+            {
+                "time": "2026-01-07T15:15:00.000000000Z",
+                "open": 1.1,
+                "high": 1.2,
+                "low": 1.0,
+                "close": 1.15,
+                "volume": 0,
+                "fetched_at": fetched_at,
+            }
+        ],
+    )
+
+    result = await repo.find_candles_after(
+        "EUR/USD",
+        "M15",
+        "oanda",
+        "2026-01-07T15:00:00.000000000Z",
+        limit=5,
+    )
+
+    assert len(result) == 1
+    assert result[0]["time"] == "2026-01-07T15:15:00.000000000Z"
+    assert result[0]["close"] == 1.15

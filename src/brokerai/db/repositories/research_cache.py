@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from brokerai.db.client import get_db
+from sqlalchemy import delete, select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import ResearchCacheRow
 
 
 class ResearchCacheRepository:
@@ -17,7 +20,6 @@ class ResearchCacheRepository:
         *,
         payload: dict[str, Any] | None = None,
     ) -> None:
-        handle = await get_db()
         doc: dict[str, Any] = {
             "date": date,
             "category": category,
@@ -26,26 +28,40 @@ class ResearchCacheRepository:
         }
         if payload is not None:
             doc["payload"] = payload
-        await handle.db[self.COLLECTION].update_one(
-            {"date": date, "category": category},
-            {"$set": doc},
-            upsert=True,
-        )
+
+        async with session_scope() as session:
+            stmt = select(ResearchCacheRow).where(
+                ResearchCacheRow.date == date,
+                ResearchCacheRow.category == category,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                session.add(ResearchCacheRow(date=date, category=category, doc=doc))
+            else:
+                row.doc = doc
 
     async def find_by_date(self, date: str) -> list[dict[str, Any]]:
-        handle = await get_db()
-        cursor = handle.db[self.COLLECTION].find({"date": date}, {"_id": 0})
-        return await cursor.to_list(length=100)
+        async with session_scope() as session:
+            stmt = select(ResearchCacheRow).where(ResearchCacheRow.date == date)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [dict(row.doc) for row in rows]
 
     async def find_latest_by_category(self, category: str) -> dict[str, Any] | None:
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one(
-            {"category": category},
-            {"_id": 0},
-            sort=[("date", -1)],
-        )
-        return doc if isinstance(doc, dict) else None
+        async with session_scope() as session:
+            stmt = (
+                select(ResearchCacheRow)
+                .where(ResearchCacheRow.category == category)
+                .order_by(ResearchCacheRow.date.desc())
+                .limit(1)
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return dict(row.doc) if row else None
 
     async def delete_one(self, date: str, category: str) -> None:
-        handle = await get_db()
-        await handle.db[self.COLLECTION].delete_one({"date": date, "category": category})
+        async with session_scope() as session:
+            await session.execute(
+                delete(ResearchCacheRow).where(
+                    ResearchCacheRow.date == date,
+                    ResearchCacheRow.category == category,
+                )
+            )

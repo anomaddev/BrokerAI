@@ -4,7 +4,7 @@ import asyncio
 import logging
 import subprocess
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -19,9 +19,12 @@ from brokerai.auth import (
     AuthStore,
     PasswordValidationError,
     SessionManager,
+    UserRecord,
     hash_password,
+    is_valid_email,
     is_valid_username,
     normalize_optional_name,
+    username_from_email,
     validate_password,
     verify_password,
 )
@@ -45,6 +48,25 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class LoginMfaRequest(BaseModel):
+    mfa_token: str
+    code: str
+
+
+class MfaPasswordRequest(BaseModel):
+    password: str
+
+
+class MfaVerifyEnrollRequest(BaseModel):
+    enroll_token: str
+    code: str
+
+
+class MfaDisableRequest(BaseModel):
+    password: str
+    factor_id: str
 
 
 class ChangeUsernameRequest(BaseModel):
@@ -82,6 +104,30 @@ def _reject_when_oidc_enabled() -> None:
         )
 
 
+async def _sync_supabase_profile(user: UserRecord) -> None:
+    """Keep Supabase Auth user_metadata aligned with BrokerAI profile fields."""
+    from brokerai.auth.supabase_auth import (
+        SupabaseAuthError,
+        admin_update_user_profile,
+        supabase_configured,
+    )
+
+    if not supabase_configured() or not user.oidc_sub:
+        return
+    try:
+        await admin_update_user_profile(
+            user_id=user.oidc_sub,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name,
+        )
+    except SupabaseAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code or 502,
+            detail=str(exc),
+        ) from exc
+
+
 def get_current_username(request: Request) -> str | None:
     settings = get_settings()
     token = request.cookies.get(settings.session_cookie_name)
@@ -110,13 +156,30 @@ async def require_auth(request: Request) -> str:
     return username
 
 
+def _mfa_available() -> bool:
+    from brokerai.auth.supabase_auth import supabase_configured
+
+    return is_builtin_mode() and supabase_configured()
+
+
 @router.get("/config")
 async def auth_config() -> dict[str, str | bool]:
+    from brokerai.auth.supabase_auth import supabase_configured
+    from brokerai.config.settings import get_settings
+
     store = AuthStore()
-    return {
+    settings = get_settings()
+    payload: dict[str, str | bool] = {
         "mode": auth_mode(),
         "setup_complete": store.is_setup_complete(),
+        "mfa_available": _mfa_available(),
+        "supabase_configured": supabase_configured(),
     }
+    # Publishable values only — never expose the service_role key.
+    if supabase_configured() and settings.supabase_anon_key:
+        payload["supabase_url"] = settings.supabase_url.rstrip("/")
+        payload["supabase_anon_key"] = settings.supabase_anon_key
+    return payload
 
 
 @router.get("/setup/status")
@@ -128,17 +191,35 @@ async def setup_status() -> dict[str, bool]:
 async def setup(
     request: Request,
     response: Response,
-    username: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
+    first_name: str = Form(...),
+    last_name: str = Form(""),
+    email: str = Form(...),
+    username: str | None = Form(None),
     profile_photo: UploadFile | None = File(None),
 ) -> dict[str, str | bool]:
     _reject_when_oidc_enabled()
     store = AuthStore()
     if store.is_setup_complete():
         raise HTTPException(status_code=409, detail="Setup already complete")
-    if not is_valid_username(username):
-        raise HTTPException(status_code=400, detail="Invalid username")
+
+    email_normalized = email.strip().lower()
+    if not is_valid_email(email_normalized):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    try:
+        resolved_first = normalize_optional_name(first_name)
+        resolved_last = normalize_optional_name(last_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not resolved_first:
+        raise HTTPException(status_code=400, detail="First name is required")
+
+    resolved_username = (username or "").strip().lower() or username_from_email(email_normalized)
+    if not is_valid_username(resolved_username):
+        raise HTTPException(status_code=400, detail="Invalid username derived from email")
+
     try:
         validate_password(password, confirm_password)
     except PasswordValidationError as exc:
@@ -154,10 +235,49 @@ async def setup(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    record = store.create_user(username, hash_password(password), profile_photo_name)
-    await _provision_ssh_user(username, password)
+    from brokerai.auth.supabase_auth import (
+        SupabaseAuthError,
+        admin_create_user,
+        email_for_username,
+        supabase_configured,
+    )
 
-    token = SessionManager().create_token(record.username)
+    auth_sub: str | None = None
+    auth_email = email_normalized
+    password_hash = hash_password(password)
+    if supabase_configured():
+        # Prefer the admin's real email; fall back to deterministic local mapping.
+        auth_email = email_normalized or email_for_username(resolved_username)
+        try:
+            created = await admin_create_user(
+                email=auth_email,
+                password=password,
+                username=resolved_username,
+                first_name=resolved_first,
+                last_name=resolved_last,
+            )
+            auth_sub = str(created.get("id") or "") or None
+            # Password lives in Supabase Auth; keep local hash for offline fallback.
+        except SupabaseAuthError as exc:
+            raise HTTPException(
+                status_code=exc.status_code or 502,
+                detail=str(exc),
+            ) from exc
+
+    record = store.create_user(
+        resolved_username,
+        password_hash,
+        profile_photo_name,
+        auth_sub=auth_sub,
+        email=auth_email,
+        first_name=resolved_first,
+        last_name=resolved_last,
+    )
+    await _provision_ssh_user(resolved_username, password)
+
+    token = SessionManager().create_token(
+        record.username, oidc_sub=record.oidc_sub if record.oidc_sub else None
+    )
     set_session_cookie(response, token, request)
     return {
         "username": record.username,
@@ -173,14 +293,363 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
     if not store.is_setup_complete():
         raise HTTPException(status_code=400, detail="Setup required")
     user = store.get_user()
-    if user is None or user.username != body.username:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not user.password_hash or not verify_password(body.password, user.password_hash):
+    identifier = body.username.strip()
+    identifier_l = identifier.lower()
+    if user is None or (
+        user.username != identifier
+        and user.username != identifier_l
+        and (user.email or "").lower() != identifier_l
+    ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = SessionManager().create_token(user.username)
+    from brokerai.auth.mfa_pending import MfaPendingManager
+    from brokerai.auth.supabase_auth import (
+        SupabaseAuthError,
+        email_for_username,
+        password_sign_in,
+        supabase_configured,
+        user_has_verified_totp,
+        verified_totp_factors,
+        admin_list_factors,
+        verify_access_token,
+    )
+
+    authenticated = False
+    access = ""
+    claims: dict[str, Any] | None = None
+    if supabase_configured() and (user.email or user.oidc_sub):
+        try:
+            session = await password_sign_in(
+                email=user.email or email_for_username(user.username),
+                password=body.password,
+            )
+            access = str(session.get("access_token") or "")
+            if access:
+                claims = verify_access_token(access)
+                sub = str(claims.get("sub") or "")
+                if user.oidc_sub and sub and sub != user.oidc_sub:
+                    raise HTTPException(status_code=401, detail="Invalid credentials")
+                authenticated = True
+        except SupabaseAuthError:
+            authenticated = False
+
+    if not authenticated:
+        # Never bypass MFA via local hash when the Auth user has a verified factor.
+        if supabase_configured() and user.oidc_sub:
+            try:
+                if await user_has_verified_totp(user.oidc_sub):
+                    raise HTTPException(status_code=401, detail="Invalid credentials")
+            except SupabaseAuthError:
+                raise HTTPException(status_code=401, detail="Invalid credentials") from None
+        if not user.password_hash or not verify_password(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    elif access and claims is not None:
+        aal = str(claims.get("aal") or "aal1")
+        sub = str(claims.get("sub") or user.oidc_sub or "")
+        if aal != "aal2" and sub:
+            try:
+                factors = await admin_list_factors(sub)
+            except SupabaseAuthError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code or 502,
+                    detail=str(exc),
+                ) from exc
+            totp = verified_totp_factors(factors)
+            if totp:
+                factor_id = str(totp[0].get("id") or "")
+                if not factor_id:
+                    raise HTTPException(status_code=502, detail="MFA factor is misconfigured")
+                mfa_token = MfaPendingManager().create(
+                    username=user.username,
+                    access_token=access,
+                    purpose="login",
+                    factor_id=factor_id,
+                    oidc_sub=user.oidc_sub,
+                )
+                return {
+                    "username": user.username,
+                    "status": "mfa_required",
+                    "mfa_token": mfa_token,
+                }
+
+    token = SessionManager().create_token(
+        user.username, oidc_sub=user.oidc_sub if user.oidc_sub else None
+    )
     set_session_cookie(response, token, request)
     return {"username": user.username, "status": "ok"}
+
+
+@router.post("/login/mfa")
+async def login_mfa(
+    body: LoginMfaRequest, request: Request, response: Response
+) -> dict[str, str]:
+    """Complete builtin login after password step when TOTP is enrolled."""
+    _reject_when_oidc_enabled()
+    from brokerai.auth.mfa_pending import MfaPendingManager
+    from brokerai.auth.supabase_auth import SupabaseAuthError, mfa_challenge_and_verify
+
+    pending = MfaPendingManager().verify(body.mfa_token.strip(), purpose="login")
+    if pending is None:
+        raise HTTPException(status_code=401, detail="MFA session expired — sign in again")
+    factor_id = pending.get("factor_id")
+    if not factor_id:
+        raise HTTPException(status_code=400, detail="MFA session is missing a factor")
+
+    store = AuthStore()
+    user = store.get_user()
+    if user is None or user.username != pending["username"]:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    code = "".join(ch for ch in body.code.strip() if ch.isdigit())
+    if len(code) < 6:
+        raise HTTPException(status_code=400, detail="Enter the 6-digit authenticator code")
+
+    try:
+        await mfa_challenge_and_verify(
+            access_token=pending["access_token"],
+            factor_id=factor_id,
+            code=code,
+        )
+    except SupabaseAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code or 401,
+            detail="Invalid authenticator code",
+        ) from exc
+
+    token = SessionManager().create_token(
+        user.username, oidc_sub=user.oidc_sub if user.oidc_sub else None
+    )
+    set_session_cookie(response, token, request)
+    return {"username": user.username, "status": "ok"}
+
+
+@router.get("/mfa/status")
+async def mfa_status(_username: str = Depends(require_auth)) -> dict[str, object]:
+    """Return whether optional TOTP MFA is available / enrolled for the admin."""
+    if not _mfa_available():
+        return {"available": False, "enabled": False, "factors": []}
+
+    store = AuthStore()
+    user = store.get_user()
+    if user is None or not user.oidc_sub:
+        return {"available": True, "enabled": False, "factors": []}
+
+    from brokerai.auth.supabase_auth import (
+        SupabaseAuthError,
+        admin_list_factors,
+        verified_totp_factors,
+    )
+
+    try:
+        factors = await admin_list_factors(user.oidc_sub)
+    except SupabaseAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code or 502,
+            detail=str(exc),
+        ) from exc
+
+    totp = verified_totp_factors(factors)
+    return {
+        "available": True,
+        "enabled": bool(totp),
+        "factors": [
+            {
+                "id": str(factor.get("id") or ""),
+                "friendly_name": factor.get("friendly_name") or "Authenticator",
+                "factor_type": "totp",
+                "status": "verified",
+            }
+            for factor in totp
+            if factor.get("id")
+        ],
+    }
+
+
+@router.post("/mfa/enroll")
+async def mfa_enroll(
+    body: MfaPasswordRequest,
+    _username: str = Depends(require_auth),
+) -> dict[str, str]:
+    """Begin optional TOTP enrollment (requires current password)."""
+    _reject_when_oidc_enabled()
+    if not _mfa_available():
+        raise HTTPException(status_code=409, detail="Authenticator 2FA is not available")
+
+    from brokerai.auth.mfa_pending import MfaPendingManager
+    from brokerai.auth.supabase_auth import (
+        SupabaseAuthError,
+        admin_delete_factor,
+        admin_list_factors,
+        email_for_username,
+        mfa_enroll_totp,
+        normalize_totp_qr_code,
+        password_sign_in,
+        verified_totp_factors,
+        verify_access_token,
+    )
+
+    store = AuthStore()
+    user = store.get_user()
+    if user is None or not user.oidc_sub:
+        raise HTTPException(status_code=409, detail="Authenticator 2FA requires Supabase Auth")
+
+    try:
+        existing = await admin_list_factors(user.oidc_sub)
+    except SupabaseAuthError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+    if verified_totp_factors(existing):
+        raise HTTPException(status_code=409, detail="Authenticator 2FA is already enabled")
+
+    # Drop abandoned unverified enrollments so a fresh QR can be issued.
+    for factor in existing:
+        status = str(factor.get("status") or "").lower()
+        factor_id = str(factor.get("id") or "")
+        if status == "unverified" and factor_id:
+            await admin_delete_factor(user_id=user.oidc_sub, factor_id=factor_id)
+
+    try:
+        session = await password_sign_in(
+            email=user.email or email_for_username(user.username),
+            password=body.password,
+        )
+        access = str(session.get("access_token") or "")
+        if not access:
+            raise SupabaseAuthError("Sign-in did not return an access token", status_code=502)
+        claims = verify_access_token(access)
+        sub = str(claims.get("sub") or "")
+        if sub and sub != user.oidc_sub:
+            raise HTTPException(status_code=401, detail="Incorrect password")
+        enrolled = await mfa_enroll_totp(access_token=access)
+    except SupabaseAuthError as exc:
+        if exc.status_code in (400, 401):
+            raise HTTPException(status_code=401, detail="Incorrect password") from exc
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+    factor_id = str(enrolled.get("id") or "")
+    totp = enrolled.get("totp") if isinstance(enrolled.get("totp"), dict) else {}
+    qr_code = normalize_totp_qr_code(str(totp.get("qr_code") or ""))
+    secret = str(totp.get("secret") or "")
+    uri = str(totp.get("uri") or "")
+    if not factor_id or not (qr_code or secret):
+        raise HTTPException(status_code=502, detail="Authenticator enrollment failed")
+
+    enroll_token = MfaPendingManager().create(
+        username=user.username,
+        access_token=access,
+        purpose="enroll",
+        factor_id=factor_id,
+        oidc_sub=user.oidc_sub,
+    )
+    return {
+        "status": "pending",
+        "enroll_token": enroll_token,
+        "factor_id": factor_id,
+        "qr_code": qr_code,
+        "secret": secret,
+        "uri": uri,
+    }
+
+
+@router.post("/mfa/verify")
+async def mfa_verify_enroll(
+    body: MfaVerifyEnrollRequest,
+    _username: str = Depends(require_auth),
+) -> dict[str, str | bool]:
+    """Confirm TOTP enrollment with the first authenticator code."""
+    _reject_when_oidc_enabled()
+    from brokerai.auth.mfa_pending import MfaPendingManager
+    from brokerai.auth.supabase_auth import SupabaseAuthError, mfa_challenge_and_verify
+
+    pending = MfaPendingManager().verify(body.enroll_token.strip(), purpose="enroll")
+    if pending is None:
+        raise HTTPException(status_code=401, detail="Enrollment expired — start again")
+    factor_id = pending.get("factor_id")
+    if not factor_id:
+        raise HTTPException(status_code=400, detail="Enrollment is missing a factor")
+
+    store = AuthStore()
+    user = store.get_user()
+    if user is None or user.username != pending["username"]:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    code = "".join(ch for ch in body.code.strip() if ch.isdigit())
+    if len(code) < 6:
+        raise HTTPException(status_code=400, detail="Enter the 6-digit authenticator code")
+
+    try:
+        await mfa_challenge_and_verify(
+            access_token=pending["access_token"],
+            factor_id=factor_id,
+            code=code,
+        )
+    except SupabaseAuthError as exc:
+        raise HTTPException(
+            status_code=exc.status_code or 401,
+            detail="Invalid authenticator code",
+        ) from exc
+
+    return {"status": "enabled", "enabled": True, "factor_id": factor_id}
+
+
+@router.post("/mfa/disable")
+async def mfa_disable(
+    body: MfaDisableRequest,
+    _username: str = Depends(require_auth),
+) -> dict[str, str | bool]:
+    """Remove a verified TOTP factor (requires current password).
+
+    Uses the Auth Admin API after password verification so disable works even
+    when the password grant only yields ``aal1`` (user unenroll often needs
+    ``aal2``).
+    """
+    _reject_when_oidc_enabled()
+    if not _mfa_available():
+        raise HTTPException(status_code=409, detail="Authenticator 2FA is not available")
+
+    from brokerai.auth.supabase_auth import (
+        SupabaseAuthError,
+        admin_delete_factor,
+        admin_list_factors,
+        email_for_username,
+        password_sign_in,
+        verified_totp_factors,
+        verify_access_token,
+    )
+
+    store = AuthStore()
+    user = store.get_user()
+    if user is None or not user.oidc_sub:
+        raise HTTPException(status_code=409, detail="Authenticator 2FA requires Supabase Auth")
+
+    factor_id = body.factor_id.strip()
+    if not factor_id:
+        raise HTTPException(status_code=400, detail="factor_id is required")
+
+    try:
+        session = await password_sign_in(
+            email=user.email or email_for_username(user.username),
+            password=body.password,
+        )
+        access = str(session.get("access_token") or "")
+        if not access:
+            raise SupabaseAuthError("Sign-in did not return an access token", status_code=502)
+        claims = verify_access_token(access)
+        sub = str(claims.get("sub") or "")
+        if sub and sub != user.oidc_sub:
+            raise HTTPException(status_code=401, detail="Incorrect password")
+
+        # When MFA is enrolled, password grant stays at aal1 — still proves the
+        # password. Confirm the factor belongs to this user, then delete via admin.
+        factors = await admin_list_factors(user.oidc_sub)
+        if factor_id not in {str(f.get("id") or "") for f in verified_totp_factors(factors)}:
+            raise HTTPException(status_code=404, detail="Authenticator not found")
+        await admin_delete_factor(user_id=user.oidc_sub, factor_id=factor_id)
+    except SupabaseAuthError as exc:
+        if exc.status_code in (400, 401):
+            raise HTTPException(status_code=401, detail="Incorrect password") from exc
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+    return {"status": "disabled", "enabled": False}
 
 
 @router.post("/logout")
@@ -193,7 +662,18 @@ async def logout(response: Response) -> dict[str, str]:
 async def oidc_login(request: Request, response: Response) -> Response:
     if not is_oidc_mode():
         raise HTTPException(status_code=404, detail="OIDC auth is not enabled")
-    redirect_url = await OidcClient().build_login_redirect(request, response)
+    try:
+        redirect_url = await OidcClient().build_login_redirect(request, response)
+    except Exception as exc:
+        # Common when BROKERAI_AUTH_MODE=oidc but the IdP is unreachable.
+        logger.warning("OIDC login redirect failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Identity provider is unreachable. Check BROKERAI_OIDC_ISSUER "
+                "or set BROKERAI_AUTH_MODE=builtin."
+            ),
+        ) from exc
     response.status_code = 302
     response.headers["Location"] = redirect_url
     return response
@@ -218,8 +698,14 @@ async def oidc_callback(
         error=error,
         error_description=error_description,
     )
+    from brokerai.auth.onboarding import resolve_onboarding_status
+    from brokerai.auth.store import AuthStore
+
+    onboarding = resolve_onboarding_status(auth_complete=AuthStore().is_setup_complete())
     response.status_code = 302
-    response.headers["Location"] = "/"
+    response.headers["Location"] = (
+        "/setup" if not onboarding.get("onboarding_complete") else "/"
+    )
     return response
 
 
@@ -241,11 +727,14 @@ async def me(username: str = Depends(require_auth)) -> dict[str, str | bool | No
         and resolve_profile_photo_path(store.auth_dir, user.profile_photo)
     )
     mode = auth_mode()
+    first_name = user.first_name if user else None
+    last_name = user.last_name if user else None
     return {
         "username": username,
         "has_profile_photo": has_photo,
-        "first_name": user.first_name if user else None,
-        "last_name": user.last_name if user else None,
+        "display_name": first_name,
+        "first_name": first_name,
+        "last_name": last_name,
         "email": user.email if user else None,
         "auth_mode": mode,
         "identity_managed_by_idp": is_oidc_mode(),
@@ -311,9 +800,12 @@ async def change_username(
         return {"username": user.username, "status": "ok"}
 
     record = store.update_username(body.username)
+    await _sync_supabase_profile(record)
     await _provision_ssh_user(record.username, body.current_password)
 
-    token = SessionManager().create_token(record.username)
+    token = SessionManager().create_token(
+        record.username, oidc_sub=record.oidc_sub if record.oidc_sub else None
+    )
     set_session_cookie(response, token, request)
     return {"username": record.username, "status": "ok"}
 
@@ -336,6 +828,20 @@ async def change_password(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     store.update_password(hash_password(body.password))
+    from brokerai.auth.supabase_auth import (
+        SupabaseAuthError,
+        admin_update_password,
+        supabase_configured,
+    )
+
+    if supabase_configured() and user.oidc_sub:
+        try:
+            await admin_update_password(user_id=user.oidc_sub, password=body.password)
+        except SupabaseAuthError as exc:
+            raise HTTPException(
+                status_code=exc.status_code or 502,
+                detail=str(exc),
+            ) from exc
     await _update_ssh_password(user.username, body.password)
     return {"status": "ok"}
 
@@ -360,8 +866,10 @@ async def update_profile(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     record = store.update_profile(first_name, last_name)
+    await _sync_supabase_profile(record)
     return {
         "status": "ok",
+        "display_name": record.first_name,
         "first_name": record.first_name,
         "last_name": record.last_name,
     }

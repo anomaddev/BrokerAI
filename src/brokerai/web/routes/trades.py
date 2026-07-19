@@ -124,7 +124,7 @@ async def get_trade_reconciliation(
     if not access_token or not account_id:
         payload = unconfigured_reconciliation()
         payload["local_open_count"] = len(local_lots)
-        payload["mongo_open_count"] = len(local_lots)
+        payload["ledger_open_count"] = len(local_lots)
         payload["unmatched_local"] = local_lots
         payload["unmatched_ledger"] = local_lots
         payload["lot_badges"] = {str(t.get("id", "")): "local_only" for t in local_lots}

@@ -37,7 +37,7 @@ def prepare_params(preset: StrategyPreset, raw: dict[str, Any]) -> dict[str, Any
 
 
 def normalize_stored_params(preset: StrategyPreset, stored: dict[str, Any] | None) -> dict[str, Any]:
-    """Normalize params read from MongoDB."""
+    """Normalize params read from Postgres strategy docs."""
     if not stored:
         if preset.id == "custom":
             return dict(preset.default_params)

@@ -108,6 +108,15 @@ def validate_indicator(
         oversold = data.get("oversold", 30)
         normalized["overbought"] = _require_number(overbought, f"{field}.overbought")
         normalized["oversold"] = _require_number(oversold, f"{field}.oversold")
+
+    # Optional chart display color (UI-only; ignored by the signal engine).
+    color_raw = data.get("color")
+    if color_raw is not None:
+        color = _require_str(color_raw, f"{field}.color")
+        if len(color) > 64:
+            raise ParamsValidationError(f"{field}.color must be <= 64 characters", field=f"{field}.color")
+        normalized["color"] = color
+
     return normalized
 
 
@@ -168,6 +177,33 @@ def validate_filter(
     return normalized
 
 
+def validate_additional_timeframes(value: Any, *, primary: str) -> list[str] | None:
+    """Optional extra candle timeframes to fetch alongside the primary."""
+    if value is None:
+        return None
+    raw = _require_list(value, "additional_timeframes")
+    if not raw:
+        return None
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for index, item in enumerate(raw):
+        field = f"additional_timeframes[{index}]"
+        tf = _require_str(item, field)
+        if tf not in TIMEFRAMES:
+            raise ParamsValidationError(f"Unknown timeframe: {tf}", field=field)
+        if tf == primary:
+            raise ParamsValidationError(
+                "additional_timeframes must not include the primary timeframe",
+                field=field,
+            )
+        if tf in seen:
+            raise ParamsValidationError(f"Duplicate timeframe: {tf}", field=field)
+        seen.add(tf)
+        ordered.append(tf)
+    return ordered
+
+
 def validate_timeframe(value: Any) -> str:
     if value is not None and value != "":
         return _normalize_timeframe(value, field="timeframe")
@@ -189,7 +225,10 @@ def validate_exits(
     sl_mode = _require_str(stop_loss.get("mode"), f"{field}.stop_loss.mode")
     if sl_mode not in STOP_LOSS_MODES:
         raise ParamsValidationError(f"Unknown stop loss mode: {sl_mode}", field=f"{field}.stop_loss.mode")
-    sl_normalized: dict[str, Any] = {"mode": sl_mode}
+    sl_normalized: dict[str, Any] = {
+        "enabled": _require_bool(stop_loss.get("enabled", True), f"{field}.stop_loss.enabled"),
+        "mode": sl_mode,
+    }
     if "atr_multiplier" in stop_loss:
         sl_normalized["atr_multiplier"] = _require_number(
             stop_loss["atr_multiplier"], f"{field}.stop_loss.atr_multiplier"
@@ -218,7 +257,10 @@ def validate_exits(
             field=f"{field}.take_profit.mode",
         )
 
-    tp_normalized: dict[str, Any] = {"mode": tp_mode}
+    tp_normalized: dict[str, Any] = {
+        "enabled": _require_bool(take_profit_raw.get("enabled", True), f"{field}.take_profit.enabled"),
+        "mode": tp_mode,
+    }
     if tp_mode in {"fixed_pips", "rr_ratio", "atr_based"}:
         if "risk_reward_ratio" in take_profit_raw:
             tp_normalized["risk_reward_ratio"] = _require_number(
@@ -381,11 +423,14 @@ def validate_signal_ema_crossover(
 
     fast_period = indicators[fast_ref]["period"]
     slow_period = indicators[slow_ref]["period"]
-    if fast_period >= slow_period:
+    if fast_period == slow_period:
         raise ParamsValidationError(
             "fast indicator period must be less than slow indicator period",
             field=field,
         )
+    # Auto-correct reversed assignments (lower period belongs on fast).
+    if fast_period > slow_period:
+        fast_ref, slow_ref = slow_ref, fast_ref
 
     direction = _require_str(data.get("direction"), f"{field}.direction")
     if direction not in DIRECTIONS:

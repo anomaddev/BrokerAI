@@ -32,9 +32,16 @@ from brokerai.bots.researcher.reports import (
 )
 from brokerai.bots.researcher.sources import resolve_sources
 from brokerai.config.settings import get_settings
-from brokerai.db.repositories.ai_models import AiModelsRepository
+from brokerai.db.repositories.ai_models import AiModelsRepository, bind_source_model
 from brokerai.db.repositories.data_connections import DataConnectionsRepository
 from brokerai.db.repositories.research_cache import ResearchCacheRepository
+from brokerai.bots.researcher.report_store import get_report_store
+from brokerai.db.repositories.research_report_reads import (
+    ResearchReportReadsRepository,
+    is_countable_report_type,
+    is_unread,
+    unread_group,
+)
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
 from brokerai.research_markets import describe_close_schedule, describe_schedule, describe_weekly_brief_schedule
 
@@ -68,6 +75,12 @@ def _skipped_ok(reason: str) -> RunResult:
     return RunResult(ok=True, skipped_reason=reason)
 
 
+def _model_identity(model: dict | None) -> tuple[str | None, str | None]:
+    if not model:
+        return None, None
+    return model.get("id"), model.get("model_name")
+
+
 def _resolve_contributors(
     settings: dict, models_by_id: dict[str, dict]
 ) -> list[tuple[dict, dict]]:
@@ -78,7 +91,7 @@ def _resolve_contributors(
             continue
         model = models_by_id.get(entry.get("model_id"))
         if model and model.get("enabled"):
-            resolved.append((entry, model))
+            resolved.append((entry, bind_source_model(model, entry.get("model_name"))))
     return resolved
 
 
@@ -95,7 +108,7 @@ def _resolve_synthesis(
             return None, "Synthesis model no longer exists; pick one in Settings → Daily Reports"
         if not model.get("enabled"):
             return None, f"Synthesis model '{model.get('title')}' is disabled"
-        return model, None
+        return bind_source_model(model, settings.get("synthesis_model_name")), None
 
     if len(contributors) <= 1:
         return None, None
@@ -122,7 +135,7 @@ def _needs_synthesis_llm(
     if len(contributor_reports) <= 1:
         if len(contributors) == 1:
             sole_contributor = contributors[0][1]
-            return sole_contributor.get("id") != synthesis_model.get("id")
+            return _model_identity(sole_contributor) != _model_identity(synthesis_model)
         # Multiple contributors configured but only one produced output — nothing to merge.
         return False
 
@@ -139,11 +152,15 @@ def _skip_per_model_daily_report(
     if synthesis_model is None:
         return True
     sole_contributor = contributors[0][1]
-    return sole_contributor.get("id") == synthesis_model.get("id")
+    return _model_identity(sole_contributor) == _model_identity(synthesis_model)
 
 
 def _model_label(model: dict) -> str:
-    return model.get("title") or model.get("model_name") or model.get("id") or "Model"
+    title = model.get("title") or model.get("id") or "Model"
+    name = model.get("model_name")
+    if name and name != title:
+        return f"{title} · {name}"
+    return title or model.get("model_name") or model.get("id") or "Model"
 
 
 async def get_research_status() -> dict:
@@ -204,7 +221,7 @@ async def get_research_status() -> dict:
             settings.get("weekly_debrief_market_offset_hours", 1),
         ),
         "reports_dir": str(reports_dir()),
-        "report_count": len(list_reports(limit=100)),
+        "report_count": len(await list_reports(limit=100)),
     }
 
 
@@ -294,7 +311,7 @@ async def run_daily_report(
         return RunResult(ok=False, skipped_reason="Daily reports are disabled")
 
     if not force and (
-        settings.get("last_daily_run_date") == today or daily_report_exists(today)
+        settings.get("last_daily_run_date") == today or await daily_report_exists(today)
     ):
         return RunResult(ok=False, skipped_reason=f"Daily report already exists for {today}")
 
@@ -332,7 +349,7 @@ async def run_daily_report(
         return _skipped_ok(broker_skip)
 
     forex_target = _runnable_forex_target(broker_targets)
-    historical_context = load_historical_weekly_debriefs(today_date, max_weeks=8)
+    historical_context = await load_historical_weekly_debriefs(today_date, max_weeks=8)
     market_closed = is_market_closed(today_date)
     pending_sections = non_forex_pending_sections(broker_targets)
 
@@ -429,7 +446,7 @@ async def run_daily_report(
             + section.sections
             + pending_sections
         )
-        path = write_model_daily_report(
+        path = await write_model_daily_report(
             "\n".join(body_lines).strip(),
             report_date=today,
             slug=model_report_slug(model),
@@ -483,7 +500,7 @@ async def run_daily_report(
     final_sections = [*header, final_forex, "", *pending_sections]
 
     _emit_progress(on_progress, "write", "Saving report…", 95)
-    report_path = write_daily_report("\n".join(final_sections).strip(), report_date=today)
+    report_path = await write_daily_report("\n".join(final_sections).strip(), report_date=today)
     await settings_repo.set_last_daily_run_date(today)
 
     cache_repo = ResearchCacheRepository()
@@ -561,25 +578,105 @@ async def _build_final_forex(
         return note, f"Synthesis ({_model_label(synthesis_model)}): {exc}"
 
 
-def list_report_entries(limit: int = 200) -> list[dict]:
-    return [
-        {
-            "filename": r.filename,
-            "date": r.date,
-            "type": r.report_type,
-            "path": r.path,
-            "model_label": r.model_label,
-            "generated_at": r.generated_at,
-            "reasoning_effort": r.reasoning_effort,
-            "size_bytes": r.size_bytes,
-        }
-        for r in list_reports(limit=limit)
+async def list_report_entries(user_id: str, limit: int = 200) -> list[dict]:
+    reads = await ResearchReportReadsRepository().get_reads(user_id)
+    entries: list[dict] = []
+    for r in await list_reports(limit=limit):
+        unread = is_unread(r.report_type, r.filename, r.generated_at, reads)
+        entries.append(
+            {
+                "filename": r.filename,
+                "date": r.date,
+                "type": r.report_type,
+                "path": r.path,
+                "model_label": r.model_label,
+                "generated_at": r.generated_at,
+                "reasoning_effort": r.reasoning_effort,
+                "size_bytes": r.size_bytes,
+                "is_read": not unread,
+            }
+        )
+    return entries
+
+
+async def count_unread_reports(user_id: str, limit: int = 200) -> dict[str, int]:
+    """Count countable unread reports, split into daily / weekly groups."""
+    reads = await ResearchReportReadsRepository().get_reads(user_id)
+    daily = 0
+    weekly = 0
+    for r in await list_reports(limit=limit):
+        if not is_unread(r.report_type, r.filename, r.generated_at, reads):
+            continue
+        group = unread_group(r.report_type)
+        if group == "daily":
+            daily += 1
+        elif group == "weekly":
+            weekly += 1
+    return {
+        "unread_count": daily + weekly,
+        "daily": daily,
+        "weekly": weekly,
+    }
+
+
+async def mark_report_read(user_id: str, identifier: str) -> dict:
+    """Mark a countable report as read and return updated unread counts."""
+    meta = await report_meta(identifier)
+    if meta is None:
+        raise FileNotFoundError(f"Report not found: {identifier}")
+    if not is_countable_report_type(meta.report_type):
+        raise ValueError(f"Report type is not countable: {meta.report_type}")
+    await ResearchReportReadsRepository().mark_read(
+        user_id, meta.filename, meta.generated_at
+    )
+    counts = await count_unread_reports(user_id)
+    return {
+        "ok": True,
+        "filename": meta.filename,
+        **counts,
+    }
+
+
+async def mark_report_unread(user_id: str, identifier: str) -> dict:
+    """Clear read state for a report and return updated unread counts."""
+    meta = await report_meta(identifier)
+    if meta is None:
+        raise FileNotFoundError(f"Report not found: {identifier}")
+    if not is_countable_report_type(meta.report_type):
+        raise ValueError(f"Report type is not countable: {meta.report_type}")
+    await ResearchReportReadsRepository().clear_read(user_id, meta.filename)
+    counts = await count_unread_reports(user_id)
+    return {
+        "ok": True,
+        "filename": meta.filename,
+        **counts,
+    }
+
+
+async def mark_all_reports_read(
+    user_id: str,
+    *,
+    filenames: list[str] | None = None,
+    limit: int = 200,
+) -> dict:
+    """Mark all countable (or listed) reports as read for ``user_id``."""
+    reports = await list_reports(limit=limit)
+    if filenames is not None:
+        wanted = {f.strip() for f in filenames if f and f.strip()}
+        reports = [r for r in reports if r.filename in wanted]
+    entries = [
+        (r.filename, r.generated_at)
+        for r in reports
+        if is_countable_report_type(r.report_type)
     ]
+    await ResearchReportReadsRepository().mark_all_read(user_id, entries)
+    counts = await count_unread_reports(user_id)
+    return {"ok": True, "marked": len(entries), **counts}
 
 
 async def delete_report_entry(identifier: str) -> dict:
     """Delete a report and apply related cleanup for synthesized daily reports."""
-    meta = report_meta(identifier)
+    meta = await report_meta(identifier)
     if meta is None:
         raise FileNotFoundError(f"Report not found: {identifier}")
 
@@ -592,7 +689,8 @@ async def delete_report_entry(identifier: str) -> dict:
         await cache_repo.delete_one(meta.date, "forex-synthesis")
         await cache_repo.delete_one(meta.date, "signals-snapshot")
 
-    deleted = delete_report(identifier)
+    deleted = await delete_report(identifier)
+    await ResearchReportReadsRepository().clear_read(None, deleted.filename)
     return {
         "filename": deleted.filename,
         "date": deleted.date,
@@ -617,15 +715,35 @@ async def get_signals_snapshot() -> dict:
     return await build_signals_snapshot()
 
 
-def read_report_content(identifier: str) -> dict:
-    filename, content = read_report(identifier)
-    meta = report_meta(identifier)
-    return {
-        "filename": filename,
-        "content": content,
-        "date": meta.date if meta else None,
-        "type": meta.report_type if meta else None,
-        "model_label": meta.model_label if meta else None,
-        "generated_at": meta.generated_at if meta else None,
-        "reasoning_effort": meta.reasoning_effort if meta else None,
+async def read_report_content(identifier: str, *, prefer_signed_url: bool = True) -> dict:
+    meta = await report_meta(identifier)
+    if meta is None:
+        raise FileNotFoundError(f"Report not found: {identifier}")
+
+    store = get_report_store()
+    payload: dict = {
+        "filename": meta.filename,
+        "date": meta.date,
+        "type": meta.report_type,
+        "model_label": meta.model_label,
+        "generated_at": meta.generated_at,
+        "reasoning_effort": meta.reasoning_effort,
+        "path": meta.path,
+        "uses_storage": store.uses_storage,
     }
+
+    if prefer_signed_url and store.uses_storage:
+        from brokerai.bots.researcher.reports import create_report_signed_url
+
+        signed = await create_report_signed_url(meta.filename)
+        if signed:
+            payload["signed_url"] = signed
+            payload["expires_in"] = 3600
+            payload["content"] = None
+            return payload
+
+    _, content = await read_report(meta.filename)
+    payload["content"] = content
+    payload["signed_url"] = None
+    return payload
+

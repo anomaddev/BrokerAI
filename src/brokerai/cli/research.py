@@ -126,7 +126,7 @@ def _cmd_research_run_weekly_debrief(args: argparse.Namespace) -> int:
 
 
 def _cmd_research_list(args: argparse.Namespace) -> int:
-    reports = list_report_entries(limit=args.limit)
+    reports = asyncio.run(list_report_entries("cli", limit=args.limit))
     if args.json:
         print_json({"reports": reports})
     elif not reports:
@@ -139,7 +139,9 @@ def _cmd_research_list(args: argparse.Namespace) -> int:
 
 def _cmd_research_show(args: argparse.Namespace) -> int:
     try:
-        payload = read_report_content(args.identifier)
+        payload = asyncio.run(
+            read_report_content(args.identifier, prefer_signed_url=False)
+        )
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -147,7 +149,7 @@ def _cmd_research_show(args: argparse.Namespace) -> int:
     if args.json:
         print_json(payload)
     else:
-        print(payload["content"])
+        print(payload.get("content") or "")
     return 0
 
 

@@ -24,7 +24,7 @@ def test_reconcile_matches_by_broker_order_id():
     ]
     result = reconcile_open_trades(ledger, broker)
     assert result["status"] == "matched"
-    assert result["mongo_open_count"] == 1
+    assert result["ledger_open_count"] == 1
     assert result["broker_open_count"] == 1
     assert result["ledger_badges"]["ledger-1"] == "matched"
     assert result["ledger_market"]["ledger-1"] == {

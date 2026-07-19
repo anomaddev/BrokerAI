@@ -13,6 +13,8 @@ type SignalSectionProps = {
   signalType: SignalCatalogType | "";
   onSignalTypeChange?: (value: SignalCatalogType | "") => void;
   locked?: boolean;
+  /** When true, EMA periods are managed elsewhere (Indicators components). */
+  hideEmaFields?: boolean;
   fastEma: number;
   slowEma: number;
   onFastEmaChange: (value: number) => void;
@@ -25,13 +27,14 @@ export default function SignalSection({
   signalType,
   onSignalTypeChange,
   locked = false,
+  hideEmaFields = false,
   fastEma,
   slowEma,
   onFastEmaChange,
   onSlowEmaChange,
 }: SignalSectionProps) {
   const emaInvalid = signalType === "ema_crossover" && fastEma >= slowEma;
-  const showEmaFields = signalType === "ema_crossover";
+  const showEmaFields = signalType === "ema_crossover" && !hideEmaFields;
   const selectedEntry = signalType ? findSignalCatalogEntry(signalType) : undefined;
 
   return (

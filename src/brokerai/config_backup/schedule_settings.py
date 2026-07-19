@@ -7,7 +7,8 @@ from zoneinfo import ZoneInfo
 
 from brokerai.auth.general_settings import is_valid_timezone
 from brokerai.auth.store import AuthStore
-from brokerai.db.client import get_db
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import BackupSettingsRow
 from brokerai.research_markets import (
     DEFAULT_DAILY_REPORT_MARKET_ID,
     DEFAULT_DAILY_REPORT_MARKET_OFFSET_HOURS,
@@ -175,20 +176,20 @@ def schedule_settings_payload(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 async def get_backup_schedule_settings() -> dict[str, Any]:
-    handle = await get_db()
-    doc = await handle.db[COLLECTION].find_one({"id": SINGLETON_ID}, {"_id": 0})
-    return normalize_schedule_settings(doc)
+    async with session_scope() as session:
+        row = await session.get(BackupSettingsRow, SINGLETON_ID)
+        return normalize_schedule_settings(dict(row.doc) if row else None)
 
 
 async def save_backup_schedule_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current = await get_backup_schedule_settings()
     merged = normalize_schedule_settings({**current, **updates, "id": SINGLETON_ID})
-    handle = await get_db()
-    await handle.db[COLLECTION].update_one(
-        {"id": SINGLETON_ID},
-        {"$set": merged},
-        upsert=True,
-    )
+    async with session_scope() as session:
+        row = await session.get(BackupSettingsRow, SINGLETON_ID)
+        if row is None:
+            session.add(BackupSettingsRow(id=SINGLETON_ID, doc=merged))
+        else:
+            row.doc = merged
     return merged
 
 
@@ -260,9 +261,12 @@ def is_scheduled_backup_due(
 
 async def mark_scheduled_backup_ran(*, when: datetime | None = None) -> None:
     stamp = (when or _now()).isoformat()
-    handle = await get_db()
-    await handle.db[COLLECTION].update_one(
-        {"id": SINGLETON_ID},
-        {"$set": {"last_scheduled_at": stamp}},
-        upsert=True,
-    )
+    async with session_scope() as session:
+        row = await session.get(BackupSettingsRow, SINGLETON_ID)
+        if row is None:
+            doc = normalize_schedule_settings({"id": SINGLETON_ID, "last_scheduled_at": stamp})
+            session.add(BackupSettingsRow(id=SINGLETON_ID, doc=doc))
+        else:
+            doc = dict(row.doc)
+            doc["last_scheduled_at"] = stamp
+            row.doc = doc

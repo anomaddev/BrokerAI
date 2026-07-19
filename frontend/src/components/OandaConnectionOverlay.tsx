@@ -48,6 +48,9 @@ export default function OandaConnectionOverlay({
         access_token: accessToken,
         environment,
       });
+      if (result.suggested_environment) {
+        setEnvironment(result.suggested_environment);
+      }
       if (result.ok) {
         setAccounts(result.accounts);
         setAccountId((current) => {
@@ -60,6 +63,9 @@ export default function OandaConnectionOverlay({
           }
           return current;
         });
+        if (result.suggested_environment) {
+          setMessage(result.message);
+        }
       } else {
         setAccounts([]);
         setError(result.message);
@@ -91,6 +97,9 @@ export default function OandaConnectionOverlay({
         access_token: accessToken,
         environment,
       });
+      if (result.suggested_environment) {
+        setEnvironment(result.suggested_environment);
+      }
       if (result.ok) {
         setAccounts(result.accounts);
         if (!accountId && result.accounts.length > 0) {
@@ -98,7 +107,10 @@ export default function OandaConnectionOverlay({
         }
         setMessage(result.message);
       } else {
-        setError(result.message);
+        const length = result.diagnostics?.token_length;
+        setError(
+          length != null ? `${result.message} (received ${length} characters)` : result.message,
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Test failed");
@@ -163,8 +175,8 @@ export default function OandaConnectionOverlay({
           </div>
         </div>
         <p className="model-overlay-desc">
-          Forex and CFD trading via the OANDA REST-v20 API. Generate a personal access token from
-          your OANDA account under My Services → Manage API Access.
+          Forex and CFD trading via the OANDA REST-v20 API. In OANDA Hub: Tools → API → Generate,
+          then copy the full key and match Environment to that login (Practice vs Live).
         </p>
         <div className="settings-form model-overlay-form">
           <label>

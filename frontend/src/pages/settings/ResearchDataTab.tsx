@@ -138,6 +138,7 @@ export default function ResearchDataTab() {
     const saved = await api.saveResearchSettings({
       contributor_models: base.contributor_models,
       synthesis_model_id: base.synthesis_model_id,
+      synthesis_model_name: base.synthesis_model_name,
       synthesis_reasoning_effort: base.synthesis_reasoning_effort,
       data_sources: derivedDataSources,
       daily_report_enabled: base.daily_report_enabled,
@@ -365,7 +366,7 @@ export default function ResearchDataTab() {
               {capabilityModels.length === 0 ? (
                 <div className="research-empty-callout">
                   <p className="settings-muted">
-                    No enabled models with search capabilities. Add a Grok model under{" "}
+                    No enabled sources with search capabilities. Add Grok under{" "}
                     <Link to="/settings/models">Settings → Models</Link>.
                   </p>
                 </div>
@@ -397,7 +398,7 @@ export default function ResearchDataTab() {
                           <span className="research-model-checklist-meta">
                             <span className="research-model-checklist-title">{model.title}</span>
                             <span className="settings-muted">
-                              {providerLabel(model.type)} · {model.model_name}
+                              {providerLabel(model.type)}
                               {connection && !connection.api_key_set ? " · API key missing" : ""}
                             </span>
                           </span>

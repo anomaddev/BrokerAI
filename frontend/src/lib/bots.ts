@@ -91,8 +91,11 @@ export function computeOverallStatus(input: {
   enabledTradingSessions: ForexTradingSessions;
   marketAvailable: boolean;
   marketServerTime?: string;
+  /** When false, trading is off (e.g. post-setup with no asset classes enabled). */
+  anyAssetClassEnabled?: boolean;
 }): OverallBotStatus {
   if (!input.orchestratorRunning) return "stopped";
+  if (input.anyAssetClassEnabled === false) return "stopped";
   if (input.bots.some((bot) => bot.state === "error")) return "error";
 
   const sessionOptions = {
@@ -132,6 +135,8 @@ export function overallStatusTone(status: OverallBotStatus): OverallBotStatus {
 export function resolveOverallStatusTooltip(input: {
   status: OverallBotStatus;
   bots: BotStatusItem[];
+  orchestratorRunning?: boolean;
+  anyAssetClassEnabled?: boolean;
 }): { title: string; lines: string[] } {
   const title = `Bot: ${overallStatusLabel(input.status)}`;
   const lines: string[] = [];
@@ -143,7 +148,11 @@ export function resolveOverallStatusTooltip(input: {
   } else if (input.status === "running") {
     lines.push("At least one enabled trading session is active.");
   } else if (input.status === "stopped") {
-    lines.push("Orchestrator is offline.");
+    if (input.orchestratorRunning && input.anyAssetClassEnabled === false) {
+      lines.push("No asset classes are enabled for trading.");
+    } else {
+      lines.push("Orchestrator is offline.");
+    }
   }
 
   const sortedBots = sortBots(input.bots);

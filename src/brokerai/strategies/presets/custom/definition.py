@@ -11,12 +11,14 @@ DEFAULT_PARAMS: dict = {
     "filters": [],
     "exits": {
         "stop_loss": {
+            "enabled": False,
             "mode": "atr_based",
             "atr_multiplier": 1.5,
             "fixed_pips": 15,
             "structure_lookback": 10,
         },
         "take_profit": {
+            "enabled": False,
             "mode": "rr_ratio",
             "risk_reward_ratio": 2.0,
             "fixed_pips": 30,

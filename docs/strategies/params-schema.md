@@ -1,6 +1,8 @@
 # Strategy Params Schema (v1)
 
-BrokerAI stores strategy configuration in MongoDB as structured **StrategyParams v1** documents. Every preset (EMA Crossover today, others later) uses the same top-level sections. Presets differ by which indicator types, signal types, and filter types they populate inside those sections—not by inventing new top-level keys.
+BrokerAI stores strategy configuration in Postgres (`brokerai.strategies`) as a JSONB `doc` whose `params` field is a structured **StrategyParams v1** object. Every preset (EMA Crossover today, others later) uses the same top-level sections. Presets differ by which indicator types, signal types, and filter types they populate inside those sections—not by inventing new top-level keys.
+
+Access is via the FastAPI app only: schema `brokerai` is not exposed to Supabase PostgREST (`anon` / `authenticated`). RLS is enabled with no policies as deny-by-default defense in depth.
 
 ## Why sections?
 
@@ -15,6 +17,7 @@ BrokerAI stores strategy configuration in MongoDB as structured **StrategyParams
 {
   "schema_version": 1,
   "timeframe": "M15",
+  "additional_timeframes": ["H1", "H4"],
   "min_candles": 63,
   "indicators": { },
   "signal": { },
@@ -30,7 +33,9 @@ BrokerAI stores strategy configuration in MongoDB as structured **StrategyParams
 | Section | Type | Purpose |
 |---------|------|---------|
 | `schema_version` | `integer` | Must be `1`. Increment on breaking changes. |
-| `timeframe` | `string` | Bar interval: `M5`, `M15`, `M30`, `H1`, `H4`, `D1` |
+| `timeframe` | `string` | Primary bar interval (`M1`…`MN`; see constants) |
+| `additional_timeframes` | `string[]` | Optional extra TFs to fetch (must not include primary) |
+| `min_candles` | `integer` | Warm-up bars required before the strategy runs |
 | `indicators` | `object` | Map of logical id → indicator spec |
 | `signal` | `object` | Entry logic; `type` discriminates preset signal |
 | `filters` | `array` | Ordered AND chain of filter specs |
@@ -41,7 +46,7 @@ BrokerAI stores strategy configuration in MongoDB as structured **StrategyParams
 ### Naming rules
 
 - Sections and fields: **snake_case**
-- Indicator map keys: short logical ids (`fast`, `slow`, `trend`)
+- Indicator map keys: stable ids (`fast`/`slow` for legacy defaults, or builder component ids like `ema_*`)
 - Filter items: stable `id` + `type` discriminator
 - Signal references indicators via `*_ref` fields
 - Percent fields: suffix `_pct` (e.g. `risk_per_trade_pct`)
@@ -84,10 +89,11 @@ Map of **id → spec**. Each spec has a `type` discriminator.
 | `type` | `"ema"` | required | — |
 | `period` | integer | — | preset-specific (EMA: fast 3–50, slow 10–200) |
 | `source` | string | `"close"` | `close`, `open`, `high`, `low`, `hl2`, `hlc3`, `ohlc4` |
+| `color` | string | omitted | Optional chart color (UI-only; ignored by the engine) |
 
 #### `sma`
 
-Same fields as `ema` with `type: "sma"`.
+Same fields as `ema` with `type: "sma"` (including optional `color`).
 
 #### `rsi`
 
@@ -208,9 +214,9 @@ Note: `max_trades_per_day` is stored under `risk` but displayed in the Execution
 
 ---
 
-## Strategy document (MongoDB)
+## Strategy document (Postgres)
 
-Stored in the `strategies` collection alongside params:
+Rows live in `brokerai.strategies` with denormalized columns (`id`, `asset_class`, `name`, `enabled`, `preset_id`) plus a JSONB `doc` containing the full strategy document (including `params`):
 
 ```json
 {
@@ -223,7 +229,7 @@ Stored in the `strategies` collection alongside params:
   "instrument_selection": { "forex": ["EUR/USD"] },
   "strategy_type": "preset",
   "preset_id": "ema_crossover",
-  "route": "/trading/strategies/new/ema-crossover",
+  "route": "/research/strategies/new/ema-crossover",
   "params": { },
   "params_schema_version": 1,
   "stats": { },
@@ -231,6 +237,10 @@ Stored in the `strategies` collection alongside params:
   "updated_at": "..."
 }
 ```
+
+One-shot repair for docs written before indicator replace-merge:
+
+`./venv/bin/python scripts/cleanup_strategy_orphan_indicators.py --dry-run`
 
 ---
 

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # How long to suppress strategy reloads after a stable idle skip (no strategies,
 # watches, or registered candle demand). Recheck periodically so config changes
-# are picked up without polling MongoDB every secretary tick.
+# are picked up without polling Postgres every secretary tick.
 _PIPELINE_IDLE_RECHECK = timedelta(seconds=60)
 
 

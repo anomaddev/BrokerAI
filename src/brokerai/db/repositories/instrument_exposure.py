@@ -4,7 +4,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from brokerai.db.client import get_db
+from sqlalchemy import delete, select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import InstrumentExposureRow
 from brokerai.trading.analysis_runs import _format_dt
 from brokerai.trading.broker.models import InstrumentExposure, PositionLot
 
@@ -66,25 +69,36 @@ class InstrumentExposureRepository:
     COLLECTION = "instrument_exposure"
 
     async def upsert_rollup(self, exposure: InstrumentExposure, *, account_id: str) -> None:
-        handle = await get_db()
         now = datetime.now(timezone.utc)
-        key = {
-            "exchange_id": exposure.exchange_id,
-            "account_id": account_id,
-            "symbol": exposure.symbol,
-            "direction": exposure.direction,
-        }
         doc = {
             **exposure.to_dict(),
             "account_id": account_id,
             "updated_at": now,
         }
-        existing = await handle.db[self.COLLECTION].find_one(key, {"_id": 0, "created_at": 1})
-        if existing:
-            doc["created_at"] = existing.get("created_at", now)
-        else:
-            doc["created_at"] = now
-        await handle.db[self.COLLECTION].update_one(key, {"$set": doc}, upsert=True)
+
+        async with session_scope() as session:
+            stmt = select(InstrumentExposureRow).where(
+                InstrumentExposureRow.exchange_id == exposure.exchange_id,
+                InstrumentExposureRow.account_id == account_id,
+                InstrumentExposureRow.symbol == exposure.symbol,
+                InstrumentExposureRow.direction == exposure.direction,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                doc["created_at"] = now
+                session.add(
+                    InstrumentExposureRow(
+                        exchange_id=exposure.exchange_id,
+                        account_id=account_id,
+                        symbol=exposure.symbol,
+                        direction=exposure.direction,
+                        doc=doc,
+                    )
+                )
+            else:
+                existing = dict(row.doc)
+                doc["created_at"] = existing.get("created_at", now)
+                row.doc = doc
 
     async def recompute_for_account(
         self,
@@ -94,10 +108,13 @@ class InstrumentExposureRepository:
         open_lots: list[dict[str, Any]],
     ) -> int:
         """Rebuild all exposure rollups for an account from open lot documents."""
-        handle = await get_db()
-        await handle.db[self.COLLECTION].delete_many(
-            {"exchange_id": exchange_id, "account_id": account_id},
-        )
+        async with session_scope() as session:
+            await session.execute(
+                delete(InstrumentExposureRow).where(
+                    InstrumentExposureRow.exchange_id == exchange_id,
+                    InstrumentExposureRow.account_id == account_id,
+                )
+            )
         rollups = _rollup_from_lot_docs(open_lots, exchange_id=exchange_id)
         for rollup in rollups:
             await self.upsert_rollup(rollup, account_id=account_id)
@@ -109,13 +126,17 @@ class InstrumentExposureRepository:
         exchange_id: str,
         account_id: str,
     ) -> list[dict[str, Any]]:
-        handle = await get_db()
-        cursor = handle.db[self.COLLECTION].find(
-            {"exchange_id": exchange_id, "account_id": account_id},
-            {"_id": 0},
-        ).sort([("symbol", 1), ("direction", 1)])
-        rows = await cursor.to_list(length=500)
-        return [serialize_exposure_rollup(row) for row in rows]
+        async with session_scope() as session:
+            stmt = (
+                select(InstrumentExposureRow)
+                .where(
+                    InstrumentExposureRow.exchange_id == exchange_id,
+                    InstrumentExposureRow.account_id == account_id,
+                )
+                .order_by(InstrumentExposureRow.symbol, InstrumentExposureRow.direction)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [serialize_exposure_rollup(dict(row.doc)) for row in rows]
 
     async def get_for_symbol(
         self,
@@ -125,26 +146,27 @@ class InstrumentExposureRepository:
         symbol: str,
         direction: str | None = None,
     ) -> InstrumentExposure | None:
-        handle = await get_db()
-        query: dict[str, Any] = {
-            "exchange_id": exchange_id,
-            "account_id": account_id,
-            "symbol": symbol,
-        }
-        if direction:
-            query["direction"] = direction.lower()
-        doc = await handle.db[self.COLLECTION].find_one(query, {"_id": 0})
-        if not doc:
-            return None
-        return InstrumentExposure(
-            exchange_id=str(doc.get("exchange_id") or exchange_id),
-            symbol=str(doc.get("symbol") or symbol),
-            direction=str(doc.get("direction") or "long"),
-            total_qty=float(doc.get("total_qty") or 0),
-            average_price=doc.get("average_price"),
-            unrealized_pl=doc.get("unrealized_pl"),
-            broker_lot_ids=list(doc.get("broker_lot_ids") or []),
-        )
+        async with session_scope() as session:
+            stmt = select(InstrumentExposureRow).where(
+                InstrumentExposureRow.exchange_id == exchange_id,
+                InstrumentExposureRow.account_id == account_id,
+                InstrumentExposureRow.symbol == symbol,
+            )
+            if direction:
+                stmt = stmt.where(InstrumentExposureRow.direction == direction.lower())
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if not row:
+                return None
+            doc = dict(row.doc)
+            return InstrumentExposure(
+                exchange_id=str(doc.get("exchange_id") or exchange_id),
+                symbol=str(doc.get("symbol") or symbol),
+                direction=str(doc.get("direction") or "long"),
+                total_qty=float(doc.get("total_qty") or 0),
+                average_price=doc.get("average_price"),
+                unrealized_pl=doc.get("unrealized_pl"),
+                broker_lot_ids=list(doc.get("broker_lot_ids") or []),
+            )
 
     @staticmethod
     def rollups_to_local_by_key(

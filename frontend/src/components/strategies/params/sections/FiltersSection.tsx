@@ -1,8 +1,9 @@
 import ParameterCard from "../ParameterCard";
 import ParamToggleRow from "../ParamToggleRow";
+import ParamHelpTip from "../ParamHelpTip";
 import NumberStepper from "../NumberStepper";
 import LiveSlider from "../LiveSlider";
-import { FILTER_CATALOG } from "../../../../lib/strategyParams";
+import { FILTER_CATALOG, findFilterCatalogEntry } from "../../../../lib/strategyParams";
 
 export type AdxFilterState = {
   enabled: boolean;
@@ -28,6 +29,12 @@ type FiltersSectionProps = {
   onRemoveFilter?: (type: "adx" | "atr") => void;
 };
 
+function filterHelpTip(type: "adx" | "atr") {
+  const entry = findFilterCatalogEntry(type);
+  if (!entry) return null;
+  return <ParamHelpTip label={entry.label} title={entry.label} body={entry.description} />;
+}
+
 export default function FiltersSection({
   expanded,
   onToggle,
@@ -46,11 +53,17 @@ export default function FiltersSection({
   });
 
   return (
-    <ParameterCard title="Trend & Volatility Filters" expanded={expanded} onToggle={onToggle}>
+    <ParameterCard
+      className="parameter-card--filters"
+      title="Trend & Volatility Filters"
+      expanded={expanded}
+      onToggle={onToggle}
+    >
       {adx && onAdxChange && (
         <ParamToggleRow
           label="ADX filter"
           checked={adx.enabled}
+          labelHelp={filterHelpTip("adx")}
           onChange={(enabled) => onAdxChange({ ...adx, enabled })}
         >
           <NumberStepper
@@ -81,6 +94,7 @@ export default function FiltersSection({
         <ParamToggleRow
           label="ATR filter"
           checked={atr.enabled}
+          labelHelp={filterHelpTip("atr")}
           onChange={(enabled) => onAtrChange({ ...atr, enabled })}
         >
           <NumberStepper
@@ -112,16 +126,18 @@ export default function FiltersSection({
       {composable && availableFilters.length > 0 && onAddFilter && (
         <div className="param-control">
           <span className="param-control-label">Add filter</span>
-          <div className="confirm-actions">
+          <div className="strategy-filter-add-list">
             {availableFilters.map((item) => (
-              <button
-                key={item.type}
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => onAddFilter(item.type)}
-              >
-                {item.label}
-              </button>
+              <div key={item.type} className="strategy-filter-add-row">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => onAddFilter(item.type)}
+                >
+                  {item.label}
+                </button>
+                <ParamHelpTip label={item.label} title={item.label} body={item.description} />
+              </div>
             ))}
           </div>
         </div>

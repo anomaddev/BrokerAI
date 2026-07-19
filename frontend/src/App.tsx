@@ -20,6 +20,7 @@ import Trades from "./pages/Trades";
 import Settings from "./pages/Settings";
 import AppLayout from "./components/AppLayout";
 import { ROUTES } from "./lib/routes";
+import { readPreviewStepFromSearch } from "./lib/onboardingSteps";
 
 function LegacyReportRedirect() {
   const params = useParams();
@@ -58,13 +59,29 @@ type AuthStatus = "loading" | "setup" | "auth" | "oidc" | "ok";
 function AuthGate({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const location = useLocation();
+  const previewStep = readPreviewStepFromSearch(location.search);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        // DEV design preview: allow /setup without forcing login redirects.
+        if (previewStep && location.pathname === "/setup") {
+          if (!cancelled) setStatus("setup");
+          return;
+        }
+
         const config = await api.authConfig();
         if (cancelled) return;
+
+        const onboarding = await api.onboardingStatus();
+        if (cancelled) return;
+
+        // Incomplete first-run always resumes on /setup (not /login), even without a session.
+        if (!onboarding.onboarding_complete) {
+          if (!cancelled) setStatus("setup");
+          return;
+        }
 
         if (config.mode === "oidc") {
           try {
@@ -76,12 +93,6 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const { setup_complete } = await api.setupStatus();
-        if (cancelled) return;
-        if (!setup_complete) {
-          setStatus("setup");
-          return;
-        }
         await api.me();
         if (!cancelled) setStatus("ok");
       } catch {
@@ -91,7 +102,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [location.pathname, location.search, previewStep]);
 
   if (status === "loading") {
     return <div className="center-page">Loading…</div>;
@@ -112,11 +123,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     return <Navigate to="/" replace />;
   }
 
-  return (
-    <>
-      {children}
-    </>
-  );
+  return <>{children}</>;
 }
 
 export default function App() {

@@ -114,6 +114,27 @@ def is_valid_username(username: str) -> bool:
     return _valid_username(username)
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def is_valid_email(email: str) -> bool:
+    return bool(_EMAIL_RE.fullmatch(email.strip()))
+
+
+def username_from_email(email: str) -> str:
+    """Derive a Linux/SSH-safe username from an email local-part."""
+    local = email.strip().split("@", 1)[0].lower()
+    cleaned = re.sub(r"[^a-z0-9_-]", "", local)
+    if not cleaned or not cleaned[0].isalpha():
+        cleaned = f"u{cleaned}" if cleaned else "admin"
+    cleaned = cleaned[:32]
+    if len(cleaned) < 3:
+        cleaned = (cleaned + "user")[:3]
+    if not _valid_username(cleaned):
+        return "admin"
+    return cleaned
+
+
 def normalize_optional_name(value: str | None) -> str | None:
     if value is None:
         return None
@@ -131,10 +152,21 @@ class AuthStore:
         self.auth_dir = self.settings.auth_dir
         self.users_path = self.auth_dir / USERS_FILE
 
+    def _use_postgres(self) -> bool:
+        return bool(self.settings.use_postgres)
+
     def ensure_dir(self) -> None:
         self.auth_dir.mkdir(parents=True, exist_ok=True)
 
     def is_setup_complete(self) -> bool:
+        if self._use_postgres():
+            try:
+                from brokerai.auth.pg_profile import is_setup_complete_pg
+
+                if is_setup_complete_pg():
+                    return True
+            except Exception:
+                pass
         if not self.users_path.exists():
             return False
         try:
@@ -144,6 +176,15 @@ class AuthStore:
             return False
 
     def get_user(self) -> UserRecord | None:
+        if self._use_postgres():
+            try:
+                from brokerai.auth.pg_profile import load_user_profile
+
+                data = load_user_profile()
+                if data is not None:
+                    return UserRecord.from_dict(data)
+            except Exception:
+                pass
         if not self.users_path.exists():
             return None
         try:
@@ -151,8 +192,25 @@ class AuthStore:
         except (json.JSONDecodeError, KeyError, OSError):
             return None
 
+    def _profile_id_for(self, record: UserRecord) -> str:
+        return record.oidc_sub or f"local:{record.username}"
+
     def _save_user(self, record: UserRecord) -> UserRecord:
+        self.ensure_dir()
         self.users_path.write_text(json.dumps(record.to_dict(), indent=2))
+        if self._use_postgres():
+            try:
+                from brokerai.auth.pg_profile import save_user_profile
+
+                save_user_profile(
+                    profile_id=self._profile_id_for(record),
+                    username=record.username,
+                    setup_complete=True,
+                    doc=record.to_dict(),
+                )
+            except Exception:
+                # File profile remains authoritative if Postgres is briefly unavailable.
+                pass
         return record
 
     def create_user(
@@ -160,6 +218,11 @@ class AuthStore:
         username: str,
         password_hash: str,
         profile_photo: str | None = None,
+        *,
+        auth_sub: str | None = None,
+        email: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
     ) -> UserRecord:
         if self.is_setup_complete():
             raise ValueError("Setup already complete")
@@ -171,9 +234,16 @@ class AuthStore:
             password_hash=password_hash,
             created_at=datetime.now(timezone.utc).isoformat(),
             profile_photo=profile_photo,
+            oidc_sub=auth_sub,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
         )
         self._save_user(record)
         (self.auth_dir / "setup_complete").touch()
+        from brokerai.auth.onboarding import OnboardingStore
+
+        OnboardingStore(self.settings).init_after_admin()
         return record
 
     def create_or_link_oidc_user(
@@ -207,6 +277,9 @@ class AuthStore:
             )
             self._save_user(record)
             (self.auth_dir / "setup_complete").touch()
+            from brokerai.auth.onboarding import OnboardingStore
+
+            OnboardingStore(self.settings).init_after_admin()
             return record
 
         if not _valid_username(username):
@@ -223,6 +296,9 @@ class AuthStore:
         )
         self._save_user(record)
         (self.auth_dir / "setup_complete").touch()
+        from brokerai.auth.onboarding import OnboardingStore
+
+        OnboardingStore(self.settings).init_after_admin()
         return record
 
     def set_profile_photo(self, filename: str | None) -> UserRecord:

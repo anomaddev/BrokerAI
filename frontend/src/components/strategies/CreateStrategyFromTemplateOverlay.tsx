@@ -27,7 +27,7 @@ type CreateStrategyFromTemplateOverlayProps = {
   onClose: () => void;
 };
 
-const DESCRIPTION_MAX = 160;
+const DESCRIPTION_MAX = 2000;
 
 export default function CreateStrategyFromTemplateOverlay({
   presetId,

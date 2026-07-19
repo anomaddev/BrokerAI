@@ -1,20 +1,24 @@
 # Self-hosted OIDC authentication
 
-BrokerAI supports two authentication modes:
+BrokerAI supports two top-level authentication modes:
 
 | Mode | Best for |
 |------|----------|
 | `builtin` (default) | Local dev and single-admin installs with built-in username/password |
-| `oidc` | Private servers using Authelia, Authentik, or another self-hosted OIDC provider |
+| `oidc` | Private servers using Authentik, Keycloak, or another OIDC provider |
 
-In OIDC mode BrokerAI still stores **local profile and preferences** in `data/auth/users.json`. The identity provider owns login, password resets, and optional 2FA.
+Local profile and preferences live in Postgres `brokerai.user_profiles` when Postgres is enabled (default). File fallback: `data/auth/users.json`. In OIDC mode the identity provider owns login, password resets, and optional IdP 2FA; BrokerAI still stores the local profile.
+
+### Builtin + optional Supabase MFA
+
+When `BROKERAI_SUPABASE_URL` and related keys are set, builtin setup/login also creates/uses a Supabase GoTrue user and can enable **TOTP MFA**. That is not a third auth mode: the browser session remains BrokerAI’s signed `brokerai_session` cookie.
 
 ## Architecture
 
 ```text
 Browser -> Caddy (TLS) -> BrokerAI :1989
                 \
-                 -> Authelia (OIDC)
+                 -> OIDC provider (Authentik, Keycloak, …)
 ```
 
 After a successful OIDC login, BrokerAI issues the same signed `brokerai_session` cookie used in built-in mode. Protected API routes continue to use `require_auth`.
@@ -37,13 +41,13 @@ BROKERAI_OIDC_CLIENT_SECRET=your-client-secret
 
 Startup validation fails in OIDC mode when issuer, client ID, or client secret are missing.
 
-## Authelia quick start
+## Provider setup
 
-1. Copy `deploy/authelia/configuration.yml.example` and customize domains/secrets.
-2. Register the BrokerAI redirect URI:
+1. Register an OIDC client with your IdP.
+2. Set the redirect URI to:
    `https://<host>/api/auth/oidc/callback`
-3. Terminate TLS with `deploy/caddy/Caddyfile.example` (or nginx equivalent).
-4. Bind BrokerAI to localhost once the reverse proxy is in place:
+3. Terminate TLS with host Caddy: set `BROKERAI_DOMAIN` at install time (Proxmox/standalone), or copy [`deploy/caddy/Caddyfile.example`](../../deploy/caddy/Caddyfile.example) manually. Optional `BROKERAI_SUPABASE_DOMAIN` exposes Kong/Studio on a second hostname (see [`deploy/supabase/BROKERAI.md`](../../deploy/supabase/BROKERAI.md)).
+4. Bind BrokerAI to localhost once the reverse proxy is in place (`BROKERAI_WEB_BIND=127.0.0.1` is set automatically when install enables Caddy):
    `uvicorn ... --host 127.0.0.1 --port 1989`
 5. Set `BROKERAI_AUTH_MODE=oidc` and restart `brokerai-web`.
 
@@ -53,15 +57,15 @@ Startup validation fails in OIDC mode when issuer, client ID, or client secret a
 
 1. Open the dashboard.
 2. Click **Continue with SSO**.
-3. Sign in at Authelia.
-4. BrokerAI creates the local profile record automatically.
+3. Sign in at your identity provider.
+4. BrokerAI creates the local profile record automatically (Postgres `user_profiles`, or file fallback).
 
 ### Existing built-in install
 
-1. Deploy Authelia and configure OIDC while still on `BROKERAI_AUTH_MODE=builtin`.
+1. Configure OIDC on your IdP while still on `BROKERAI_AUTH_MODE=builtin`.
 2. Switch to `BROKERAI_AUTH_MODE=oidc`.
 3. Sign in via OIDC.
-4. BrokerAI links the OIDC subject to the existing `users.json` profile, preserving settings and backups.
+4. BrokerAI links the OIDC subject to the existing local profile, preserving settings and backups.
 
 Optional hardening for a single-user private server:
 
@@ -91,40 +95,14 @@ SSH user provisioning tied to password changes is also skipped in OIDC mode.
 
 ## Rollback
 
-Set `BROKERAI_AUTH_MODE=builtin` and restore `users.json` from a config backup if needed.
+Set `BROKERAI_AUTH_MODE=builtin` and restore the admin profile from a Postgres backup (or `data/auth/` file fallback) if needed.
 
-## Local development (Authelia on localhost)
+## Local development
 
-Use the same OIDC flow as production while developing:
+Local preview defaults to built-in auth (`./scripts/dev.sh`). Bundled Authelia / `dev.sh --oidc` was removed — use an external IdP.
 
-```bash
-./scripts/dev.sh --oidc
-```
+To exercise OIDC against an external IdP, set the OIDC variables in `.env` and point `BROKERAI_OIDC_ISSUER` at that provider. For local HTTP IdPs you may need `BROKERAI_OIDC_TLS_VERIFY=false`.
 
-This will:
+Reset local OIDC profile: clear the relevant `user_profiles` row (or delete `data/auth/` when using the file fallback) and sign in again.
 
-1. Write OIDC settings to `.env` (`BROKERAI_AUTH_MODE=oidc`, issuer `https://127.0.0.1:9091`, etc.)
-2. Generate a dev-only self-signed TLS certificate and start Authelia in Docker (`brokerai-authelia-dev` on port **9091**)
-3. Start BrokerAI as usual (Vite on `:5173`, API on `:1989`)
-
-Sign in at `http://localhost:5173` — you are redirected to Authelia (accept the browser TLS warning once), then back to the app.
-
-| Item | Value |
-|------|-------|
-| Authelia URL | https://127.0.0.1:9091 |
-| Dev username | `dev` |
-| Dev password | `BrokerAI!2026` |
-| OIDC client secret | `brokerai-dev-local-secret` (local only) |
-| TLS verify (API → Authelia) | disabled via `BROKERAI_OIDC_TLS_VERIFY=false` (local only) |
-
-Config lives in `deploy/authelia/dev/`. **Do not reuse these secrets in production.**
-
-For backend-only dev (no Vite):
-
-```bash
-./scripts/dev.sh --oidc --backend-only
-```
-
-Reset local OIDC profile: delete `data/auth/` and sign in again.
-
-To return to built-in username/password auth, set `BROKERAI_AUTH_MODE=builtin` in `.env` and restart dev.
+To return to built-in username/password auth, set `BROKERAI_AUTH_MODE=builtin` in `.env` and restart.

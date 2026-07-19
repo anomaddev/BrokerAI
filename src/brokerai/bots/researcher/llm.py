@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,7 +16,13 @@ from brokerai.cost.llm_usage import parse_llm_usage
 logger = logging.getLogger(__name__)
 
 _OPENAI_COMPAT_TYPES = {"openai", "grok"}
-_PROVIDER_LABELS = {"openai": "OpenAI", "grok": "Grok", "open_webui": "Open WebUI"}
+_PROVIDER_LABELS = {
+    "openai": "OpenAI",
+    "grok": "Grok",
+    "open_webui": "Open WebUI",
+    "claude": "Claude",
+}
+_ANTHROPIC_VERSION = "2023-06-01"
 _RESEARCH_CHAT_TIMEOUT = 300.0
 _RESEARCH_MAX_OUTPUT_TOKENS = 8192
 _GROK_RESPONSES_TIMEOUT = 300.0
@@ -206,44 +213,188 @@ async def _post_with_retry(
     return response
 
 
-async def test_open_webui(
+# Drop image / video / audio / voice generation models from chat catalogs.
+# Keep multimodal chat models that accept images as input (e.g. gpt-4o).
+_MEDIA_MODEL_TOKEN_RE = re.compile(
+    r"(?:^|[-_.])(?:imagine|image|video|audio|voice|tts|whisper|dall-?e|sora|realtime)"
+    r"(?:$|[-_.])",
+    re.IGNORECASE,
+)
+
+
+def _is_media_generation_model(item: dict[str, Any], model_id: str, display_name: str) -> bool:
+    """Return True when a catalog row is image/video/audio generation (not text chat)."""
+    haystack = f"{model_id} {display_name}".strip()
+    if _MEDIA_MODEL_TOKEN_RE.search(haystack):
+        return True
+
+    outputs = item.get("output_modalities")
+    if isinstance(outputs, list) and outputs:
+        text_outputs = {"text", "output_text"}
+        if not any(str(modality).lower() in text_outputs for modality in outputs):
+            return True
+
+    # xAI Imagine models expose image_price and no completion text pricing.
+    if item.get("image_price") is not None and item.get("completion_text_token_price") is None:
+        return True
+
+    return False
+
+
+def parse_model_catalog(data: Any) -> list[dict[str, str]]:
+    """Parse OpenAI-/Open-WebUI-/Anthropic-shaped model list payloads into id/name rows.
+
+    Image, video, and audio generation models are omitted so Settings → Reports only
+    offers text/chat models suitable for research analysis.
+    """
+    items: list[Any] = []
+    if isinstance(data, dict):
+        raw = data.get("data")
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(data.get("models"), list):
+            items = data["models"]
+    elif isinstance(data, list):
+        items = data
+
+    by_id: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        mid = item.get("id") or item.get("name")
+        if not mid:
+            continue
+        model_id = str(mid).strip()
+        if not model_id:
+            continue
+        display = item.get("display_name") or item.get("name") or model_id
+        display_name = str(display).strip() or model_id
+        if _is_media_generation_model(item, model_id, display_name):
+            continue
+        by_id[model_id] = display_name
+
+    return [{"id": mid, "name": by_id[mid]} for mid in sorted(by_id)]
+
+
+async def list_open_webui_models(
     base_url: str,
-    model_name: str,
     api_key: str | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, list[dict[str, str]]]:
     base = base_url.rstrip("/")
     headers = _auth_headers(api_key)
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            models_url = f"{base}/api/models"
-            response = await client.get(models_url, headers=headers)
+            response = await client.get(f"{base}/api/models", headers=headers)
             if response.status_code == 401:
-                return False, "Open WebUI authentication failed"
+                return False, "Open WebUI authentication failed", []
             if response.status_code >= 400:
-                chat_ok, chat_msg = await _test_open_webui_chat(client, base, model_name, headers)
+                return False, f"Open WebUI returned HTTP {response.status_code}", []
+            models = parse_model_catalog(response.json())
+            return True, f"Found {len(models)} Open WebUI model(s)", models
+    except httpx.HTTPError as exc:
+        return False, f"Open WebUI request failed: {exc}", []
+
+
+async def list_openai_compatible_models(
+    base_url: str,
+    api_key: str | None,
+    *,
+    provider_label: str = "API",
+) -> tuple[bool, str, list[dict[str, str]]]:
+    if not api_key:
+        return False, f"{provider_label} API key is required", []
+
+    base = base_url.rstrip("/")
+    headers = _auth_headers(api_key)
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(f"{base}/models", headers=headers)
+            if response.status_code == 401:
+                return False, f"{provider_label} authentication failed", []
+            if response.status_code >= 400:
+                detail = _parse_api_error_body(response) or f"HTTP {response.status_code}"
+                hint = _http_status_hint(response.status_code, provider_label=provider_label)
+                msg = f"{provider_label} returned {detail}"
+                if hint:
+                    msg = f"{msg}. {hint}"
+                return False, msg, []
+            models = parse_model_catalog(response.json())
+            return True, f"Found {len(models)} {provider_label} model(s)", models
+    except httpx.HTTPError as exc:
+        return False, f"{provider_label} request failed: {exc}", []
+
+
+async def list_claude_models(
+    base_url: str,
+    api_key: str | None,
+) -> tuple[bool, str, list[dict[str, str]]]:
+    if not api_key:
+        return False, "Claude API key is required", []
+
+    base = base_url.rstrip("/")
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": _ANTHROPIC_VERSION,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(f"{base}/models", headers=headers)
+            if response.status_code == 401:
+                return False, "Claude authentication failed", []
+            if response.status_code >= 400:
+                detail = _parse_api_error_body(response) or f"HTTP {response.status_code}"
+                return False, f"Claude returned {detail}", []
+            models = parse_model_catalog(response.json())
+            return True, f"Found {len(models)} Claude model(s)", models
+    except httpx.HTTPError as exc:
+        return False, f"Claude request failed: {exc}", []
+
+
+async def list_available_models(
+    model_type: str,
+    base_url: str,
+    api_key: str | None = None,
+) -> tuple[bool, str, list[dict[str, str]]]:
+    """List models exposed by an API source. Returns (ok, message, models)."""
+    if model_type == "open_webui":
+        return await list_open_webui_models(base_url, api_key)
+    if model_type in _OPENAI_COMPAT_TYPES:
+        label = _PROVIDER_LABELS.get(model_type, model_type)
+        return await list_openai_compatible_models(
+            base_url,
+            api_key,
+            provider_label=label,
+        )
+    if model_type == "claude":
+        return await list_claude_models(base_url, api_key)
+    return False, f"Provider type '{model_type}' is not supported yet", []
+
+
+async def test_open_webui(
+    base_url: str,
+    model_name: str | None = None,
+    api_key: str | None = None,
+) -> tuple[bool, str]:
+    ok, message, models = await list_open_webui_models(base_url, api_key)
+    if not ok:
+        if model_name:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                chat_ok, chat_msg = await _test_open_webui_chat(
+                    client,
+                    base_url.rstrip("/"),
+                    model_name,
+                    _auth_headers(api_key),
+                )
                 if chat_ok:
                     return True, chat_msg
-                return False, f"Open WebUI returned HTTP {response.status_code}"
+        return False, message
 
-            data = response.json()
-            model_ids: set[str] = set()
-            if isinstance(data, dict):
-                for item in data.get("data") or []:
-                    if isinstance(item, dict) and item.get("id"):
-                        model_ids.add(str(item["id"]))
-            elif isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        mid = item.get("id") or item.get("name")
-                        if mid:
-                            model_ids.add(str(mid))
-
-            if model_ids and model_name not in model_ids:
-                return False, f"Model '{model_name}' not found on Open WebUI"
-
-            return True, f"Open WebUI connection successful (model: {model_name})"
-    except httpx.HTTPError as exc:
-        return False, f"Open WebUI request failed: {exc}"
+    model_ids = {m["id"] for m in models}
+    if model_name and model_ids and model_name not in model_ids:
+        return False, f"Model '{model_name}' not found on Open WebUI"
+    if model_name:
+        return True, f"Open WebUI connection successful (model: {model_name})"
+    return True, f"Open WebUI connection successful ({len(models)} model(s))"
 
 
 async def _test_open_webui_chat(
@@ -269,54 +420,54 @@ async def _test_open_webui_chat(
 
 async def test_openai_compatible(
     base_url: str,
-    model_name: str,
+    model_name: str | None,
     api_key: str | None,
     *,
     provider_label: str = "API",
     provider_type: str | None = None,
 ) -> tuple[bool, str]:
-    if not api_key:
-        return False, f"{provider_label} API key is required"
-
-    base = base_url.rstrip("/")
-    headers = _auth_headers(api_key)
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            models_url = f"{base}/models"
-            response = await client.get(models_url, headers=headers)
-            if response.status_code == 401:
-                return False, f"{provider_label} authentication failed"
-            if response.status_code >= 400:
+    ok, message, models = await list_openai_compatible_models(
+        base_url,
+        api_key,
+        provider_label=provider_label,
+    )
+    if not ok:
+        if model_name and api_key:
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 chat_ok, chat_msg = await _test_openai_compatible_chat(
                     client,
-                    base,
+                    base_url.rstrip("/"),
                     model_name,
-                    headers,
+                    _auth_headers(api_key),
                     provider_label,
                     provider_type=provider_type,
                 )
                 if chat_ok:
                     return True, chat_msg
-                detail = _parse_api_error_body(response) or f"HTTP {response.status_code}"
-                hint = _http_status_hint(response.status_code, provider_label=provider_label)
-                msg = f"{provider_label} returned {detail}"
-                if hint:
-                    msg = f"{msg}. {hint}"
-                return False, msg
+        return False, message
 
-            data = response.json()
-            model_ids: set[str] = set()
-            if isinstance(data, dict):
-                for item in data.get("data") or []:
-                    if isinstance(item, dict) and item.get("id"):
-                        model_ids.add(str(item["id"]))
+    model_ids = {m["id"] for m in models}
+    if model_name and model_ids and model_name not in model_ids:
+        return False, f"Model '{model_name}' not found on {provider_label}"
+    if model_name:
+        return True, f"{provider_label} connection successful (model: {model_name})"
+    return True, f"{provider_label} connection successful ({len(models)} model(s))"
 
-            if model_ids and model_name not in model_ids:
-                return False, f"Model '{model_name}' not found on {provider_label}"
 
-            return True, f"{provider_label} connection successful (model: {model_name})"
-    except httpx.HTTPError as exc:
-        return False, f"{provider_label} request failed: {exc}"
+async def test_claude(
+    base_url: str,
+    model_name: str | None = None,
+    api_key: str | None = None,
+) -> tuple[bool, str]:
+    ok, message, models = await list_claude_models(base_url, api_key)
+    if not ok:
+        return False, message
+    model_ids = {m["id"] for m in models}
+    if model_name and model_ids and model_name not in model_ids:
+        return False, f"Model '{model_name}' not found on Claude"
+    if model_name:
+        return True, f"Claude connection successful (model: {model_name})"
+    return True, f"Claude connection successful ({len(models)} model(s))"
 
 
 async def _test_openai_compatible_chat(
@@ -599,7 +750,7 @@ async def grok_x_search(
 async def test_model(
     model_type: str,
     base_url: str,
-    model_name: str,
+    model_name: str | None = None,
     api_key: str | None = None,
 ) -> tuple[bool, str]:
     if model_type == "open_webui":
@@ -613,6 +764,8 @@ async def test_model(
             provider_label=label,
             provider_type=model_type,
         )
+    if model_type == "claude":
+        return await test_claude(base_url, model_name, api_key)
     return False, f"Provider type '{model_type}' is not supported yet"
 
 

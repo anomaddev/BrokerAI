@@ -11,6 +11,9 @@ venv/
 .env
 config.env
 /etc/brokerai/
+deploy/supabase/.env
+deploy/supabase/volumes/db/data/
+deploy/supabase/volumes/storage/
 
 # Runtime data
 /data/

@@ -25,15 +25,45 @@ def base_url(environment: str) -> str:
     return _BASE_URLS.get(environment, _BASE_URLS["practice"])
 
 
+_ZW_CHARS = ("\u200b", "\u200c", "\u200d", "\ufeff", "\u00a0")
+# Rich-text / PDF copies often substitute ASCII hyphen with unicode dashes.
+_DASH_CHARS = ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2212")
+
+
+def normalize_access_token(access_token: str) -> str:
+    """Strip paste artifacts from an OANDA personal access token.
+
+    Handles whitespace, zero-width characters, curly quotes, unicode dashes,
+    and an accidental ``Bearer `` prefix from copying curl examples.
+    """
+    cleaned = (access_token or "").strip()
+    for char in _ZW_CHARS:
+        cleaned = cleaned.replace(char, "")
+    for char in _DASH_CHARS:
+        cleaned = cleaned.replace(char, "-")
+    cleaned = cleaned.replace("\u201c", "").replace("\u201d", "")
+    cleaned = cleaned.replace("\u2018", "").replace("\u2019", "")
+    cleaned = cleaned.strip("\"'`")
+    cleaned = "".join(cleaned.split())
+    if cleaned.lower().startswith("bearer"):
+        cleaned = cleaned[6:].lstrip(":").lstrip()
+    return cleaned
+
+
 def auth_headers(access_token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {access_token.strip()}"}
+    token = normalize_access_token(access_token)
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "User-Agent": "BrokerAI/1.0",
+    }
 
 _CLIENTS: dict[tuple[str, str], "OandaHttpClient"] = {}
 _CLIENTS_LOCK = asyncio.Lock()
 
 
 def _token_hash(access_token: str) -> str:
-    return hashlib.sha256(access_token.strip().encode()).hexdigest()[:16]
+    return hashlib.sha256(normalize_access_token(access_token).encode()).hexdigest()[:16]
 
 
 def _should_retry_oanda(exc: BaseException) -> bool:

@@ -11,6 +11,7 @@ See also: [Orchestrator and bot loops](./orchestrator-and-bot-loops.md), [Data M
 | **Orchestrator** | Process lifecycle, heartbeat, control IPC |
 | **Secretary** | Candle timeline, pipeline dispatch, timed research, activity log |
 | **Broker** | Execution gates, exit monitors, associate dispatch |
+| **Researcher** | Host for research scheduling (workers run on Secretary dispatch) |
 
 | Ephemeral (spin-up/spin-down) | Role |
 |-------------------------------|------|
@@ -24,7 +25,7 @@ See also: [Orchestrator and bot loops](./orchestrator-and-bot-loops.md), [Data M
 For each due `(symbol, timeframe)` WorkUnit at candle close:
 
 1. Secretary creates `CandleJob` + `PipelineContext`
-2. Data Manager worker upserts candles to MongoDB
+2. Data Manager worker upserts candles to Postgres (`brokerai.market_candles`)
 3. Data Analyst worker loads bars via `DataManagerService` (optional hot cache)
 4. Broker `process_analysis()` applies gates, exit monitors, dispatches Associates
 
@@ -49,7 +50,7 @@ BROKERAI_ENABLED_BOTS=secretary,broker,researcher
 
 - Forex end-to-end via Secretary: **implemented**
 - Multi-asset (stocks, options, futures, metals, crypto): **stubs only** (`TODO(loop)`)
-- Account snapshot MongoDB persistence: **in-memory only** (`TODO(loop)`)
+- Account snapshots: **persisted** via `OandaAccountSnapshotsRepository` / OANDA sync; Broker exit monitors also keep an in-memory hot cache
 - Researcher trade-analysis mode: **not implemented** (`TODO(loop)`)
 
 ## Observability

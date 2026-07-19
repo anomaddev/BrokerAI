@@ -79,6 +79,8 @@ export type EmaIndicatorSpec = {
   type: "ema";
   period: number;
   source?: PriceSource;
+  /** Chart display color (UI-only; ignored by signal engine). */
+  color?: string;
 };
 
 export type SmaIndicatorSpec = {
@@ -141,17 +143,27 @@ export type MonthlyLowSignalSpec = {
   type: "monthly_low";
 };
 
+export type EmaCrossoverApproachingSpec = {
+  enabled: boolean;
+  max_gap_atr: number;
+  min_narrow_bars: number;
+};
+
 export type EmaCrossoverSignalSpec = {
   type: "ema_crossover";
   fast_ref: string;
   slow_ref: string;
   direction: Direction;
   confirmation: Confirmation;
+  /** Optional approaching-crossover assist; defaults applied server-side when omitted. */
+  approaching?: EmaCrossoverApproachingSpec;
 };
 
 export type SignalSpec = EmaCrossoverSignalSpec | MonthlyHighSignalSpec | MonthlyLowSignalSpec;
 
 export type StopLossSpec = {
+  /** When false, no stop-loss order is placed. Defaults to true when omitted. */
+  enabled?: boolean;
   mode: StopLossMode;
   atr_multiplier?: number;
   fixed_pips?: number;
@@ -159,6 +171,8 @@ export type StopLossSpec = {
 };
 
 export type TakeProfitSpec = {
+  /** When false, no take-profit / trailing exit is used. Defaults to true when omitted. */
+  enabled?: boolean;
   mode: TakeProfitMode;
   risk_reward_ratio?: number;
   fixed_pips?: number;
@@ -189,6 +203,8 @@ export type StrategyParamsV1 = {
   schema_version: typeof SCHEMA_VERSION;
   timeframe: Timeframe;
   min_candles?: number;
+  /** Extra candle timeframes to fetch (UI/component model; optional). */
+  additional_timeframes?: Timeframe[];
   indicators: Record<string, IndicatorSpec>;
   signal: SignalSpec;
   filters: FilterSpec[];

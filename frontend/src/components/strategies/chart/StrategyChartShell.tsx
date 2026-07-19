@@ -15,6 +15,7 @@ import {
   createBrokerChartOptions,
   fitTimeScaleToBounds,
 } from "../../../lib/chart/brokerChartOptions";
+import { chartPriceFormat } from "../../../lib/chart/formatChartPrice";
 import {
   computeAdx,
   computeAtr,
@@ -25,10 +26,23 @@ import {
 } from "../../../pages/strategies/presets/emaCrossover/mockData";
 import { useGeneralSettings } from "../../../hooks/useGeneralSettings";
 import { applyChartTimeLocalization } from "../../../lib/chart/chartTimeLocalization";
+import { emaLabel } from "../../../lib/strategyBuilder/components";
+
+export type ChartEmaOverlay = {
+  id: string;
+  period: number;
+  color: string;
+};
 
 type StrategyChartShellProps = {
   params: EmaCrossoverParams;
   locked?: boolean;
+  /** All EMA indicators to draw on the chart (add/remove/color updates). */
+  emaOverlays?: ChartEmaOverlay[];
+  /** @deprecated Prefer emaOverlays; kept for fallback coloring of params.fastEma/slowEma. */
+  fastEmaColor?: string;
+  /** @deprecated Prefer emaOverlays. */
+  slowEmaColor?: string;
   onOverlayChange: (key: keyof EmaCrossoverParams["overlays"], value: boolean) => void;
 };
 
@@ -39,6 +53,9 @@ function toChartTime(unixSeconds: number): UTCTimestamp {
 export default function StrategyChartShell({
   params,
   locked = false,
+  emaOverlays,
+  fastEmaColor = "#3b82f6",
+  slowEmaColor = "#f59e0b",
   onOverlayChange,
 }: StrategyChartShellProps) {
   const { timeOptions } = useGeneralSettings();
@@ -47,8 +64,7 @@ export default function StrategyChartShell({
   const priceChartRef = useRef<IChartApi | null>(null);
   const adxChartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const fastEmaRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const slowEmaRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const emaSeriesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const adxSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const candlePriceLinesRef = useRef<IPriceLine[]>([]);
   const adxPriceLinesRef = useRef<IPriceLine[]>([]);
@@ -56,18 +72,47 @@ export default function StrategyChartShell({
   const hasFittedTimeScaleRef = useRef(false);
   const [chartLayoutRevision, setChartLayoutRevision] = useState(0);
 
+  const resolvedOverlays = useMemo<ChartEmaOverlay[]>(() => {
+    if (emaOverlays && emaOverlays.length > 0) return emaOverlays;
+    return [
+      { id: "fast", period: params.fastEma, color: fastEmaColor },
+      { id: "slow", period: params.slowEma, color: slowEmaColor },
+    ];
+  }, [emaOverlays, params.fastEma, params.slowEma, fastEmaColor, slowEmaColor]);
+
   const candles = useMemo(() => generateMockCandles(120), []);
   const chartData = useMemo(() => {
-    const fast = computeEma(candles, params.fastEma);
-    const slow = computeEma(candles, params.slowEma);
+    const overlaySeries = resolvedOverlays.map((overlay) => ({
+      ...overlay,
+      points: computeEma(candles, overlay.period),
+    }));
+    const fastPoints =
+      overlaySeries.find((item) => item.period === params.fastEma)?.points ??
+      computeEma(candles, params.fastEma);
+    const slowPoints =
+      overlaySeries.find((item) => item.period === params.slowEma && item.period !== params.fastEma)
+        ?.points ??
+      overlaySeries.find((item) => item.period === params.slowEma)?.points ??
+      computeEma(candles, params.slowEma);
     const adx = computeAdx(candles, params.adxPeriod);
     const atr = computeAtr(candles, params.atrPeriod);
-    const signals = findCrossovers(fast, slow, adx);
+    const signals = findCrossovers(fastPoints, slowPoints, adx);
     const lastBullish = [...signals].reverse().find((s) => s.type === "bullish");
     const entry = lastBullish?.price ?? candles[candles.length - 1].close;
     const { slDistance, tpDistance } = computeSlTpDistances(params, candles, atr, entry);
-    return { fast, slow, adx, atr, signals, entry, slDistance, tpDistance, lastBullish };
-  }, [candles, params]);
+    return {
+      overlaySeries,
+      fast: fastPoints,
+      slow: slowPoints,
+      adx,
+      atr,
+      signals,
+      entry,
+      slDistance,
+      tpDistance,
+      lastBullish,
+    };
+  }, [candles, params, resolvedOverlays]);
 
   const showDetailed = params.overlayMode === "detailed";
   const showSignals = params.overlays.signals;
@@ -102,27 +147,13 @@ export default function StrategyChartShell({
     const adxChart = createChart(adxContainerRef.current, {
       ...chartOptions,
       width: adxContainerRef.current.clientWidth,
-      height: Math.max(adxContainerRef.current.clientHeight, 80),
+      height: Math.max(adxContainerRef.current.clientHeight, 160),
     });
 
     priceChartRef.current = priceChart;
     adxChartRef.current = adxChart;
 
     const candleSeries = priceChart.addCandlestickSeries(CANDLESTICK_SERIES_OPTIONS);
-    const fastSeries = priceChart.addLineSeries({
-      color: "#3b82f6",
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      title: `EMA ${params.fastEma}`,
-    });
-    const slowSeries = priceChart.addLineSeries({
-      color: "#f59e0b",
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      title: `EMA ${params.slowEma}`,
-    });
     const adxSeries = adxChart.addLineSeries({
       color: "#a78bfa",
       lineWidth: 2,
@@ -132,9 +163,8 @@ export default function StrategyChartShell({
     });
 
     candleSeriesRef.current = candleSeries;
-    fastEmaRef.current = fastSeries;
-    slowEmaRef.current = slowSeries;
     adxSeriesRef.current = adxSeries;
+    emaSeriesRef.current = new Map();
     candlePriceLinesRef.current = [];
     adxPriceLinesRef.current = [];
 
@@ -163,7 +193,7 @@ export default function StrategyChartShell({
       if (adxContainerRef.current) {
         adxChart.applyOptions({
           width: adxContainerRef.current.clientWidth,
-          height: Math.max(adxContainerRef.current.clientHeight, 80),
+          height: Math.max(adxContainerRef.current.clientHeight, 160),
         });
       }
       refitTimeScales();
@@ -180,9 +210,8 @@ export default function StrategyChartShell({
       priceChartRef.current = null;
       adxChartRef.current = null;
       candleSeriesRef.current = null;
-      fastEmaRef.current = null;
-      slowEmaRef.current = null;
       adxSeriesRef.current = null;
+      emaSeriesRef.current = new Map();
       candlePriceLinesRef.current = [];
       adxPriceLinesRef.current = [];
     };
@@ -206,17 +235,19 @@ export default function StrategyChartShell({
   }
 
   useEffect(() => {
+    const priceChart = priceChartRef.current;
     const candleSeries = candleSeriesRef.current;
-    const fastSeries = fastEmaRef.current;
-    const slowSeries = slowEmaRef.current;
     const adxSeries = adxSeriesRef.current;
-    if (!candleSeries || !fastSeries || !slowSeries || !adxSeries) return;
+    if (!priceChart || !candleSeries || !adxSeries) return;
 
-    const showEma = params.overlays.ema && params.overlayMode !== "clean" ? true : params.overlays.ema;
+    const showEma = params.overlays.ema;
     const showSlTp = params.overlays.slTp && showDetailed;
     const showAdx = params.overlays.adx && params.adxFilter && params.overlayMode === "detailed";
     const showAtr = params.overlays.atr && params.atrFilter && showDetailed;
 
+    const samplePrice = candles[candles.length - 1]?.close ?? 1;
+    const priceFormat = chartPriceFormat(samplePrice);
+    candleSeries.applyOptions({ priceFormat });
     candleSeries.setData(
       candles.map((c) => ({
         time: toChartTime(c.time),
@@ -227,19 +258,40 @@ export default function StrategyChartShell({
       })),
     );
 
-    fastSeries.setData(
-      showEma
-        ? chartData.fast.map((p) => ({ time: toChartTime(p.time), value: p.value }))
-        : [],
-    );
-    fastSeries.applyOptions({ title: `EMA ${params.fastEma}` });
+    const activeIds = new Set(resolvedOverlays.map((overlay) => overlay.id));
+    for (const [id, series] of emaSeriesRef.current) {
+      if (!activeIds.has(id)) {
+        priceChart.removeSeries(series);
+        emaSeriesRef.current.delete(id);
+      }
+    }
 
-    slowSeries.setData(
-      showEma
-        ? chartData.slow.map((p) => ({ time: toChartTime(p.time), value: p.value }))
-        : [],
-    );
-    slowSeries.applyOptions({ title: `EMA ${params.slowEma}` });
+    for (const overlay of chartData.overlaySeries) {
+      let series = emaSeriesRef.current.get(overlay.id);
+      if (!series) {
+        series = priceChart.addLineSeries({
+          color: overlay.color,
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          title: emaLabel(overlay.period),
+          priceFormat,
+        });
+        emaSeriesRef.current.set(overlay.id, series);
+      }
+
+      series.applyOptions({
+        color: overlay.color,
+        title: emaLabel(overlay.period),
+        visible: showEma,
+        priceFormat,
+      });
+      series.setData(
+        showEma
+          ? overlay.points.map((p) => ({ time: toChartTime(p.time), value: p.value }))
+          : [],
+      );
+    }
 
     adxSeries.setData(
       showAdx
@@ -265,47 +317,51 @@ export default function StrategyChartShell({
           title: "Entry",
         }),
       );
-      candlePriceLinesRef.current.push(
-        candleSeries.createPriceLine({
-          price: sl,
-          color: "#ef4444",
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title:
-            params.stopLossType === "fixed_pips"
-              ? `SL ${params.slFixedPips}p`
-              : params.stopLossType === "structure"
-                ? "SL swing"
-                : "SL",
-        }),
-      );
-      candlePriceLinesRef.current.push(
-        candleSeries.createPriceLine({
-          price: tp,
-          color: "#22c55e",
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title:
-            params.takeProfitType === "fixed_pips"
-              ? `TP ${params.tpFixedPips}p`
-              : params.takeProfitType === "atr_based"
-                ? `TP ${params.tpAtrMultiplier}×ATR`
-                : `TP ${params.riskRewardRatio.toFixed(1)}R`,
-        }),
-      );
-      if (params.takeProfitType === "trailing_stop" && params.trailMode === "atr") {
+      if (params.stopLossEnabled) {
         candlePriceLinesRef.current.push(
           candleSeries.createPriceLine({
-            price: entry - chartData.atr * params.trailAtrMultiplier,
-            color: "#f59e0b",
+            price: sl,
+            color: "#ef4444",
             lineWidth: 1,
-            lineStyle: LineStyle.Dotted,
+            lineStyle: LineStyle.Dashed,
             axisLabelVisible: true,
-            title: "Trail",
+            title:
+              params.stopLossType === "fixed_pips"
+                ? `SL ${params.slFixedPips}p`
+                : params.stopLossType === "structure"
+                  ? "SL swing"
+                  : "SL",
           }),
         );
+      }
+      if (params.takeProfitEnabled) {
+        candlePriceLinesRef.current.push(
+          candleSeries.createPriceLine({
+            price: tp,
+            color: "#22c55e",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title:
+              params.takeProfitType === "fixed_pips"
+                ? `TP ${params.tpFixedPips}p`
+                : params.takeProfitType === "atr_based"
+                  ? `TP ${params.tpAtrMultiplier}×ATR`
+                  : `TP ${params.riskRewardRatio.toFixed(1)}R`,
+          }),
+        );
+        if (params.takeProfitType === "trailing_stop" && params.trailMode === "atr") {
+          candlePriceLinesRef.current.push(
+            candleSeries.createPriceLine({
+              price: entry - chartData.atr * params.trailAtrMultiplier,
+              color: "#f59e0b",
+              lineWidth: 1,
+              lineStyle: LineStyle.Dotted,
+              axisLabelVisible: true,
+              title: "Trail",
+            }),
+          );
+        }
       }
     }
 
@@ -352,12 +408,16 @@ export default function StrategyChartShell({
     requestAnimationFrame(() => {
       if (!hasFittedTimeScaleRef.current) {
         hasFittedTimeScaleRef.current = true;
-        if (priceChartRef.current) fitTimeScaleToBounds(priceChartRef.current, candles.length, { fixEdges: true });
-        if (adxChartRef.current) fitTimeScaleToBounds(adxChartRef.current, candles.length, { fixEdges: true });
+        if (priceChartRef.current) {
+          fitTimeScaleToBounds(priceChartRef.current, candles.length, { fixEdges: true });
+        }
+        if (adxChartRef.current) {
+          fitTimeScaleToBounds(adxChartRef.current, candles.length, { fixEdges: true });
+        }
       }
       setChartLayoutRevision((revision) => revision + 1);
     });
-  }, [candles, chartData, params, locked, showDetailed]);
+  }, [candles, chartData, params, locked, showDetailed, resolvedOverlays]);
 
   const showAdxPane = params.overlays.adx && params.adxFilter && params.overlayMode === "detailed";
   const adxBadge =
@@ -393,9 +453,7 @@ export default function StrategyChartShell({
             onChange={(v) => onOverlayChange("atr", v)}
           />
         </div>
-        {locked && (
-          <span className="strategy-chart-example-label">Example chart</span>
-        )}
+        {locked && <span className="strategy-chart-example-label">Example chart</span>}
         <div className="strategy-chart-legend">
           {params.overlays.signals && (
             <>
@@ -415,18 +473,16 @@ export default function StrategyChartShell({
               </span>
             </>
           )}
-          {params.overlays.ema && (
-            <>
-              <span className="strategy-chart-legend-item">
-                <span className="strategy-chart-legend-swatch strategy-chart-legend-swatch--fast" />
-                EMA {params.fastEma}
+          {params.overlays.ema &&
+            resolvedOverlays.map((overlay) => (
+              <span key={overlay.id} className="strategy-chart-legend-item">
+                <span
+                  className="strategy-chart-legend-swatch"
+                  style={{ background: overlay.color }}
+                />
+                {emaLabel(overlay.period)}
               </span>
-              <span className="strategy-chart-legend-item">
-                <span className="strategy-chart-legend-swatch strategy-chart-legend-swatch--slow" />
-                EMA {params.slowEma}
-              </span>
-            </>
-          )}
+            ))}
         </div>
       </div>
       <div className="strategy-chart-panes">

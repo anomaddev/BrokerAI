@@ -23,7 +23,7 @@ def reconcile_open_trades(
     ledger_trades: list[dict[str, Any]],
     broker_trades: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Compare MongoDB open trades against broker open trades.
+    """Compare ledger open trades against broker open trades.
 
     Match priority:
     1. ``broker_order_id`` equals broker trade ``id``
@@ -79,9 +79,9 @@ def reconcile_open_trades(
         unmatched_ledger.remove(ledger)
         unmatched_broker.remove(broker_match)
 
-    mongo_count = len(ledger_trades)
+    ledger_count = len(ledger_trades)
     broker_count = len(broker_trades)
-    if mongo_count == broker_count and not unmatched_ledger and not unmatched_broker:
+    if ledger_count == broker_count and not unmatched_ledger and not unmatched_broker:
         status = "matched"
     else:
         status = "mismatch"
@@ -104,7 +104,7 @@ def reconcile_open_trades(
         }
 
     return {
-        "mongo_open_count": mongo_count,
+        "ledger_open_count": ledger_count,
         "broker_open_count": broker_count,
         "status": status,
         "matched": matched,
@@ -120,7 +120,7 @@ def unconfigured_reconciliation() -> dict[str, Any]:
     """Payload when OANDA is not connected."""
     return {
         "configured": False,
-        "mongo_open_count": 0,
+        "ledger_open_count": 0,
         "broker_open_count": 0,
         "status": "unconfigured",
         "matched": [],

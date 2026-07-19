@@ -21,7 +21,7 @@ python -m brokerai.orchestrator
 4. Auto-injects `secretary` and `broker` when missing from `enabled_bots`.
 5. Registers SIGTERM/SIGINT handlers.
 6. Calls `start_all()` to start bots and spawn tick tasks.
-7. Ensures MongoDB indexes.
+7. Ensures Postgres schema (`ensure_indexes()` → `ensure_schema()` / SQLAlchemy `create_all`).
 8. Spawns heartbeat, control, and activity-monitor loops.
 9. Waits for shutdown signal, then cancels auxiliary tasks and `stop_all()`.
 
@@ -136,5 +136,5 @@ On each broker tick:
 
 - [The Loop](./the-loop.md) — Secretary-coordinated pipeline
 - [Data Manager](./data-manager.md) — candle fetch service and workers
-- [Caching strategy](./caching.md) — MongoDB vs in-process cache
+- [Caching strategy](./caching.md) — Postgres vs in-process cache
 - [Strategy params schema](../strategies/params-schema.md)

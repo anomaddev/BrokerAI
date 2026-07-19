@@ -4,7 +4,15 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from brokerai.db.client import get_db
+from sqlalchemy import delete, select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import StrategyRow
+from brokerai.db.repositories.strategy_versions import (
+    StrategyVersionsRepository,
+    append_strategy_version,
+    strategy_version_snapshot,
+)
 from brokerai.strategies.params import SCHEMA_VERSION, normalize_stored_params, prepare_params
 from brokerai.strategies.registry import get_preset
 from brokerai.strategy_constants import WATCHLIST_ALL_SYMBOL
@@ -17,6 +25,28 @@ ASSET_CLASS_LABELS: dict[str, str] = {
     "futures": "Futures",
     "options": "Options",
 }
+
+BACKTEST_STATUS_NOT_RUN = "not_run"
+BACKTEST_STATUS_QUEUED = "queued"
+BACKTEST_STATUS_RUNNING = "running"
+BACKTEST_STATUS_COMPLETED = "completed"
+BACKTEST_STATUS_FAILED = "failed"
+
+BACKTEST_STATUSES = frozenset(
+    {
+        BACKTEST_STATUS_NOT_RUN,
+        BACKTEST_STATUS_QUEUED,
+        BACKTEST_STATUS_RUNNING,
+        BACKTEST_STATUS_COMPLETED,
+        BACKTEST_STATUS_FAILED,
+    }
+)
+
+
+def normalize_backtest_status(raw: Any) -> str:
+    if isinstance(raw, str) and raw.strip() in BACKTEST_STATUSES:
+        return raw.strip()
+    return BACKTEST_STATUS_NOT_RUN
 
 
 def empty_stats() -> dict[str, Any]:
@@ -123,6 +153,7 @@ def serialize_strategy(doc: dict[str, Any]) -> dict[str, Any]:
         "timeframe": params.get("timeframe") or doc.get("timeframe"),
         "description": doc.get("description", ""),
         "enabled": bool(doc.get("enabled", False)),
+        "backtest_status": normalize_backtest_status(doc.get("backtest_status")),
         "instruments": list(doc.get("instruments") or []),
         "stats": normalize_stats(doc.get("stats")),
         "created_at": doc.get("created_at"),
@@ -138,31 +169,42 @@ def serialize_strategy(doc: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _sync_row_columns(row: StrategyRow, doc: dict[str, Any]) -> None:
+    row.asset_class = doc["asset_class"]
+    row.name = doc["name"]
+    row.enabled = bool(doc.get("enabled", False))
+    row.preset_id = doc.get("preset_id")
+    row.backtest_status = normalize_backtest_status(doc.get("backtest_status"))
+    row.doc = doc
+
+
 class StrategiesRepository:
-    COLLECTION = "strategies"
+    """Postgres-backed strategies (`brokerai.strategies`)."""
+
+    COLLECTION = "strategies"  # legacy name; storage is Postgres JSONB docs
 
     async def list_all(self) -> list[dict[str, Any]]:
-        handle = await get_db()
-        cursor = handle.db[self.COLLECTION].find({}, {"_id": 0}).sort(
-            [("asset_class", 1), ("name", 1)]
-        )
-        docs = await cursor.to_list(length=500)
-        return [serialize_strategy(doc) for doc in docs]
+        async with session_scope() as session:
+            stmt = select(StrategyRow).order_by(StrategyRow.asset_class, StrategyRow.name)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [serialize_strategy(dict(row.doc)) for row in rows]
 
     async def list_enabled(self) -> list[dict[str, Any]]:
-        handle = await get_db()
-        cursor = handle.db[self.COLLECTION].find({"enabled": True}, {"_id": 0}).sort(
-            [("asset_class", 1), ("name", 1)]
-        )
-        docs = await cursor.to_list(length=500)
-        return [serialize_strategy(doc) for doc in docs]
+        async with session_scope() as session:
+            stmt = (
+                select(StrategyRow)
+                .where(StrategyRow.enabled.is_(True))
+                .order_by(StrategyRow.asset_class, StrategyRow.name)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [serialize_strategy(dict(row.doc)) for row in rows]
 
     async def get_by_id(self, strategy_id: str) -> dict[str, Any] | None:
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one({"id": strategy_id}, {"_id": 0})
-        if not doc:
-            return None
-        return serialize_strategy(doc)
+        async with session_scope() as session:
+            row = await session.get(StrategyRow, strategy_id)
+            if not row:
+                return None
+            return serialize_strategy(dict(row.doc))
 
     async def create(
         self,
@@ -191,6 +233,7 @@ class StrategiesRepository:
             "asset_class": asset_class,
             "timeframe": normalized_params["timeframe"],
             "enabled": enabled,
+            "backtest_status": BACKTEST_STATUS_NOT_RUN,
             "instruments": instruments,
             "instrument_selection": cleaned_selection,
             "strategy_type": "custom" if preset_id == "custom" else "preset",
@@ -203,8 +246,23 @@ class StrategiesRepository:
             "updated_at": now,
         }
 
-        handle = await get_db()
-        await handle.db[self.COLLECTION].insert_one(doc)
+        async with session_scope() as session:
+            row = StrategyRow(
+                id=doc["id"],
+                asset_class=doc["asset_class"],
+                name=doc["name"],
+                enabled=doc["enabled"],
+                preset_id=doc.get("preset_id"),
+                backtest_status=doc["backtest_status"],
+                doc=doc,
+            )
+            session.add(row)
+            await append_strategy_version(
+                session,
+                strategy_id=doc["id"],
+                snapshot=strategy_version_snapshot(doc),
+                change_label="Created strategy",
+            )
         return serialize_strategy(doc)
 
     async def update(
@@ -217,43 +275,92 @@ class StrategiesRepository:
         instrument_selection: dict[str, list[str]] | None = None,
         enabled: bool | None = None,
     ) -> dict[str, Any] | None:
-        handle = await get_db()
-        existing = await handle.db[self.COLLECTION].find_one({"id": strategy_id}, {"_id": 0})
-        if not existing:
-            return None
+        definition_changed = any(
+            value is not None for value in (name, description, params, instrument_selection)
+        )
+        async with session_scope() as session:
+            row = await session.get(StrategyRow, strategy_id)
+            if not row:
+                return None
 
-        updates: dict[str, Any] = {"updated_at": _now_iso()}
+            existing = dict(row.doc)
+            before = dict(existing)
+            updates: dict[str, Any] = {"updated_at": _now_iso()}
 
-        if name is not None:
-            updates["name"] = name.strip()
-        if description is not None:
-            updates["description"] = description.strip()
-        if enabled is not None:
-            updates["enabled"] = enabled
+            if name is not None:
+                updates["name"] = name.strip()
+            if description is not None:
+                updates["description"] = description.strip()
+            if enabled is not None:
+                updates["enabled"] = enabled
 
-        if params is not None:
-            preset_id = existing.get("preset_id")
-            if not preset_id:
-                raise ValueError("Cannot update params on a strategy without preset_id")
-            preset = get_preset(preset_id)
-            if not preset:
-                raise ValueError(f"Unknown preset: {preset_id}")
-            updates["params"] = prepare_params(preset, params)
-            updates["params_schema_version"] = SCHEMA_VERSION
-            updates["timeframe"] = updates["params"]["timeframe"]
+            if params is not None:
+                preset_id = existing.get("preset_id")
+                if not preset_id:
+                    raise ValueError("Cannot update params on a strategy without preset_id")
+                preset = get_preset(preset_id)
+                if not preset:
+                    raise ValueError(f"Unknown preset: {preset_id}")
+                updates["params"] = prepare_params(preset, params)
+                updates["params_schema_version"] = SCHEMA_VERSION
+                updates["timeframe"] = updates["params"]["timeframe"]
 
-        if instrument_selection is not None:
-            cleaned_selection = clean_instrument_selection(instrument_selection)
-            if not cleaned_selection:
-                raise ValueError("Select at least one instrument")
-            updates["instrument_selection"] = cleaned_selection
-            updates["instruments"] = flatten_instruments(cleaned_selection)
-            updates["asset_class"] = derive_asset_class(cleaned_selection)
+            cleaned_selection = None
+            if instrument_selection is not None:
+                cleaned_selection = clean_instrument_selection(instrument_selection)
+                if not cleaned_selection:
+                    raise ValueError("Select at least one instrument")
+                updates["instrument_selection"] = cleaned_selection
+                updates["instruments"] = flatten_instruments(cleaned_selection)
+                updates["asset_class"] = derive_asset_class(cleaned_selection)
 
-        await handle.db[self.COLLECTION].update_one({"id": strategy_id}, {"$set": updates})
+            existing.update(updates)
+            _sync_row_columns(row, existing)
+
+            if definition_changed:
+                # Lazy import: config_backup.service imports this module.
+                from brokerai.config_backup.change_labels import describe_strategy_update
+
+                change_label = describe_strategy_update(
+                    before,
+                    name=name.strip() if name is not None else None,
+                    description=description.strip() if description is not None else None,
+                    params=params,
+                    instrument_selection=cleaned_selection,
+                    enabled=enabled,
+                )
+                await append_strategy_version(
+                    session,
+                    strategy_id=strategy_id,
+                    snapshot=strategy_version_snapshot(existing),
+                    change_label=change_label or "Strategy updated",
+                )
+
         return await self.get_by_id(strategy_id)
 
     async def delete(self, strategy_id: str) -> bool:
-        handle = await get_db()
-        result = await handle.db[self.COLLECTION].delete_one({"id": strategy_id})
-        return result.deleted_count > 0
+        async with session_scope() as session:
+            await StrategyVersionsRepository().delete_for_strategy(session, strategy_id)
+            result = await session.execute(
+                delete(StrategyRow).where(StrategyRow.id == strategy_id)
+            )
+            return bool(result.rowcount)
+
+    async def queue_backtests(self, strategy_ids: list[str]) -> list[dict[str, Any]]:
+        """Mark strategies as queued for backtest (engine not implemented yet)."""
+        unique_ids = list(dict.fromkeys(strategy_id for strategy_id in strategy_ids if strategy_id))
+        if not unique_ids:
+            return []
+
+        updated: list[dict[str, Any]] = []
+        async with session_scope() as session:
+            for strategy_id in unique_ids:
+                row = await session.get(StrategyRow, strategy_id)
+                if not row:
+                    continue
+                existing = dict(row.doc)
+                existing["backtest_status"] = BACKTEST_STATUS_QUEUED
+                existing["updated_at"] = _now_iso()
+                _sync_row_columns(row, existing)
+                updated.append(serialize_strategy(existing))
+        return updated

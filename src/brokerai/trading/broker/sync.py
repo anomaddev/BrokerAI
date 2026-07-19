@@ -11,7 +11,7 @@ import brokerai.trading.broker.adapters  # noqa: F401 — register adapters
 
 from brokerai.config.settings import get_settings
 from brokerai.bots.data_manager.candle_requirements import strategy_timeframe
-from brokerai.db.client import get_db
+from brokerai.db.repositories.strategies import StrategiesRepository
 from brokerai.db.repositories.broker_events import BrokerEventsRepository, broker_event_from_doc
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository, apply_candle_anchors_to_lot
 from brokerai.db.repositories.broker_sync_state import BrokerSyncStateRepository
@@ -30,6 +30,7 @@ from brokerai.trading.broker.event_retention import (
 from brokerai.trading.oanda_account_state import apply_account_state
 from brokerai.trading.oanda_bootstrap import run_oanda_bootstrap
 from brokerai.trading.oanda_cursor_repair import (
+    as_utc_aware,
     persist_account_summary_snapshot,
     repair_stale_cursor_if_needed,
 )
@@ -86,11 +87,7 @@ async def _strategy_timeframe_for_lot(lot: PositionLot) -> str | None:
         return None
     if strategy_id in _strategy_timeframe_cache:
         return _strategy_timeframe_cache[strategy_id]
-    handle = await get_db()
-    doc = await handle.db["strategies"].find_one(
-        {"id": strategy_id},
-        {"_id": 0, "timeframe": 1, "params": 1},
-    )
+    doc = await StrategiesRepository().get_by_id(strategy_id)
     tf = strategy_timeframe(doc) if doc else None
     _strategy_timeframe_cache[strategy_id] = tf
     return tf
@@ -131,15 +128,13 @@ async def _should_run_exposure_check(
     settings = get_settings()
     interval = max(60, settings.oanda_exposure_check_interval_seconds)
     state_doc = await sync_state_repo.get_state(exchange_id, account_id)
-    last_check = state_doc.get("last_exposure_check_at") if state_doc else None
+    last_check = as_utc_aware(
+        state_doc.get("last_exposure_check_at") if state_doc else None
+    )
     if last_check is None:
         return True
-    if isinstance(last_check, datetime):
-        if last_check.tzinfo is None:
-            last_check = last_check.replace(tzinfo=timezone.utc)
-        elapsed = (datetime.now(timezone.utc) - last_check.astimezone(timezone.utc)).total_seconds()
-        return elapsed >= interval
-    return True
+    elapsed = (datetime.now(timezone.utc) - last_check).total_seconds()
+    return elapsed >= interval
 
 
 async def _persist_summary_from_poll_state(
@@ -178,7 +173,7 @@ async def backfill_closed_lot_details(
 ) -> list[str]:
     """Backfill missing exit price / realized P/L from synced ``broker_events``.
 
-    Uses MongoDB event history first. ``GET /trades/{id}`` is only attempted when
+    Uses Postgres event history first. ``GET /trades/{id}`` is only attempted when
     local events are insufficient — avoiding 404s for misfiled transaction IDs.
     """
     lots_repo = BrokerLotsRepository()

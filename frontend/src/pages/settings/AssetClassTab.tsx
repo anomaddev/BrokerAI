@@ -10,6 +10,7 @@ import {
   normalizePairOrder,
   selectAllPairs,
 } from "../../lib/forexPairOrder";
+import { notifyAssetClassStatusesUpdated } from "../../lib/assetClassStatus";
 import {
   DEFAULT_FOREX_TRADING_SESSIONS,
   normalizeForexTradingSessions,
@@ -173,6 +174,7 @@ export default function AssetClassTab({ assetClass, label }: AssetClassTabProps)
         snapshot.assetClass === "forex" ? snapshot.onlyOnePositionPerPair : undefined,
       primary_exchange: snapshot.primaryExchange || null,
     });
+    notifyAssetClassStatusesUpdated();
     if (snapshot.assetClass === "forex") {
       notifyForexTradingSessionsUpdated();
     }

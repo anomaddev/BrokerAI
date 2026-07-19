@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 
 type DashboardSkeletonProps = {
   cards?: number;
+  layout?: "grid" | "oanda-row";
 };
 
 function SkeletonBlock({
@@ -57,7 +58,50 @@ function DashboardCardSkeleton() {
   );
 }
 
-export default function DashboardSkeleton({ cards = 2 }: DashboardSkeletonProps) {
+function DashboardRecentTradesSkeleton() {
+  return (
+    <section
+      className="dashboard-recent-trades dashboard-card--skeleton"
+      aria-hidden="true"
+    >
+      <div className="dashboard-recent-trades-head">
+        <SkeletonBlock className="skeleton--title" style={{ width: "8rem" }} />
+        <SkeletonBlock className="skeleton--line-short" style={{ width: "4rem" }} />
+      </div>
+      <div className="dashboard-recent-trades-skeleton">
+        {Array.from({ length: 6 }, (_, index) => (
+          <div className="dashboard-recent-trades-skeleton-row" key={index}>
+            <SkeletonBlock className="skeleton--value" />
+            <SkeletonBlock className="skeleton--value" />
+            <SkeletonBlock className="skeleton--value" />
+            <SkeletonBlock className="skeleton--value" />
+            <SkeletonBlock className="skeleton--value" />
+            <SkeletonBlock className="skeleton--value" />
+            <SkeletonBlock className="skeleton--value" />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export default function DashboardSkeleton({
+  cards = 2,
+  layout = "grid",
+}: DashboardSkeletonProps) {
+  if (layout === "oanda-row") {
+    return (
+      <div
+        className="dashboard-oanda-row dashboard-grid--loading"
+        aria-busy="true"
+        aria-label="Loading dashboard"
+      >
+        <DashboardCardSkeleton />
+        <DashboardRecentTradesSkeleton />
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard-grid dashboard-grid--loading" aria-busy="true" aria-label="Loading dashboard">
       {Array.from({ length: cards }, (_, index) => (

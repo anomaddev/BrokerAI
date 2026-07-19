@@ -26,6 +26,7 @@ _TIMEFRAME_MINUTES = {
 }
 
 _VERBOSE = False
+_MARKET_DATA_SOURCE = "oanda"
 
 
 def _log(payload: dict) -> None:
@@ -58,17 +59,52 @@ def _parse_instant(value) -> datetime | None:
     return None
 
 
-async def diagnose() -> dict[str, int]:
-    from brokerai.db.client import get_db
+async def _fetch_candle(
+    session,
+    *,
+    symbol: str,
+    timeframe: str,
+    time_value: str | None = None,
+    ts: datetime | None = None,
+) -> dict | None:
+    from brokerai.db.pg.models import MarketCandle
+    from sqlalchemy import select
 
-    handle = await get_db()
-    lots = await handle.db.broker_lots.find(
-        {"entry_price": {"$gt": 0}},
-        {"_id": 0, "id": 1, "broker_lot_id": 1, "symbol": 1, "pair": 1,
-         "direction": 1, "entry_price": 1, "entry_candle_open": 1,
-         "timeframe": 1, "open_time": 1, "opened_at": 1, "strategy_id": 1,
-         "state": 1},
-    ).to_list(length=10000)
+    stmt = select(MarketCandle).where(
+        MarketCandle.symbol == symbol,
+        MarketCandle.timeframe == timeframe,
+        MarketCandle.source == _MARKET_DATA_SOURCE,
+    )
+    if time_value is not None:
+        stmt = stmt.where(MarketCandle.time == time_value)
+    if ts is not None:
+        stmt = stmt.where(MarketCandle.ts == ts)
+    row = (await session.execute(stmt.limit(1))).scalar_one_or_none()
+    if row is None:
+        return None
+    return {
+        "open": row.open,
+        "high": row.high,
+        "low": row.low,
+        "close": row.close,
+        "time": row.time,
+    }
+
+
+async def diagnose() -> dict[str, int]:
+    from brokerai.db.client import init_pg
+    from brokerai.db.pg.client import session_scope
+    from brokerai.db.pg.models import BrokerLotRow
+    from sqlalchemy import select
+
+    await init_pg()
+    async with session_scope() as session:
+        rows = (await session.execute(select(BrokerLotRow))).scalars().all()
+        lots = [
+            dict(row.doc)
+            for row in rows
+            if float(row.doc.get("entry_price") or 0) > 0
+        ]
 
     stats = {
         "scanned": len(lots),
@@ -98,23 +134,24 @@ async def diagnose() -> dict[str, int]:
                   "data": {"lot": lot.get("broker_lot_id"), "symbol": symbol}})
             continue
 
-        # Anchored candle (what the chart draws the entry marker against).
-        anchored = await handle.db.market_data.find_one(
-            {"meta.symbol": db_symbol, "meta.timeframe": timeframe, "time": anchor},
-            {"_id": 0, "open": 1, "high": 1, "low": 1, "close": 1, "time": 1},
-        )
-        # "Signal" bar = the last CLOSED bar strictly before the fill = the bar
-        # immediately before the anchored bar (one timeframe earlier).
-        minutes = _TIMEFRAME_MINUTES.get(timeframe, 15)
-        anchor_dt = _parse_instant(anchor)
-        signal_bar = None
-        if anchor_dt is not None:
-            prev_dt = anchor_dt - timedelta(minutes=minutes)
-            signal_bar = await handle.db.market_data.find_one(
-                {"meta.symbol": db_symbol, "meta.timeframe": timeframe,
-                 "ts": prev_dt},
-                {"_id": 0, "open": 1, "high": 1, "low": 1, "close": 1, "time": 1},
+        async with session_scope() as session:
+            anchored = await _fetch_candle(
+                session,
+                symbol=db_symbol,
+                timeframe=timeframe,
+                time_value=str(anchor),
             )
+            minutes = _TIMEFRAME_MINUTES.get(timeframe, 15)
+            anchor_dt = _parse_instant(anchor)
+            signal_bar = None
+            if anchor_dt is not None:
+                prev_dt = anchor_dt - timedelta(minutes=minutes)
+                signal_bar = await _fetch_candle(
+                    session,
+                    symbol=db_symbol,
+                    timeframe=timeframe,
+                    ts=prev_dt,
+                )
 
         if not anchored:
             stats["no_candle"] += 1

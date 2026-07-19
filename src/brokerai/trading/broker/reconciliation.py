@@ -3,6 +3,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy import select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import BrokerLotRow
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository, _effective_qty, _lot_last_modified, _resolve_lot_state
 from brokerai.trading.broker.models import PositionLot
 
@@ -107,18 +111,19 @@ async def reconcile_cancelled_lots(
     already missing realized P/L that match a cancel/reject event on ``broker_lot_id``.
     """
     from brokerai.trading.broker.cancelled_orders import find_order_cancellation
-    from brokerai.db.client import get_db
 
-    db = await get_db()
-    cursor = db.db.broker_lots.find(
-        {
-            "exchange_id": exchange_id,
-            "state": {"$nin": ["cancelled"]},
-            "broker_lot_id": {"$gt": ""},
-        },
-        {"_id": 0},
-    )
-    candidates = await cursor.to_list(length=500)
+    async with session_scope() as session:
+        stmt = (
+            select(BrokerLotRow)
+            .where(
+                BrokerLotRow.exchange_id == exchange_id,
+                BrokerLotRow.state != "cancelled",
+                BrokerLotRow.broker_lot_id != "",
+            )
+            .limit(500)
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+        candidates = [dict(row.doc) for row in rows]
     marked = 0
 
     for lot in candidates:
@@ -225,7 +230,7 @@ def reconcile_sync_drift(
     return {
         "local_open_count": local_count,
         "broker_open_count": broker_count,
-        "mongo_open_count": local_count,
+        "ledger_open_count": local_count,
         "status": status,
         "matched": matched,
         "lot_badges": lot_badges,
@@ -244,7 +249,7 @@ def unconfigured_reconciliation() -> dict[str, Any]:
         "configured": False,
         "local_open_count": 0,
         "broker_open_count": 0,
-        "mongo_open_count": 0,
+        "ledger_open_count": 0,
         "status": "unconfigured",
         "matched": [],
         "lot_badges": {},

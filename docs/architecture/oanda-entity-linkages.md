@@ -2,7 +2,7 @@
 
 **BrokerAI Architecture Document**  
 **Audience:** Senior engineers performing API structure review for efficiencies  
-**Last updated:** 2026-07-04
+**Last updated:** 2026-07-18
 
 This document provides an extreme-detail mapping of how OANDA's native trading entities (Trades, Positions, Orders, Transactions) are normalized, linked, and persisted inside BrokerAI. It is intended for architecture reviews, reconciliation audits, and future multi-broker abstraction work.
 
@@ -218,7 +218,7 @@ All IDs remain **string** (OANDA uses string transaction IDs despite being numer
 **Potential Efficiencies / Review Items**
 1. **Positions endpoint is narrowly used** — only `validate_exposure` + a few sync paths. Consider deriving exposure purely from lots (already authoritative) and remove the call, or promote it to a continuous cheap health check.
 2. **Account Details already contains everything needed for bootstrap** (`trades`, `orders`, `positions`, `lastTransactionID`). Some paths still perform separate `list_all_trades(state=CLOSED)` calls. Opportunity to consolidate into a single documented bootstrap sequence.
-3. **Materialized `InstrumentExposure`** — `instrument_exposure` collection, recomputed after each sync (§10).
+3. **Materialized `InstrumentExposure`** — `instrument_exposure` table, recomputed after each sync (§10).
 4. **Transaction volume** — tiered TTL for low-value admin types; trade-linked events retained indefinitely (§12).
 5. **Closed trade history** — always requires a separate call or backfill. No single endpoint returns complete trade + current state. Document this limitation for future broker adapters.
 6. **ID namespace** — `ids.py` helpers added; raw OANDA strings remain primary keys until a second adapter lands (§12).
@@ -324,7 +324,7 @@ Collection `instrument_exposure` keyed by `(exchange_id, account_id, symbol, dir
 | Item | Notes |
 |------|-------|
 | Trailing-stop broker order churn | Strategy exits remain strategy-driven (`trail_ema_slow` / `trail_atr` market close) |
-| Separate `child_orders` collection | Embedded model + `broker_events` audit trail is sufficient |
+| Separate `child_orders` table | Embedded model + `broker_events` audit trail is sufficient |
 
 ---
 
@@ -334,7 +334,7 @@ Performance, retention, and multi-broker prep (2026-07):
 
 ### Bulk event upsert
 
-[`BrokerEventsRepository.upsert_events_bulk`](../../src/brokerai/db/repositories/broker_events.py) uses `pymongo.bulk_write` with `UpdateOne` + `$setOnInsert` for `created_at`. `upsert_events` delegates to the bulk path. Batch size: `BROKERAI_BROKER_EVENTS_BULK_BATCH_SIZE` (default 500).
+[`BrokerEventsRepository.upsert_events_bulk`](../../src/brokerai/db/repositories/broker_events.py) uses SQLAlchemy PostgreSQL `INSERT … ON CONFLICT` (batched) so `created_at` is preserved on conflict and `updated_at` / document fields refresh. `upsert_events` delegates to the bulk path. Batch size: `BROKERAI_BROKER_EVENTS_BULK_BATCH_SIZE` (default 500). Tables: `brokerai.broker_events`, `brokerai.broker_lots`.
 
 ### Transaction pagination
 
@@ -342,7 +342,7 @@ Performance, retention, and multi-broker prep (2026-07):
 
 ### Streaming bootstrap
 
-[`run_oanda_bootstrap`](../../src/brokerai/trading/oanda_bootstrap.py) accepts an optional `event_sink(batch, protected_event_ids)` callback. When provided (always from [`run_broker_sync`](../../src/brokerai/trading/broker/sync.py) bootstrap path), step 3 bulk-upserts each page via `BrokerEventsRepository.upsert_events` and returns `events_streamed=True` with an empty in-memory `events` list. Lot enrichment after bootstrap reads events from MongoDB via `list_events_for_lot`. Stale-cursor repair events still merge into a single end-of-sync upsert.
+[`run_oanda_bootstrap`](../../src/brokerai/trading/oanda_bootstrap.py) accepts an optional `event_sink(batch, protected_event_ids)` callback. When provided (always from [`run_broker_sync`](../../src/brokerai/trading/broker/sync.py) bootstrap path), step 3 bulk-upserts each page via `BrokerEventsRepository.upsert_events` and returns `events_streamed=True` with an empty in-memory `events` list. Lot enrichment after bootstrap reads events from Postgres via `list_events_for_lot`. Stale-cursor repair events still merge into a single end-of-sync upsert.
 
 ### Single-write repair contract
 
@@ -357,18 +357,18 @@ Performance, retention, and multi-broker prep (2026-07):
 | Trade-linked | `broker_lot_id` / `broker_order_id` set, or type in `TRADE_LINKED_EVENT_TYPES` | Indefinite |
 | Low-value | No linkage + type in `LOW_VALUE_EVENT_TYPES` (e.g. `MARGIN_CALL`, `DAILY_FINANCING`) | `retention_expires_at` = event time + 90 days |
 
-Settings: `BROKERAI_BROKER_EVENTS_RETENTION_ENABLED` (default true), `BROKERAI_BROKER_EVENTS_LOW_VALUE_RETENTION_DAYS` (default 90). Partial TTL index on `retention_expires_at`. Protected event IDs from open lots and incomplete closed lots skip TTL assignment. Re-upsert clears `retention_expires_at` via `$unset` when an event becomes trade-linked or protected.
+Settings: `BROKERAI_BROKER_EVENTS_RETENTION_ENABLED` (default true), `BROKERAI_BROKER_EVENTS_LOW_VALUE_RETENTION_DAYS` (default 90). Rows with `retention_expires_at` set are eligible for purge; protected event IDs from open lots and incomplete closed lots skip TTL assignment. Re-upsert clears `retention_expires_at` when an event becomes trade-linked or protected.
 
 ### Multi-broker ID helpers + connection prep
 
-- [`ids.py`](../../src/brokerai/trading/broker/ids.py): `broker_lot_key`, `broker_event_key`, `parse_broker_lot_key`, `parse_broker_event_key` — logging/cross-broker use only; MongoDB fields remain raw broker strings.
+- [`ids.py`](../../src/brokerai/trading/broker/ids.py): `broker_lot_key`, `broker_event_key`, `parse_broker_lot_key`, `parse_broker_event_key` — logging/cross-broker use only; Postgres document fields remain raw broker strings.
 - [`ExchangeConnectionsRepository.get_connection`](../../src/brokerai/db/repositories/exchange_connections.py) / `save_connection` / `delete_connection` — generic CRUD; `get_oanda()` remains a thin wrapper.
 - [`BrokerStateService._credentials_for`](../../src/brokerai/trading/broker/state.py) replaces OANDA-only credential resolution.
 - Lot lookups prefer `(exchange_id, account_id, broker_lot_id)` when `account_id` is known.
 
 ### Multi-broker ID namespace contract
 
-When a second broker adapter is added, surrogate keys use `{exchange_id}:{broker_lot_id}` and `{exchange_id}:{broker_event_id}` for cross-broker uniqueness. MongoDB compound unique indexes remain `(exchange_id, account_id, broker_lot_id)` — no OANDA data migration until a second adapter ships.
+When a second broker adapter is added, surrogate keys use `{exchange_id}:{broker_lot_id}` and `{exchange_id}:{broker_event_id}` for cross-broker uniqueness. Postgres unique constraints remain on `(exchange_id, account_id, broker_lot_id)` — no OANDA data migration until a second adapter ships.
 
 ---
 

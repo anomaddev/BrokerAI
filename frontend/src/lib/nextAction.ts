@@ -454,8 +454,12 @@ export function formatNextActionTargetUtc(
 export function resolveOverallStatusExplainer(
   status: OverallBotStatus,
   nextAction: NextActionState | null,
+  options?: { orchestratorRunning?: boolean; anyAssetClassEnabled?: boolean },
 ): string {
   if (status === "stopped") {
+    if (options?.orchestratorRunning && options.anyAssetClassEnabled === false) {
+      return "No asset classes enabled — enable one under Settings → Broker.";
+    }
     return "Orchestrator is offline.";
   }
 

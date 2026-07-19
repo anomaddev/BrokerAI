@@ -44,8 +44,14 @@ class Settings(BaseSettings):
     repo: str = "https://github.com/anomaddev/BrokerAI"
     data_dir: Path = Path("/var/lib/brokerai/data")
     log_dir: Path = Path("/var/log/brokerai")
-    mongodb_uri: str = "mongodb://127.0.0.1:27017"
-    mongodb_db: str = "brokerai"
+    # Postgres via self-hosted Supabase.
+    database_url: str = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres"
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_service_role_key: str = ""
+    supabase_jwt_secret: str = ""
+    # When true (default if DATABASE_URL is set), repositories use Postgres.
+    use_postgres: bool = True
     session_cookie_name: str = "brokerai_session"
     session_max_age: int = 60 * 60 * 24 * 7
     session_cookie_secure: bool | None = None

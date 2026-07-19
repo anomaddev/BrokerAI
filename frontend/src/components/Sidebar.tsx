@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
@@ -8,8 +7,6 @@ import {
   CircleDollarSign,
   Coins,
   Compass,
-  Database,
-  ExternalLink,
   FileText,
   Gem,
   History,
@@ -22,8 +19,9 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import { api, type AssetClass } from "../api/client";
+import type { AssetClass } from "../api/client";
 import { useAssetClassStatuses } from "../hooks/useAssetClassStatuses";
+import { useResearchReportsUnreadCount } from "../hooks/useResearchReportsUnreadCount";
 import { ROUTES } from "../lib/routes";
 
 type NavItem = {
@@ -33,12 +31,7 @@ type NavItem = {
   end?: boolean;
   disabled?: boolean;
   assetClass?: AssetClass;
-};
-
-type ExternalNavItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
+  badge?: number;
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -80,16 +73,6 @@ const SYSTEM_ITEMS: NavItem[] = [
   { to: ROUTES.settings, label: "Settings", icon: Settings },
 ];
 
-const DEFAULT_MONGODB_URI = "mongodb://127.0.0.1:27017";
-const DEFAULT_DATABASE = "brokerai";
-
-function buildMongoConnectionString(uri: string, database: string): string {
-  const base = uri.startsWith("mongodb://") || uri.startsWith("mongodb+srv://")
-    ? uri.replace(/\/$/, "")
-    : `mongodb://${uri.replace(/\/$/, "")}`;
-  return `${base}/${database}`;
-}
-
 type SidebarProps = {
   collapsed: boolean;
   onToggle: () => void;
@@ -105,6 +88,16 @@ function NavStatusDot({ enabled }: { enabled: boolean }) {
   );
 }
 
+function NavCountBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = count > 99 ? "99+" : String(count);
+  return (
+    <span className="nav-count-badge" aria-label={`${count} unread`}>
+      {label}
+    </span>
+  );
+}
+
 function NavItemContent({
   item,
   assetClassEnabled,
@@ -114,6 +107,7 @@ function NavItemContent({
 }) {
   const Icon = item.icon;
   const showStatus = item.assetClass != null && assetClassEnabled !== undefined;
+  const badge = item.badge ?? 0;
 
   return (
     <>
@@ -122,15 +116,33 @@ function NavItemContent({
       </span>
       <span className="nav-label">{item.label}</span>
       {showStatus ? <NavStatusDot enabled={assetClassEnabled} /> : null}
+      {!showStatus ? <NavCountBadge count={badge} /> : null}
     </>
   );
 }
 
-function isNavItemPathActive(pathname: string, to: string, end?: boolean): boolean {
+function isNavItemPathActive(
+  pathname: string,
+  search: string,
+  to: string,
+  end?: boolean,
+): boolean {
+  const [pathOnly, query = ""] = to.split("?");
   if (end) {
-    return pathname === to;
+    return pathname === pathOnly;
   }
-  return pathname === to || pathname.startsWith(`${to}/`);
+  if (!(pathname === pathOnly || pathname.startsWith(`${pathOnly}/`))) {
+    return false;
+  }
+  if (!query) {
+    return true;
+  }
+  const wanted = new URLSearchParams(query);
+  const current = new URLSearchParams(search);
+  for (const [key, value] of wanted.entries()) {
+    if (current.get(key) !== value) return false;
+  }
+  return true;
 }
 
 function NavItemLink({
@@ -142,13 +154,18 @@ function NavItemLink({
   collapsed: boolean;
   assetClassEnabled?: boolean;
 }) {
+  const location = useLocation();
   const title = collapsed
-    ? item.label
+    ? item.badge && item.badge > 0
+      ? `${item.label} (${item.badge} unread)`
+      : item.label
     : item.disabled
       ? "Coming soon"
       : assetClassEnabled != null
         ? `${item.label} (${assetClassEnabled ? "Enabled" : "Disabled"})`
-        : undefined;
+        : item.badge && item.badge > 0
+          ? `${item.label} (${item.badge} unread)`
+          : undefined;
 
   if (item.disabled || !item.to) {
     return (
@@ -158,13 +175,17 @@ function NavItemLink({
     );
   }
 
+  const active = isNavItemPathActive(
+    location.pathname,
+    location.search,
+    item.to,
+    item.end,
+  );
+
   return (
     <NavLink
       to={item.to}
-      isActive={({ location }) =>
-        isNavItemPathActive(location.pathname, item.to, item.end)
-      }
-      className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
+      className={`nav-item${active ? " active" : ""}`}
       title={title}
     >
       <NavItemContent item={item} assetClassEnabled={assetClassEnabled} />
@@ -172,55 +193,21 @@ function NavItemLink({
   );
 }
 
-function ExternalNavItemLink({ item, collapsed }: { item: ExternalNavItem; collapsed: boolean }) {
-  const Icon = item.icon;
-  const title = collapsed ? `${item.label} (opens in new tab)` : "Opens in new tab";
-  return (
-    <a
-      href={item.href}
-      className="nav-item nav-item--external"
-      target="_blank"
-      rel="noopener noreferrer"
-      title={title}
-      aria-label={`${item.label} (opens in new tab)`}
-    >
-      <span className="nav-icon" aria-hidden>
-        <Icon size={20} strokeWidth={1.75} />
-      </span>
-      <span className="nav-label">{item.label}</span>
-      <ExternalLink className="nav-external-icon" size={14} strokeWidth={1.75} aria-hidden />
-    </a>
-  );
-}
-
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const assetClassStatuses = useAssetClassStatuses();
-  const [mongoConnection, setMongoConnection] = useState(
-    buildMongoConnectionString(DEFAULT_MONGODB_URI, DEFAULT_DATABASE),
-  );
-
-  useEffect(() => {
-    api
-      .dbStats()
-      .then((db) => {
-        const uri = typeof db.uri === "string" && db.uri ? db.uri : DEFAULT_MONGODB_URI;
-        const database =
-          typeof db.database === "string" && db.database ? db.database : DEFAULT_DATABASE;
-        setMongoConnection(buildMongoConnectionString(uri, database));
-      })
-      .catch(() => {
-        setMongoConnection(buildMongoConnectionString(DEFAULT_MONGODB_URI, DEFAULT_DATABASE));
-      });
-  }, []);
-
-  const advancedItems: ExternalNavItem[] = [
-    { href: mongoConnection, label: "MongoDB Compass", icon: Database },
-  ];
+  const unread = useResearchReportsUnreadCount();
 
   function resolveAssetClassEnabled(item: NavItem): boolean | undefined {
     if (!item.assetClass) return undefined;
     if (!(item.assetClass in assetClassStatuses)) return undefined;
     return Boolean(assetClassStatuses[item.assetClass]);
+  }
+
+  function withUnreadBadge(item: NavItem): NavItem {
+    if (item.to === ROUTES.research.reports) {
+      return { ...item, badge: unread.unread_count };
+    }
+    return item;
   }
 
   return (
@@ -266,22 +253,19 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {NAV_SECTIONS.map((section) => (
           <div key={section.label} className="sidebar-nav-section">
             <span className="sidebar-section-label">{section.label}</span>
-            {section.items.map((item) => (
-              <NavItemLink
-                key={item.label}
-                item={item}
-                collapsed={collapsed}
-                assetClassEnabled={resolveAssetClassEnabled(item)}
-              />
-            ))}
+            {section.items.map((item) => {
+              const navItem = withUnreadBadge(item);
+              return (
+                <NavItemLink
+                  key={item.label}
+                  item={navItem}
+                  collapsed={collapsed}
+                  assetClassEnabled={resolveAssetClassEnabled(navItem)}
+                />
+              );
+            })}
           </div>
         ))}
-        <div className="sidebar-nav-section">
-          <span className="sidebar-section-label">External</span>
-          {advancedItems.map((item) => (
-            <ExternalNavItemLink key={item.label} item={item} collapsed={collapsed} />
-          ))}
-        </div>
       </nav>
       <div className="sidebar-bottom">
         <span className="sidebar-section-label">System</span>

@@ -1,12 +1,13 @@
+"""Research report keys, metadata parsing, and store-backed I/O."""
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from itertools import islice
-from pathlib import Path
 
-from brokerai.config.settings import get_settings
+from brokerai.bots.researcher.report_store import get_report_store, local_reports_dir
 
 
 @dataclass
@@ -43,22 +44,14 @@ def _model_label_from_filename(name: str) -> str | None:
     return match.group(1).replace("-", " ")
 
 
-def _parse_report_header(path: Path) -> dict[str, str | None]:
-    """Extract display metadata from the first lines of a report file.
-
-    Reads only the leading lines so listing many reports stays cheap.
-    """
+def parse_report_header_text(content: str) -> dict[str, str | None]:
+    """Extract display metadata from the leading lines of report markdown."""
     info: dict[str, str | None] = {
         "model_label": None,
         "generated_at": None,
         "reasoning_effort": None,
     }
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            head = list(islice(fh, 15))
-    except OSError:
-        return info
-
+    head = list(islice(content.splitlines(), 15))
     for raw in head:
         line = raw.strip()
         if line.startswith("Generated at "):
@@ -81,22 +74,67 @@ def _parse_report_header(path: Path) -> dict[str, str | None]:
     return info
 
 
-def _build_meta(
-    path: Path, filename: str, report_date: str, report_type: str
-) -> ReportMeta:
-    header = _parse_report_header(path)
+def _build_meta_from_key(
+    key: str,
+    *,
+    content: str | None = None,
+    size_bytes: int = 0,
+) -> ReportMeta | None:
+    parts = key.replace("\\", "/").split("/")
+    name = parts[-1]
+    parent = parts[-2] if len(parts) > 1 else ""
+
+    daily_match = _FILENAME_RE.match(name)
+    report_date: str | None = None
+    report_type: str | None = None
+
+    if daily_match and daily_match.group(2) == "daily":
+        report_date = daily_match.group(1)
+        report_type = "daily"
+    elif daily_match and daily_match.group(2).startswith("daily_"):
+        report_date = daily_match.group(1)
+        report_type = "daily_model"
+    else:
+        weekly_brief_match = _WEEKLY_BRIEF_RE.match(name)
+        weekly_debrief_match = _WEEKLY_DEBRIEF_RE.match(name)
+        folder_match = _WEEK_FOLDER_RE.match(parent) if parent else None
+        if weekly_brief_match and folder_match:
+            week_start = date.fromisocalendar(
+                int(folder_match.group(1)), int(folder_match.group(2)), 1
+            )
+            report_date = week_start.isoformat()
+            report_type = "weekly_brief"
+        elif weekly_debrief_match and folder_match:
+            week_start = date.fromisocalendar(
+                int(folder_match.group(1)), int(folder_match.group(2)), 1
+            )
+            report_date = week_start.isoformat()
+            report_type = "weekly_debrief"
+        elif daily_match:
+            report_date = daily_match.group(1)
+            report_type = daily_match.group(2)
+
+    if not report_date or not report_type:
+        return None
+
+    header = parse_report_header_text(content or "")
     model_label = header.get("model_label")
     if not model_label and report_type == "daily_model":
-        model_label = _model_label_from_filename(path.name)
-    try:
-        size_bytes = path.stat().st_size
-    except OSError:
-        size_bytes = 0
+        model_label = _model_label_from_filename(name)
+    if content is not None and size_bytes <= 0:
+        size_bytes = len(content.encode("utf-8"))
+
+    store = get_report_store()
+    path = (
+        f"storage://research-reports/{key}"
+        if store.uses_storage
+        else str(local_reports_dir() / key)
+    )
     return ReportMeta(
-        filename=filename,
+        filename=key,
         date=report_date,
         report_type=report_type,
-        path=str(path),
+        path=path,
         model_label=model_label,
         generated_at=header.get("generated_at"),
         reasoning_effort=header.get("reasoning_effort"),
@@ -104,10 +142,9 @@ def _build_meta(
     )
 
 
-def reports_dir() -> Path:
-    path = get_settings().data_dir / "research" / "reports"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def reports_dir():
+    """Legacy helper: local reports directory (filesystem fallback / migrate source)."""
+    return local_reports_dir()
 
 
 def _as_date(value: str | date) -> date:
@@ -134,14 +171,6 @@ def week_folder_key(d: str | date) -> tuple[int, int]:
     return iso_year, iso_week
 
 
-def week_dir_for_date(d: str | date, *, create: bool = False) -> Path:
-    iso_year, iso_week = week_folder_key(d)
-    path = reports_dir() / f"{iso_year}_{iso_week}"
-    if create:
-        path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def week_start_from_folder_name(folder_name: str) -> date | None:
     match = _WEEK_FOLDER_RE.match(folder_name)
     if not match:
@@ -155,23 +184,54 @@ class DailyReportEntry:
     content: str
 
 
-def weekly_brief_path(week_start: date) -> Path:
-    iso_year, iso_week, _ = week_start.isocalendar()
-    week_dir = reports_dir() / f"{iso_year}_{iso_week}"
-    week_dir.mkdir(parents=True, exist_ok=True)
-    return week_dir / f"weekly_brief_{iso_week}.md"
+def week_key_prefix(d: str | date) -> str:
+    iso_year, iso_week = week_folder_key(d)
+    return f"{iso_year}_{iso_week}"
 
 
-def weekly_debrief_path(week_start: date) -> Path:
-    iso_year, iso_week, _ = week_start.isocalendar()
-    week_dir = reports_dir() / f"{iso_year}_{iso_week}"
-    week_dir.mkdir(parents=True, exist_ok=True)
-    return week_dir / f"weekly_debrief_{iso_week}.md"
-
-
-def daily_report_path(report_date: str | date) -> Path:
+def daily_report_key(report_date: str | date) -> str:
     d = _as_date(report_date)
-    return week_dir_for_date(d, create=True) / f"{d.isoformat()}-daily.md"
+    return f"{week_key_prefix(d)}/{d.isoformat()}-daily.md"
+
+
+def daily_model_report_key(report_date: str | date, slug: str) -> str:
+    d = _as_date(report_date)
+    return f"{week_key_prefix(d)}/{d.isoformat()}-daily_{slug}.md"
+
+
+def weekly_brief_key(week_start: date) -> str:
+    iso_year, iso_week, _ = week_start.isocalendar()
+    return f"{iso_year}_{iso_week}/weekly_brief_{iso_week}.md"
+
+
+def weekly_debrief_key(week_start: date) -> str:
+    iso_year, iso_week, _ = week_start.isocalendar()
+    return f"{iso_year}_{iso_week}/weekly_debrief_{iso_week}.md"
+
+
+# Back-compat Path-like helpers used by weekly.py (return key strings cast via Path wrappers).
+def weekly_brief_path(week_start: date):
+    from pathlib import Path
+
+    return Path(weekly_brief_key(week_start))
+
+
+def weekly_debrief_path(week_start: date):
+    from pathlib import Path
+
+    return Path(weekly_debrief_key(week_start))
+
+
+def daily_report_path(report_date: str | date):
+    from pathlib import Path
+
+    return Path(daily_report_key(report_date))
+
+
+def daily_model_report_path(report_date: str | date, slug: str):
+    from pathlib import Path
+
+    return Path(daily_model_report_key(report_date, slug))
 
 
 def model_report_slug(model: dict) -> str:
@@ -181,56 +241,20 @@ def model_report_slug(model: dict) -> str:
     return slug or "model"
 
 
-def daily_model_report_path(report_date: str | date, slug: str) -> Path:
-    d = _as_date(report_date)
-    return week_dir_for_date(d, create=True) / f"{d.isoformat()}-daily_{slug}.md"
+def _normalize_identifier(identifier: str) -> str:
+    return identifier.strip().lstrip("/")
 
 
-def _meta_from_path(path: Path, root: Path) -> ReportMeta | None:
-    name = path.name
-    daily_match = _FILENAME_RE.match(name)
-    if daily_match and daily_match.group(2) == "daily":
-        rel = path.relative_to(root)
-        return _build_meta(path, str(rel), daily_match.group(1), "daily")
-
-    if daily_match and daily_match.group(2).startswith("daily_"):
-        rel = path.relative_to(root)
-        return _build_meta(path, str(rel), daily_match.group(1), "daily_model")
-
-    weekly_brief_match = _WEEKLY_BRIEF_RE.match(name)
-    if weekly_brief_match and path.parent != root:
-        folder_match = _WEEK_FOLDER_RE.match(path.parent.name)
-        if folder_match:
-            week_start = date.fromisocalendar(int(folder_match.group(1)), int(folder_match.group(2)), 1)
-            rel = path.relative_to(root)
-            return _build_meta(path, str(rel), week_start.isoformat(), "weekly_brief")
-
-    weekly_debrief_match = _WEEKLY_DEBRIEF_RE.match(name)
-    if weekly_debrief_match and path.parent != root:
-        folder_match = _WEEK_FOLDER_RE.match(path.parent.name)
-        if folder_match:
-            week_start = date.fromisocalendar(int(folder_match.group(1)), int(folder_match.group(2)), 1)
-            rel = path.relative_to(root)
-            return _build_meta(path, str(rel), week_start.isoformat(), "weekly_debrief")
-
-    if daily_match:
-        return _build_meta(path, name, daily_match.group(1), daily_match.group(2))
-    return None
-
-
-def _iter_report_paths(root: Path) -> list[Path]:
-    paths: list[Path] = []
-    for path in root.rglob("*.md"):
-        if path.is_file():
-            paths.append(path)
-    return paths
-
-
-def list_reports(limit: int = 200) -> list[ReportMeta]:
-    directory = reports_dir()
+async def list_reports(limit: int = 200) -> list[ReportMeta]:
+    store = get_report_store()
+    await store.ensure()
     entries: list[ReportMeta] = []
-    for path in sorted(_iter_report_paths(directory), key=lambda p: str(p), reverse=True):
-        meta = _meta_from_path(path, directory)
+    for key in await store.list_keys():
+        try:
+            content = await store.read_text(key)
+        except FileNotFoundError:
+            continue
+        meta = _build_meta_from_key(key, content=content)
         if meta is None:
             continue
         entries.append(meta)
@@ -240,153 +264,157 @@ def list_reports(limit: int = 200) -> list[ReportMeta]:
     return entries[:limit]
 
 
-def resolve_report_path(identifier: str) -> Path | None:
-    directory = reports_dir()
-    ident = identifier.strip()
+async def resolve_report_key(identifier: str) -> str | None:
+    store = get_report_store()
+    await store.ensure()
+    ident = _normalize_identifier(identifier)
 
-    if "/" in ident or ident.endswith(".md"):
-        candidate = directory / ident
-        if candidate.is_file():
-            return candidate
+    if await store.exists(ident):
+        return ident
 
     if re.match(r"^\d{4}-\d{2}-\d{2}$", ident):
-        matches = sorted(directory.glob(f"**/{ident}-daily.md"), reverse=True)
-        return matches[0] if matches else None
+        suffix = f"{ident}-daily.md"
+        for key in await store.list_keys():
+            if key.endswith(suffix) and key.rsplit("/", 1)[-1] == suffix:
+                return key
+        return None
 
-    candidate = directory / f"{ident}.md"
-    if candidate.is_file():
-        return candidate
-    candidate = directory / ident
-    return candidate if candidate.is_file() else None
+    if not ident.endswith(".md"):
+        candidate = f"{ident}.md"
+        if await store.exists(candidate):
+            return candidate
+    return None
 
 
-def _resolve_within_reports(identifier: str) -> Path:
-    directory = reports_dir()
-    path = resolve_report_path(identifier)
-    if path is None:
+async def read_report(identifier: str) -> tuple[str, str]:
+    key = await resolve_report_key(identifier)
+    if key is None:
         raise FileNotFoundError(f"Report not found: {identifier}")
-    resolved = path.resolve()
-    if not resolved.is_relative_to(directory.resolve()):
-        raise FileNotFoundError(f"Report not found: {identifier}")
-    return resolved
+    content = await get_report_store().read_text(key)
+    return key, content
 
 
-def read_report(identifier: str) -> tuple[str, str]:
-    path = _resolve_within_reports(identifier)
-    try:
-        filename = str(path.relative_to(reports_dir().resolve()))
-    except ValueError:
-        filename = path.name
-    return filename, path.read_text(encoding="utf-8")
-
-
-def report_meta(identifier: str) -> ReportMeta | None:
+async def report_meta(identifier: str) -> ReportMeta | None:
     """Resolve a report and return its parsed metadata, or None if absent."""
     try:
-        path = _resolve_within_reports(identifier)
+        key, content = await read_report(identifier)
     except FileNotFoundError:
         return None
-    return _meta_from_path(path, reports_dir().resolve())
+    return _build_meta_from_key(key, content=content)
 
 
-def write_daily_report(content: str, report_date: str | None = None) -> Path:
+async def write_daily_report(content: str, report_date: str | None = None) -> str:
     date_str = report_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    path = daily_report_path(date_str)
-    path.write_text(content, encoding="utf-8")
-    return path
+    key = daily_report_key(date_str)
+    await get_report_store().write_text(key, content)
+    return key
 
 
-def write_model_daily_report(content: str, *, report_date: str, slug: str) -> Path:
-    path = daily_model_report_path(report_date, slug)
-    path.write_text(content, encoding="utf-8")
-    return path
+async def write_model_daily_report(content: str, *, report_date: str, slug: str) -> str:
+    key = daily_model_report_key(report_date, slug)
+    await get_report_store().write_text(key, content)
+    return key
 
 
-def load_daily_report_content(report_date: str | date) -> str | None:
-    path = daily_report_path(report_date)
-    if not path.is_file():
+async def write_report_key(key: str, content: str) -> str:
+    await get_report_store().write_text(key, content)
+    return key
+
+
+async def load_daily_report_content(report_date: str | date) -> str | None:
+    key = daily_report_key(report_date)
+    store = get_report_store()
+    if not await store.exists(key):
         return None
-    return path.read_text(encoding="utf-8")
+    return await store.read_text(key)
 
 
-def daily_report_exists(report_date: str | date) -> bool:
-    return daily_report_path(report_date).is_file()
+async def daily_report_exists(report_date: str | date) -> bool:
+    return await get_report_store().exists(daily_report_key(report_date))
 
 
-def load_daily_reports_for_week(week_start: date) -> list[DailyReportEntry]:
+async def load_daily_reports_for_week(week_start: date) -> list[DailyReportEntry]:
     """Load Mon–Fri daily reports for the given week."""
     entries: list[DailyReportEntry] = []
     for offset in range(5):
         day = week_start + timedelta(days=offset)
-        content = load_daily_report_content(day)
+        content = await load_daily_report_content(day)
         if content:
             entries.append(DailyReportEntry(date=day.isoformat(), content=content.strip()))
     return entries
 
 
-def load_weekend_daily_reports_for_week(week_start: date) -> list[DailyReportEntry]:
+async def load_weekend_daily_reports_for_week(week_start: date) -> list[DailyReportEntry]:
     """Load Sat/Sun dailies immediately before week_start (prior weekend)."""
     entries: list[DailyReportEntry] = []
     for offset in (-2, -1):
         day = week_start + timedelta(days=offset)
-        content = load_daily_report_content(day)
+        content = await load_daily_report_content(day)
         if content:
             entries.append(DailyReportEntry(date=day.isoformat(), content=content.strip()))
     return entries
 
 
-def load_weekly_brief_for_week(week_start: date) -> str | None:
-    path = weekly_brief_path(week_start)
-    if not path.is_file():
+async def load_weekly_brief_for_week(week_start: date) -> str | None:
+    key = weekly_brief_key(week_start)
+    store = get_report_store()
+    if not await store.exists(key):
         return None
-    return path.read_text(encoding="utf-8").strip()
+    return (await store.read_text(key)).strip()
 
 
-def write_report_file(path: Path, content: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return path
+async def write_report_file(path_or_key, content: str) -> str:
+    """Write report content. Accepts a key string or Path whose str is the key."""
+    key = str(path_or_key).replace("\\", "/")
+    # Strip accidental absolute prefixes if a Path was built from key only.
+    if key.startswith("/"):
+        # Prefer last two segments when an absolute path leaked in.
+        parts = [p for p in key.split("/") if p]
+        if len(parts) >= 2 and _WEEK_FOLDER_RE.match(parts[-2]):
+            key = f"{parts[-2]}/{parts[-1]}"
+        else:
+            key = parts[-1]
+    return await write_report_key(key, content)
 
 
-def delete_report(identifier: str) -> ReportMeta:
-    """Delete a report file and return its metadata."""
-    path = _resolve_within_reports(identifier)
-    meta = _meta_from_path(path, reports_dir().resolve())
+async def delete_report(identifier: str) -> ReportMeta:
+    """Delete a report and return its metadata."""
+    meta = await report_meta(identifier)
     if meta is None:
         raise FileNotFoundError(f"Report not found: {identifier}")
-    path.unlink(missing_ok=True)
+    await get_report_store().delete(meta.filename)
     return meta
 
 
-def _weekly_debrief_path_candidates(directory: Path) -> list[tuple[date, Path]]:
-    candidates: list[tuple[date, Path]] = []
-
-    for week_dir in directory.iterdir():
-        if not week_dir.is_dir():
-            continue
-        week_start = week_start_from_folder_name(week_dir.name)
-        if week_start is None:
-            continue
-        iso_week = week_start.isocalendar()[1]
-        debrief_path = week_dir / f"weekly_debrief_{iso_week}.md"
-        if debrief_path.is_file():
-            candidates.append((week_start, debrief_path))
-
-    return candidates
-
-
-def load_historical_weekly_debriefs(reference_date: str | date, max_weeks: int = 8) -> str:
+async def load_historical_weekly_debriefs(reference_date: str | date, max_weeks: int = 8) -> str:
     """Concatenate up to `max_weeks` recent AI weekly debriefs for LLM context."""
     current_week_start = resolve_weekly_target_date(reference_date)
-    directory = reports_dir()
-
-    candidates = [
-        (week_start, path)
-        for week_start, path in _weekly_debrief_path_candidates(directory)
-        if week_start < current_week_start
-    ]
+    store = get_report_store()
+    await store.ensure()
+    candidates: list[tuple[date, str]] = []
+    for key in await store.list_keys():
+        name = key.rsplit("/", 1)[-1]
+        parent = key.rsplit("/", 1)[0] if "/" in key else ""
+        debrief_match = _WEEKLY_DEBRIEF_RE.match(name)
+        folder_match = _WEEK_FOLDER_RE.match(parent) if parent else None
+        if not debrief_match or not folder_match:
+            continue
+        week_start = date.fromisocalendar(int(folder_match.group(1)), int(folder_match.group(2)), 1)
+        if week_start < current_week_start:
+            candidates.append((week_start, key))
     candidates.sort(key=lambda item: item[0], reverse=True)
     selected = sorted(candidates[:max_weeks], key=lambda item: item[0])
-
-    chunks = [path.read_text(encoding="utf-8").strip() for _, path in selected]
+    chunks: list[str] = []
+    for _, key in selected:
+        try:
+            chunks.append((await store.read_text(key)).strip())
+        except FileNotFoundError:
+            continue
     return "\n\n---\n\n".join(chunk for chunk in chunks if chunk)
+
+
+async def create_report_signed_url(identifier: str, *, expires_in: int = 3600) -> str | None:
+    key = await resolve_report_key(identifier)
+    if key is None:
+        raise FileNotFoundError(f"Report not found: {identifier}")
+    return await get_report_store().create_signed_url(key, expires_in=expires_in)

@@ -11,6 +11,7 @@ from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
 from brokerai.db.repositories.oanda_account_snapshots import OandaAccountSnapshotsRepository
 from brokerai.integrations.oanda import test_connection as oanda_test_connection
+from brokerai.integrations.oanda_client import normalize_access_token
 from brokerai.trading.oanda_account_sync import (
     get_cached_oanda_account_summary,
     run_oanda_account_sync,
@@ -22,13 +23,13 @@ router = APIRouter(prefix="/api/settings/exchanges", tags=["settings-exchanges"]
 
 
 class OandaSaveBody(BaseModel):
-    access_token: str = Field(default="", max_length=500)
+    access_token: str = Field(default="", max_length=2048)
     environment: str = Field(default="practice", pattern="^(practice|live)$")
     account_id: str = Field(min_length=1, max_length=120)
 
 
 class OandaTestBody(BaseModel):
-    access_token: str = Field(default="", max_length=500)
+    access_token: str = Field(default="", max_length=2048)
     environment: str = Field(default="practice", pattern="^(practice|live)$")
     account_id: str = Field(default="", max_length=120)
 
@@ -54,13 +55,15 @@ async def save_oanda_connection(
 ) -> JSONResponse:
     repo = ExchangeConnectionsRepository()
     existing = await repo.get_oanda()
-    access_token = body.access_token.strip() or existing.get("access_token", "")
+    access_token = normalize_access_token(body.access_token) or str(
+        existing.get("access_token") or ""
+    )
     if not access_token:
         raise HTTPException(status_code=400, detail="An access token is required")
 
     access_token_changed = bool(
-        body.access_token.strip()
-        and body.access_token.strip() != existing.get("access_token", "")
+        normalize_access_token(body.access_token)
+        and access_token != existing.get("access_token", "")
     )
     change_label = describe_oanda_connection_change(
         existing,
@@ -100,22 +103,30 @@ async def test_oanda_connection(
     _username: str = Depends(require_auth),
 ) -> JSONResponse:
     repo = ExchangeConnectionsRepository()
-    access_token = body.access_token.strip()
+    access_token = normalize_access_token(body.access_token)
     if not access_token:
         existing = await repo.get_oanda()
-        access_token = existing.get("access_token", "")
+        access_token = str(existing.get("access_token") or "")
 
-    ok, message, accounts = await oanda_test_connection(
+    ok, message, accounts, suggested_environment, diagnostics = await oanda_test_connection(
         access_token,
         body.environment,
         body.account_id or None,
     )
-    return JSONResponse({"ok": ok, "message": message, "accounts": accounts})
+    payload: dict[str, object] = {
+        "ok": ok,
+        "message": message,
+        "accounts": accounts,
+        "diagnostics": diagnostics,
+    }
+    if suggested_environment:
+        payload["suggested_environment"] = suggested_environment
+    return JSONResponse(payload)
 
 
 @router.get("/oanda/accounts")
 async def get_oanda_accounts(_username: str = Depends(require_auth)) -> JSONResponse:
-    """Return the most recently synced OANDA account list from MongoDB."""
+    """Return the most recently synced OANDA account list from Postgres."""
     repo = ExchangeConnectionsRepository()
     oanda = await repo.get_oanda()
     if not oanda.get("access_token"):
@@ -165,6 +176,8 @@ async def get_oanda_account_summary(_username: str = Depends(require_auth)) -> J
         summary["last_sync_error"] = sync_state.get("last_sync_error")
         if isinstance(synced_at, datetime):
             summary["broker_synced_at"] = synced_at.isoformat()
+        elif isinstance(synced_at, str) and synced_at.strip():
+            summary["broker_synced_at"] = synced_at
 
     return JSONResponse(summary)
 
@@ -214,9 +227,17 @@ def _parse_iso_datetime(raw: str | None) -> datetime | None:
 async def test_saved_oanda_connection(_username: str = Depends(require_auth)) -> JSONResponse:
     repo = ExchangeConnectionsRepository()
     oanda = await repo.get_oanda()
-    ok, message, accounts = await oanda_test_connection(
+    ok, message, accounts, suggested_environment, diagnostics = await oanda_test_connection(
         oanda.get("access_token", ""),
         oanda.get("environment", "practice"),
         oanda.get("account_id"),
     )
-    return JSONResponse({"ok": ok, "message": message, "accounts": accounts})
+    payload: dict[str, object] = {
+        "ok": ok,
+        "message": message,
+        "accounts": accounts,
+        "diagnostics": diagnostics,
+    }
+    if suggested_environment:
+        payload["suggested_environment"] = suggested_environment
+    return JSONResponse(payload)

@@ -32,7 +32,10 @@ $STD apt-get install -y \
   openssl \
   openssh-server \
   gnupg \
-  ca-certificates
+  ca-certificates \
+  docker.io \
+  docker-compose-v2
+$STD systemctl enable -q --now docker
 msg_ok "Installed Dependencies"
 
 msg_info "Installing Node.js"
@@ -59,11 +62,6 @@ else
 fi
 msg_ok "Cloned BrokerAI"
 
-msg_info "Installing MongoDB"
-chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
-$STD bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
-msg_ok "MongoDB ready"
-
 msg_info "Setting up Python virtual environment"
 # shellcheck source=scripts/lib/install-common.sh
 source "${BROKERAI_INSTALL_DIR}/scripts/lib/install-common.sh"
@@ -87,14 +85,55 @@ _brokerai_seed_production_config \
   "${BROKERAI_INSTALL_DIR}/config/config.env.example" \
   "${BROKERAI_DATA_DIR}" \
   "${BROKERAI_LOG_DIR}"
+if [[ -n "${BROKERAI_DOMAIN:-}" ]]; then
+  _brokerai_upsert_config_kv "${BROKERAI_CONFIG_DIR}/config.env" "BROKERAI_DOMAIN" "${BROKERAI_DOMAIN}"
+fi
+if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
+  _brokerai_upsert_config_kv "${BROKERAI_CONFIG_DIR}/config.env" "BROKERAI_SUPABASE_DOMAIN" "${BROKERAI_SUPABASE_DOMAIN}"
+fi
 msg_ok "Configured BrokerAI"
+
+msg_info "Starting self-hosted Supabase"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-supabase.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/setup-supabase.sh"
+# setup-supabase.sh appends BROKERAI_* keys to install-dir .env; merge into production config.
+$STD env ENV_FILE="${BROKERAI_INSTALL_DIR}/.env" \
+  BROKERAI_DOMAIN="${BROKERAI_DOMAIN:-}" \
+  BROKERAI_SUPABASE_DOMAIN="${BROKERAI_SUPABASE_DOMAIN:-}" \
+  bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-supabase.sh" "${BROKERAI_INSTALL_DIR}"
+if [[ -f "${BROKERAI_INSTALL_DIR}/.env" ]]; then
+  while IFS= read -r line; do
+    case "${line}" in
+      BROKERAI_DATABASE_URL=*|BROKERAI_SUPABASE_*=*)
+        key="${line%%=*}"
+        value="${line#*=}"
+        _brokerai_upsert_config_kv "${BROKERAI_CONFIG_DIR}/config.env" "${key}" "${value}"
+        ;;
+    esac
+  done <"${BROKERAI_INSTALL_DIR}/.env"
+fi
+(
+  cd "${BROKERAI_INSTALL_DIR}"
+  set -a
+  # shellcheck disable=SC1091
+  source "${BROKERAI_CONFIG_DIR}/config.env"
+  set +a
+  $STD "${BROKERAI_INSTALL_DIR}/venv/bin/python" -c \
+    "import asyncio; from brokerai.db.indexes import ensure_indexes; asyncio.run(ensure_indexes())"
+)
+msg_ok "Supabase + schema ready"
+
+msg_info "Configuring TLS (Caddy)"
+_brokerai_maybe_install_caddy_tls "${BROKERAI_INSTALL_DIR}" "${BROKERAI_CONFIG_DIR}/config.env"
+msg_ok "TLS configuration done"
 
 BROKERAI_INSTALLED_COMMIT="$(git -C "${BROKERAI_INSTALL_DIR}" rev-parse HEAD)"
 
 msg_info "Setting permissions"
+mkdir -p /var/lib/brokerai/backups/postgres
 chown -R brokerai:brokerai "${BROKERAI_INSTALL_DIR}" "${BROKERAI_DATA_DIR}" "${BROKERAI_LOG_DIR}"
-chown -R root:brokerai "${BROKERAI_CONFIG_DIR}"
-chmod 750 "${BROKERAI_CONFIG_DIR}"
+chown -R root:brokerai "${BROKERAI_CONFIG_DIR}" /var/lib/brokerai/backups
+chmod 750 "${BROKERAI_CONFIG_DIR}" /var/lib/brokerai/backups /var/lib/brokerai/backups/postgres
 chmod 640 "${BROKERAI_CONFIG_DIR}/config.env"
 # Root runs git for updates; repo is owned by brokerai after chown.
 # shellcheck source=scripts/lib/update-track.sh
@@ -112,15 +151,22 @@ chmod +x "${BROKERAI_INSTALL_DIR}/scripts/update-now.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/provision-admin-user.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/backup-postgres.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-caddy.sh"
 ln -sf "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
 ln -sf "${BROKERAI_INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-power" /etc/sudoers.d/brokerai-power
-chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin /etc/sudoers.d/brokerai-power
+cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-domain" /etc/sudoers.d/brokerai-domain
+chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin \
+  /etc/sudoers.d/brokerai-power /etc/sudoers.d/brokerai-domain
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/apply-domain-tls.sh"
 visudo -cf /etc/sudoers.d/brokerai-update
 visudo -cf /etc/sudoers.d/brokerai-admin
 visudo -cf /etc/sudoers.d/brokerai-power
+visudo -cf /etc/sudoers.d/brokerai-domain
+_brokerai_install_postgres_backup "${BROKERAI_INSTALL_DIR}" "${BROKERAI_CONFIG_DIR}/config.env"
 $STD systemctl daemon-reload
 $STD systemctl enable -q --now brokerai-orchestrator brokerai-web brokerai-update.timer
 msg_ok "Installed systemd services"

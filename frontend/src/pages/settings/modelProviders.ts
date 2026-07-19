@@ -12,9 +12,10 @@ export type ModelProvider = {
   defaults: {
     title: string;
     base_url: string;
-    model_name: string;
   };
   showBaseUrl: boolean;
+  /** Cloud providers: form is API key (+ optional title) only. */
+  apiKeyOnly: boolean;
   apiKeyRequired: boolean;
   supportsConnectionTest: boolean;
   connectionCapabilities?: Array<{
@@ -30,11 +31,11 @@ export const MODEL_PROVIDERS: ModelProvider[] = [
     description: "Local Open WebUI or Ollama instance",
     logo: openWebuiLogo,
     defaults: {
-      title: "",
+      title: "Open WebUI",
       base_url: "http://10.0.2.2",
-      model_name: "qwen2.5:7b",
     },
     showBaseUrl: true,
+    apiKeyOnly: false,
     apiKeyRequired: false,
     supportsConnectionTest: true,
   },
@@ -44,11 +45,11 @@ export const MODEL_PROVIDERS: ModelProvider[] = [
     description: "GPT models via the OpenAI API",
     logo: openaiLogo,
     defaults: {
-      title: "",
+      title: "OpenAI",
       base_url: "https://api.openai.com/v1",
-      model_name: "gpt-4o",
     },
-    showBaseUrl: true,
+    showBaseUrl: false,
+    apiKeyOnly: true,
     apiKeyRequired: true,
     supportsConnectionTest: true,
   },
@@ -58,13 +59,13 @@ export const MODEL_PROVIDERS: ModelProvider[] = [
     description: "Anthropic Claude models",
     logo: claudeLogo,
     defaults: {
-      title: "",
+      title: "Claude",
       base_url: "https://api.anthropic.com/v1",
-      model_name: "claude-sonnet-4-20250514",
     },
-    showBaseUrl: true,
+    showBaseUrl: false,
+    apiKeyOnly: true,
     apiKeyRequired: true,
-    supportsConnectionTest: false,
+    supportsConnectionTest: true,
   },
   {
     type: "grok",
@@ -72,11 +73,11 @@ export const MODEL_PROVIDERS: ModelProvider[] = [
     description: "xAI Grok models",
     logo: grokLogo,
     defaults: {
-      title: "",
+      title: "Grok",
       base_url: "https://api.x.ai/v1",
-      model_name: "grok-2",
     },
-    showBaseUrl: true,
+    showBaseUrl: false,
+    apiKeyOnly: true,
     apiKeyRequired: true,
     supportsConnectionTest: true,
     connectionCapabilities: [
@@ -92,4 +93,19 @@ export function getProvider(type: string): ModelProvider | undefined {
 
 export function providerLabel(type: string): string {
   return getProvider(type)?.label ?? type;
+}
+
+export function catalogSelectionKey(sourceId: string, modelName: string): string {
+  return `${sourceId}::${modelName}`;
+}
+
+export function parseCatalogSelectionKey(
+  value: string,
+): { sourceId: string; modelName: string } | null {
+  const sep = value.indexOf("::");
+  if (sep <= 0) return null;
+  const sourceId = value.slice(0, sep);
+  const modelName = value.slice(sep + 2);
+  if (!sourceId || !modelName) return null;
+  return { sourceId, modelName };
 }

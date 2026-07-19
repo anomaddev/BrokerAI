@@ -1,24 +1,19 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository, OANDA_ID
 
 
+pytestmark = pytest.mark.usefixtures("sqlite_db")
+
+
 @pytest.mark.asyncio
 async def test_get_connection_defaults_for_oanda():
     repo = ExchangeConnectionsRepository()
-    db_handle = MagicMock()
-    db_handle.db = {repo.COLLECTION: MagicMock()}
-    db_handle.db[repo.COLLECTION].find_one = AsyncMock(return_value=None)
-
-    with patch(
-        "brokerai.db.repositories.exchange_connections.get_db",
-        new=AsyncMock(return_value=db_handle),
-    ):
-        doc = await repo.get_connection(OANDA_ID)
+    doc = await repo.get_connection(OANDA_ID)
 
     assert doc["exchange_id"] == OANDA_ID
     assert doc["access_token"] == ""

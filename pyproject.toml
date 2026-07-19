@@ -13,13 +13,17 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.6.0",
     "httpx>=0.28.0",
-    "motor>=3.6.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "psycopg[binary]>=3.2.0",
+    "PyJWT[crypto]>=2.9.0",
     "bcrypt>=4.2.0",
     "tenacity>=9.0",
     "python-multipart>=0.0.12",
     "itsdangerous>=2.2.0",
     "authlib>=1.4.0",
     "feedparser>=6.0.11",
+    "supabase>=2.10.0,<3",
 ]
 
 [project.scripts]
@@ -35,6 +39,7 @@ brokerai = ["web/static/**/*"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "aiosqlite>=0.20.0",
 ]
 data = [
     "pandas>=2.0",

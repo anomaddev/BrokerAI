@@ -19,6 +19,7 @@ import {
   createBrokerChartOptions,
   fitTimeScaleToBounds,
 } from "../../lib/chart/brokerChartOptions";
+import { chartPriceFormat } from "../../lib/chart/formatChartPrice";
 import { computeExploreOverlays } from "../../lib/chart/computeExploreOverlays";
 import {
   chartFocusVisibleTimeRange,
@@ -73,6 +74,7 @@ function syncLineSeriesMap(
   chart: IChartApi,
   seriesMap: Map<string, ISeriesApi<"Line">>,
   lines: StrategyIndicatorLine[],
+  priceFormat?: ReturnType<typeof chartPriceFormat>,
 ) {
   const nextIds = new Set(lines.map((line) => line.id));
   for (const id of seriesMap.keys()) {
@@ -91,6 +93,7 @@ function syncLineSeriesMap(
         priceLineVisible: false,
         lastValueVisible: true,
         title: line.label,
+        ...(priceFormat ? { priceFormat } : {}),
       });
       seriesMap.set(line.id, series);
     }
@@ -99,6 +102,7 @@ function syncLineSeriesMap(
       color: line.color,
       title: line.label,
       visible: line.visible,
+      ...(priceFormat ? { priceFormat } : {}),
     });
     series.setData(
       line.visible
@@ -327,6 +331,11 @@ export default function ExploreCandleChart({
 
     const previousCandles = prevCandlesRef.current;
     const tailOnly = !focusWindow && isTailOnlyCandleChange(previousCandles, displayCandles);
+    const samplePrice = data[data.length - 1]?.close ?? displayCandles[displayCandles.length - 1]?.close;
+    const priceFormat = samplePrice != null ? chartPriceFormat(samplePrice) : undefined;
+    if (priceFormat) {
+      candleSeries.applyOptions({ priceFormat });
+    }
 
     if (tailOnly && previousCandles.length > 0) {
       for (const bar of tailCandleUpdates(previousCandles, displayCandles)) {
@@ -347,7 +356,12 @@ export default function ExploreCandleChart({
     prevCandlesRef.current = displayCandles;
     barCountRef.current = data.length;
 
-    syncLineSeriesMap(priceChart, priceLineSeriesRef.current, overlayData?.priceLines ?? []);
+    syncLineSeriesMap(
+      priceChart,
+      priceLineSeriesRef.current,
+      overlayData?.priceLines ?? [],
+      priceFormat,
+    );
 
     const adxChart = adxChartRef.current;
     if (adxChart) {

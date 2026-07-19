@@ -1,14 +1,50 @@
-# Reverse-proxy TLS termination for BrokerAI + Authelia OIDC.
+# Reverse-proxy TLS termination for BrokerAI (+ optional public Supabase).
 #
-# Replace brokerai.example.com with your hostname and update Authelia URLs to match.
+# Used by scripts/lib/install-caddy.sh when BROKERAI_DOMAIN is set during LXC
+# install. Replace hostnames (or let the installer rewrite them).
+#
+# DNS: point BROKERAI_DOMAIN (and BROKERAI_SUPABASE_DOMAIN if used) at the LXC
+# and open TCP 80/443 for Let's Encrypt. Do not enable deploy/supabase
+# docker-compose.caddy.yml alongside this host Caddy — both bind :80/:443.
+#
+# Manual install:
+#   BROKERAI_DOMAIN=brokerai.example.com \
+#   BROKERAI_SUPABASE_DOMAIN=supabase.example.com \
+#     bash scripts/lib/install-caddy.sh
+#   # set BROKERAI_WEB_BIND=127.0.0.1 and BROKERAI_SESSION_COOKIE_SECURE=true
+#   # set BROKERAI_SUPABASE_URL=https://supabase.example.com when exposing Kong
 
 brokerai.example.com {
-    encode gzip
+	encode gzip
 
-    reverse_proxy /authelia/* authelia:9091
-    reverse_proxy * 127.0.0.1:1989 {
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
-        header_up X-Real-IP {remote_host}
-    }
+	reverse_proxy * 127.0.0.1:1989 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		header_up X-Real-IP {remote_host}
+	}
 }
+
+# Optional second site when BROKERAI_SUPABASE_DOMAIN is set at install time.
+# Kong API paths are public; Studio is behind basic_auth (DASHBOARD_* from
+# deploy/supabase/.env). Postgres stays on 127.0.0.1:5432 only.
+#
+# supabase.example.com {
+# 	encode gzip
+#
+# 	@supabase_api path /auth/v1/* /rest/v1/* /graphql/v1 /realtime/v1/* /storage/v1/* /functions/v1/* /mcp /sso/*
+#
+# 	handle @supabase_api {
+# 		reverse_proxy 127.0.0.1:8000 {
+# 			header_up X-Forwarded-Proto {scheme}
+# 			header_up X-Forwarded-Host {host}
+# 			header_up X-Real-IP {remote_host}
+# 		}
+# 	}
+#
+# 	handle {
+# 		basic_auth {
+# 			supabase $2a$14$REPLACE_WITH_CADDY_HASH
+# 		}
+# 		reverse_proxy 127.0.0.1:3000
+# 	}
+# }

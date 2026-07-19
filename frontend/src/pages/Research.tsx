@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
+import { Download, ExternalLink, MailOpen, RefreshCw, Trash2 } from "lucide-react";
 import { ROUTES } from "../lib/routes";
 import {
   api,
   BACKGROUND_TASK_COMPLETED_EVENT,
+  notifyResearchReportsUnreadUpdated,
   RESEARCH_TASK_KINDS,
   type BackgroundTaskCompletedDetail,
   type ResearchReportMeta,
@@ -12,6 +13,7 @@ import {
 import ResearchSignalsPanel from "../components/ResearchSignalsPanel";
 import { useBackgroundTasks } from "../context/BackgroundTasksContext";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import { fetchReportMarkdownFromSignedUrl } from "../lib/supabaseClient";
 
 const RESEARCH_KIND_SET = new Set(Object.values(RESEARCH_TASK_KINDS));
 
@@ -94,6 +96,7 @@ export default function Research() {
       }
 
       void loadReports();
+      notifyResearchReportsUnreadUpdated();
 
       if (detail.status === "success") {
         setActionError(null);
@@ -148,16 +151,66 @@ export default function Research() {
     setActionMessage(null);
     try {
       const data = await api.getResearchReport(report.filename);
-      const blob = new Blob([data.content], { type: "text/markdown;charset=utf-8" });
+      let markdown = data.content ?? "";
+      if (!markdown && data.signed_url) {
+        markdown = await fetchReportMarkdownFromSignedUrl(data.signed_url);
+      }
+      const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = fileLabel(report);
       anchor.click();
       URL.revokeObjectURL(url);
+      try {
+        await api.markResearchReportRead(report.filename);
+        notifyResearchReportsUnreadUpdated();
+        setReports((current) =>
+          current.map((item) =>
+            item.filename === report.filename ? { ...item, is_read: true } : item,
+          ),
+        );
+      } catch {
+        /* download succeeded */
+      }
       setActionMessage(`Downloaded ${fileLabel(report)}`);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function markAllRead() {
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const filenames = filtered.map((report) => report.filename);
+      await api.markAllResearchReportsRead(filenames);
+      notifyResearchReportsUnreadUpdated();
+      await loadReports();
+      setActionMessage("Marked filtered reports as read");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Mark all read failed");
+    }
+  }
+
+  async function markUnread(report: ResearchReportMeta) {
+    const key = `unread:${report.filename}`;
+    setBusyKey(key);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      await api.markResearchReportUnread(report.filename);
+      notifyResearchReportsUnreadUpdated();
+      setReports((current) =>
+        current.map((item) =>
+          item.filename === report.filename ? { ...item, is_read: false } : item,
+        ),
+      );
+      setActionMessage(`Marked ${fileLabel(report)} unread`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Mark unread failed");
     } finally {
       setBusyKey(null);
     }
@@ -223,6 +276,7 @@ export default function Research() {
     try {
       await api.deleteResearchReport(deleteTarget.filename);
       setReports((current) => current.filter((item) => item.filename !== deleteTarget.filename));
+      notifyResearchReportsUnreadUpdated();
       setActionMessage(`Deleted ${fileLabel(deleteTarget)}`);
       setDeleteTarget(null);
     } catch (err) {
@@ -264,6 +318,14 @@ export default function Research() {
             </select>
           </div>
           <div className="research-reports-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={loading || filtered.every((report) => report.is_read)}
+              onClick={() => void markAllRead()}
+            >
+              Mark all read
+            </button>
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -341,7 +403,7 @@ export default function Research() {
                   return (
                     <tr
                       key={report.filename}
-                      className="research-row"
+                      className={`research-row${report.is_read ? "" : " research-row--unread"}`}
                       onClick={() => openReport(report)}
                       tabIndex={0}
                       role="button"
@@ -352,7 +414,12 @@ export default function Research() {
                         }
                       }}
                     >
-                      <td>{report.date}</td>
+                      <td>
+                        {!report.is_read ? (
+                          <span className="research-unread-dot" aria-label="Unread" title="Unread" />
+                        ) : null}
+                        {report.date}
+                      </td>
                       <td>
                         <span className={`research-tag research-tag--${report.type}`}>
                           {typeLabel(report)}
@@ -376,6 +443,18 @@ export default function Research() {
                           >
                             <ExternalLink size={15} strokeWidth={1.75} />
                           </button>
+                          {report.is_read ? (
+                            <button
+                              type="button"
+                              className="research-action-btn"
+                              title="Mark unread"
+                              aria-label={`Mark ${fileLabel(report)} unread`}
+                              disabled={busy}
+                              onClick={() => void markUnread(report)}
+                            >
+                              <MailOpen size={15} strokeWidth={1.75} />
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="research-action-btn"

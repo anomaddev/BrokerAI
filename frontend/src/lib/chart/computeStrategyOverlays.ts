@@ -67,11 +67,12 @@ function computeIndicatorSeries(
       break;
   }
 
-  const colorIndex = Object.keys(spec).length;
+  const colorFromSpec = spec.type === "ema" ? spec.color : undefined;
+  const colorIndex = id.length + (spec.type === "ema" ? spec.period : 0);
   return {
     id,
     label: indicatorLabel(id, spec),
-    color: INDICATOR_COLORS[colorIndex % INDICATOR_COLORS.length],
+    color: colorFromSpec ?? INDICATOR_COLORS[colorIndex % INDICATOR_COLORS.length],
     pane,
     points,
   };

@@ -10,10 +10,13 @@ APP="BrokerAI"
 var_tags="${var_tags:-trading;bot;finance}"
 var_cpu="${var_cpu:-4}"
 var_ram="${var_ram:-8192}"
-var_disk="${var_disk:-32}"
+var_disk="${var_disk:-40}"
 var_os="${var_os:-debian}"
 var_version="${var_version:-13}"
 var_unprivileged="${var_unprivileged:-1}"
+# Docker-in-LXC (self-hosted Supabase) needs nesting + keyctl on unprivileged CTs.
+var_nesting="${var_nesting:-1}"
+var_keyctl="${var_keyctl:-1}"
 var_port="${var_port:-1989}"
 
 BROKERAI_REPO="${BROKERAI_REPO:-https://github.com/anomaddev/BrokerAI}"
@@ -23,6 +26,10 @@ BROKERAI_INSTALL_URL="${BROKERAI_INSTALL_URL:-https://raw.githubusercontent.com/
 # Optional pre-set admin (env: BROKERAI_ADMIN_USER / BROKERAI_ADMIN_PASSWORD or var_* aliases)
 BROKERAI_ADMIN_USER="${BROKERAI_ADMIN_USER:-${var_brokerai_admin_user:-}}"
 BROKERAI_ADMIN_PASSWORD="${BROKERAI_ADMIN_PASSWORD:-${var_brokerai_admin_password:-}}"
+# Optional public hostname — installs host Caddy TLS inside the CT when set.
+BROKERAI_DOMAIN="${BROKERAI_DOMAIN:-${var_brokerai_domain:-}}"
+# Optional second hostname for public Kong/Studio (host Caddy; not compose Caddy).
+BROKERAI_SUPABASE_DOMAIN="${BROKERAI_SUPABASE_DOMAIN:-${var_brokerai_supabase_domain:-}}"
 
 header_info "$APP"
 variables
@@ -111,6 +118,86 @@ prompt_brokerai_admin() {
   export BROKERAI_ADMIN_USER BROKERAI_ADMIN_PASSWORD
 }
 
+_brokerai_valid_domain() {
+  [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] && [[ "$1" == *.* ]]
+}
+
+prompt_brokerai_domain() {
+  if [[ -n "${BROKERAI_DOMAIN}" ]]; then
+    if ! _brokerai_valid_domain "${BROKERAI_DOMAIN}"; then
+      msg_error "Invalid BROKERAI_DOMAIN (use a hostname like brokerai.example.com)"
+      exit 1
+    fi
+    prompt_brokerai_supabase_domain
+    return 0
+  fi
+
+  if ! command -v whiptail >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! whiptail --backtitle "BrokerAI Setup" --title "TLS hostname" \
+    --yesno "Configure HTTPS with Caddy now?\n\nRequires DNS A/AAAA record(s) pointing at this container and ports 80/443 reachable for Let's Encrypt.\n\nChoose No to use plain HTTP on port ${var_port}." 14 74; then
+    return 0
+  fi
+
+  while true; do
+    local domain
+    domain=$(whiptail --backtitle "BrokerAI Setup" --title "Public hostname" \
+      --inputbox "Hostname for HTTPS (e.g. brokerai.example.com)" 10 70 \
+      "${BROKERAI_DOMAIN:-}" 3>&1 1>&2 2>&3) || return 0
+    if _brokerai_valid_domain "$domain"; then
+      BROKERAI_DOMAIN="$domain"
+      break
+    fi
+    whiptail --msgbox "Invalid hostname. Use a DNS name like brokerai.example.com." 10 70
+  done
+
+  export BROKERAI_DOMAIN
+  prompt_brokerai_supabase_domain
+}
+
+prompt_brokerai_supabase_domain() {
+  if [[ -n "${BROKERAI_SUPABASE_DOMAIN}" ]]; then
+    if ! _brokerai_valid_domain "${BROKERAI_SUPABASE_DOMAIN}"; then
+      msg_error "Invalid BROKERAI_SUPABASE_DOMAIN (use a hostname like supabase.example.com)"
+      exit 1
+    fi
+    return 0
+  fi
+
+  if [[ -z "${BROKERAI_DOMAIN:-}" ]] || ! command -v whiptail >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! whiptail --backtitle "BrokerAI Setup" --title "Supabase hostname" \
+    --yesno "Also expose Supabase (Kong API + Studio) on a second HTTPS hostname?\n\nRequires a second DNS A/AAAA record and the same ports 80/443.\nStudio is protected with basic auth (DASHBOARD_* from Supabase .env).\n\nChoose No to keep Kong/Studio on loopback only." 16 74; then
+    return 0
+  fi
+
+  # broker.example.com → supabase.example.com; foo.com → supabase.foo.com
+  local suggested
+  if [[ "${BROKERAI_DOMAIN}" == *.*.* ]]; then
+    suggested="supabase.${BROKERAI_DOMAIN#*.}"
+  else
+    suggested="supabase.${BROKERAI_DOMAIN}"
+  fi
+
+  while true; do
+    local domain
+    domain=$(whiptail --backtitle "BrokerAI Setup" --title "Supabase hostname" \
+      --inputbox "Hostname for Supabase Kong + Studio (e.g. supabase.example.com)" 10 70 \
+      "${suggested}" 3>&1 1>&2 2>&3) || return 0
+    if _brokerai_valid_domain "$domain"; then
+      BROKERAI_SUPABASE_DOMAIN="$domain"
+      break
+    fi
+    whiptail --msgbox "Invalid hostname. Use a DNS name like supabase.example.com." 10 70
+  done
+
+  export BROKERAI_SUPABASE_DOMAIN
+}
+
 bootstrap_brokerai_admin() {
   if [[ -z "${BROKERAI_ADMIN_USER:-}" || -z "${BROKERAI_ADMIN_PASSWORD:-}" || -z "${CTID:-}" ]]; then
     return 0
@@ -137,6 +224,43 @@ bootstrap_brokerai_admin() {
   msg_ok "Admin account configured — open Web UI to sign in"
 }
 
+# Ensure Caddy TLS is applied even if the in-CT install did not inherit BROKERAI_DOMAIN.
+ensure_brokerai_domain() {
+  if [[ -z "${BROKERAI_DOMAIN:-}" || -z "${CTID:-}" ]]; then
+    return 0
+  fi
+
+  # Validate pre-set supabase domain when provided without interactive prompt.
+  if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]] && ! _brokerai_valid_domain "${BROKERAI_SUPABASE_DOMAIN}"; then
+    msg_error "Invalid BROKERAI_SUPABASE_DOMAIN (use a hostname like supabase.example.com)"
+    exit 1
+  fi
+  # When BROKERAI_DOMAIN was pre-set via env, still offer Supabase hostname prompt.
+  if [[ -z "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
+    prompt_brokerai_supabase_domain
+  fi
+
+  msg_info "Configuring Caddy TLS for ${BROKERAI_DOMAIN}"
+  local supabase_export=""
+  if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
+    supabase_export="export BROKERAI_SUPABASE_DOMAIN=$(printf '%q' "${BROKERAI_SUPABASE_DOMAIN}")"
+  fi
+  pct exec "$CTID" -- bash -c "
+    set -euo pipefail
+    # shellcheck source=/dev/null
+    source /opt/brokerai/scripts/lib/install-common.sh
+    export BROKERAI_DOMAIN=$(printf '%q' "${BROKERAI_DOMAIN}")
+    ${supabase_export}
+    _brokerai_maybe_install_caddy_tls /opt/brokerai /etc/brokerai/config.env
+    systemctl restart brokerai-web || true
+  "
+  if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
+    msg_ok "Caddy TLS ready — https://${BROKERAI_DOMAIN} + https://${BROKERAI_SUPABASE_DOMAIN}"
+  else
+    msg_ok "Caddy TLS ready — https://${BROKERAI_DOMAIN}"
+  fi
+}
+
 function update_script() {
   header_info
   check_container_storage
@@ -159,13 +283,24 @@ export FUNCTIONS_FILE_PATH
 
 start
 prompt_brokerai_admin
-export BROKERAI_ADMIN_USER BROKERAI_ADMIN_PASSWORD
+prompt_brokerai_domain
+export BROKERAI_ADMIN_USER BROKERAI_ADMIN_PASSWORD BROKERAI_DOMAIN BROKERAI_SUPABASE_DOMAIN
 build_container
 bootstrap_brokerai_admin
+ensure_brokerai_domain
 description
 
 msg_ok "Completed Successfully!\n"
-if [[ -n "${BROKERAI_ADMIN_USER:-}" ]]; then
+if [[ -n "${BROKERAI_DOMAIN:-}" ]]; then
+  if [[ -n "${BROKERAI_ADMIN_USER:-}" ]]; then
+    echo -e "${CREATING}${GN} BrokerAI Web UI: ${CL}https://${BROKERAI_DOMAIN}${CL} (login as ${BROKERAI_ADMIN_USER})\n"
+  else
+    echo -e "${CREATING}${GN} BrokerAI Web UI: ${CL}https://${BROKERAI_DOMAIN}${CL} (complete setup on first visit)\n"
+  fi
+  if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
+    echo -e "${CREATING}${GN} Supabase API/Studio: ${CL}https://${BROKERAI_SUPABASE_DOMAIN}${CL} (Studio basic auth)\n"
+  fi
+elif [[ -n "${BROKERAI_ADMIN_USER:-}" ]]; then
   echo -e "${CREATING}${GN} BrokerAI Web UI: ${CL}http://${IP}:${var_port}${CL} (login as ${BROKERAI_ADMIN_USER})\n"
 else
   echo -e "${CREATING}${GN} BrokerAI Web UI: ${CL}http://${IP}:${var_port}${CL} (complete setup on first visit)\n"

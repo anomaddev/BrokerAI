@@ -4,7 +4,7 @@ _KEY_SEP = ":"
 
 
 def broker_lot_key(exchange_id: str, broker_lot_id: str) -> str:
-    """Cross-broker surrogate key for logs and dashboards (not stored in MongoDB)."""
+    """Cross-broker surrogate key for logs and dashboards (not a DB primary key)."""
     return f"{exchange_id}{_KEY_SEP}{broker_lot_id}"
 
 

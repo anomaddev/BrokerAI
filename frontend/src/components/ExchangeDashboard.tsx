@@ -4,10 +4,23 @@ import {
   api,
   type AssetClass,
   type ExchangeConnectionsResponse,
-  type InstrumentExposureRow,
   type OandaAccountSummary,
   type OandaConnection,
+  type Trade,
 } from "../api/client";
+import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import {
+  directionClassName,
+  directionLabel,
+  formatPnl,
+  formatPrice,
+  pnlClassName,
+  tradeLastModifiedAt,
+  tradeRealizedPl,
+  tradeStatusClassName,
+  tradeStatusKey,
+  tradeStatusLabel,
+} from "../lib/trades";
 import DashboardSkeleton, { DashboardSummarySkeleton } from "./DashboardSkeleton";
 import ExchangeEnvironmentBadge from "./ExchangeEnvironmentBadge";
 import ExchangeLogo from "./ExchangeLogo";
@@ -16,7 +29,10 @@ import {
   connectedExchangeIds,
   type Exchange,
 } from "../lib/exchanges";
-import { ASSET_CLASS_LABELS, loadAssetClassStatuses } from "../lib/assetClassStatus";
+import { loadAssetClassStatuses } from "../lib/assetClassStatus";
+import TradeDetailOverlay from "./trades/TradeDetailOverlay";
+
+const RECENT_TRADE_LIMIT = 10;
 
 const ASSET_CLASS_SETTINGS: Record<AssetClass, string> = {
   forex: "/settings/broker/forex",
@@ -112,52 +128,10 @@ function buildConnectedExchanges(
   });
 }
 
-function formatExposurePair(symbol: string): string {
-  return symbol.includes("/") ? symbol : symbol.replace("_", "/");
-}
-
-function ExposureSummary({
-  rows,
-  loading,
-  error,
-}: {
-  rows: InstrumentExposureRow[];
-  loading: boolean;
-  error: string | null;
-}) {
-  if (loading) {
-    return <p className="settings-muted dashboard-card-muted">Loading exposure…</p>;
-  }
-  if (error) {
-    return <p className="settings-error">{error}</p>;
-  }
-  if (rows.length === 0) {
-    return <p className="settings-muted dashboard-card-muted">No open instrument exposure.</p>;
-  }
-
-  return (
-    <div className="dashboard-exposure">
-      <h3 className="dashboard-exposure-title">Open exposure</h3>
-      <ul className="dashboard-exposure-list">
-        {rows.map((row) => (
-          <li key={`${row.symbol}-${row.direction}`} className="dashboard-exposure-row">
-            <Link
-              to={`/trades?status=open&pair=${encodeURIComponent(formatExposurePair(row.symbol))}`}
-              className="dashboard-exposure-link"
-            >
-              <span className="dashboard-exposure-symbol">{formatExposurePair(row.symbol)}</span>
-              <span className="dashboard-exposure-meta">
-                {row.direction} · {row.total_qty.toLocaleString()} units
-              </span>
-              <span className={`dashboard-exposure-pl ${plClass(row.unrealized_pl)}`}>
-                {row.unrealized_pl == null ? "—" : formatMoney(row.unrealized_pl)}
-              </span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+function tradeDisplayPnl(trade: Trade): unknown {
+  const status = tradeStatusKey(trade);
+  if (status === "open") return trade.unrealized_pl;
+  return tradeRealizedPl(trade);
 }
 
 function OandaSummary({
@@ -227,23 +201,107 @@ function OandaSummary({
   );
 }
 
+function RecentTradesPanel({
+  trades,
+  loading,
+  error,
+  onSelectTrade,
+}: {
+  trades: Trade[];
+  loading: boolean;
+  error: string | null;
+  onSelectTrade: (trade: Trade) => void;
+}) {
+  const { formatInstant } = useGeneralSettings();
+
+  return (
+    <section className="dashboard-recent-trades dashboard-card--enter">
+      <div className="dashboard-recent-trades-head">
+        <div className="dashboard-recent-trades-heading">
+          <h2 className="dashboard-recent-trades-title">Recent trades</h2>
+          <p className="settings-muted dashboard-recent-trades-subtitle">
+            Last {RECENT_TRADE_LIMIT} trades
+          </p>
+        </div>
+        <Link to="/trading/forex" className="dashboard-recent-trades-link">
+          View all
+        </Link>
+      </div>
+
+      {loading && (
+        <p className="settings-muted dashboard-recent-trades-empty">Loading trades…</p>
+      )}
+
+      {!loading && error && <p className="settings-error">{error}</p>}
+
+      {!loading && !error && trades.length === 0 && (
+        <p className="settings-muted dashboard-recent-trades-empty">No trades yet.</p>
+      )}
+
+      {!loading && !error && trades.length > 0 && (
+        <div className="research-table-wrap">
+          <table className="research-table trades-table">
+            <thead>
+              <tr>
+                <th scope="col">Status</th>
+                <th scope="col">Time</th>
+                <th scope="col">Strategy</th>
+                <th scope="col">Pair</th>
+                <th scope="col">Dir</th>
+                <th scope="col">Entry</th>
+                <th scope="col">P/L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trades.map((trade) => {
+                const status = tradeStatusKey(trade);
+                const lastModified = tradeLastModifiedAt(trade);
+                const pnl = tradeDisplayPnl(trade);
+                return (
+                  <tr
+                    key={trade.id}
+                    className="trades-table-row--clickable"
+                    onClick={() => onSelectTrade(trade)}
+                  >
+                    <td>
+                      <span className={tradeStatusClassName(status)}>
+                        {tradeStatusLabel(status)}
+                      </span>
+                    </td>
+                    <td className="settings-muted">
+                      {lastModified ? formatInstant(lastModified, "compact") : "—"}
+                    </td>
+                    <td>{trade.strategy_name}</td>
+                    <td>{trade.pair}</td>
+                    <td>
+                      <span className={directionClassName(trade.direction)}>
+                        {directionLabel(trade.direction)}
+                      </span>
+                    </td>
+                    <td>{formatPrice(trade.entry_price)}</td>
+                    <td className={pnlClassName(pnl)}>{formatPnl(pnl)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ExchangeDashboardCard({
   overview,
   oandaSummary,
   summaryLoading,
   summaryError,
-  exposureRows,
-  exposureLoading,
-  exposureError,
   enterDelayMs = 0,
 }: {
   overview: ConnectedExchangeOverview;
   oandaSummary: OandaAccountSummary | null;
   summaryLoading: boolean;
   summaryError: string | null;
-  exposureRows: InstrumentExposureRow[];
-  exposureLoading: boolean;
-  exposureError: string | null;
   enterDelayMs?: number;
 }) {
   const { exchange, connection, enabledAssetClasses } = overview;
@@ -272,10 +330,7 @@ function ExchangeDashboardCard({
       )}
 
       {exchange.id === "oanda" && connection?.connected && (
-        <>
-          <OandaSummary summary={oandaSummary} loading={summaryLoading} error={summaryError} />
-          <ExposureSummary rows={exposureRows} loading={exposureLoading} error={exposureError} />
-        </>
+        <OandaSummary summary={oandaSummary} loading={summaryLoading} error={summaryError} />
       )}
 
       <div className="dashboard-card-footer">
@@ -309,9 +364,10 @@ export default function ExchangeDashboard() {
   const [oandaSummary, setOandaSummary] = useState<OandaAccountSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [exposureRows, setExposureRows] = useState<InstrumentExposureRow[]>([]);
-  const [exposureLoading, setExposureLoading] = useState(false);
-  const [exposureError, setExposureError] = useState<string | null>(null);
+  const [recentTrades, setRecentTrades] = useState<Trade[]>([]);
+  const [tradesLoading, setTradesLoading] = useState(false);
+  const [tradesError, setTradesError] = useState<string | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -322,7 +378,9 @@ export default function ExchangeDashboard() {
       setLoading(true);
       setError(null);
       setSummaryError(null);
+      setTradesError(null);
       setOandaSummary(null);
+      setRecentTrades([]);
 
       try {
         const [connections, assetUsages, primaryExchanges] = await Promise.all([
@@ -339,28 +397,50 @@ export default function ExchangeDashboard() {
         const oandaConnected = connections.oanda?.connected;
         if (oandaConnected) {
           setSummaryLoading(true);
-          setExposureLoading(true);
-          try {
-            const [summary, exposure] = await Promise.all([
-              api.getOandaAccountSummary(),
-              api.getInstrumentExposure("oanda"),
-            ]);
-            if (!cancelled) {
-              setOandaSummary(summary);
-              setExposureRows(exposure.exposure);
+          setTradesLoading(true);
+
+          const accountPromise = (async () => {
+            try {
+              const summary = await api.getOandaAccountSummary();
+              if (!cancelled) {
+                setOandaSummary(summary);
+              }
+            } catch (err) {
+              if (!cancelled) {
+                setSummaryError(
+                  err instanceof Error ? err.message : "Failed to load OANDA data",
+                );
+              }
+            } finally {
+              if (!cancelled) {
+                setSummaryLoading(false);
+              }
             }
-          } catch (err) {
-            if (!cancelled) {
-              const message = err instanceof Error ? err.message : "Failed to load OANDA data";
-              setSummaryError(message);
-              setExposureError(message);
+          })();
+
+          const tradesPromise = (async () => {
+            try {
+              const tradesResponse = await api.listTrades({
+                status: "all",
+                limit: RECENT_TRADE_LIMIT,
+              });
+              if (!cancelled) {
+                setRecentTrades(tradesResponse.trades);
+              }
+            } catch (err) {
+              if (!cancelled) {
+                setTradesError(
+                  err instanceof Error ? err.message : "Failed to load recent trades",
+                );
+              }
+            } finally {
+              if (!cancelled) {
+                setTradesLoading(false);
+              }
             }
-          } finally {
-            if (!cancelled) {
-              setSummaryLoading(false);
-              setExposureLoading(false);
-            }
-          }
+          })();
+
+          await Promise.all([accountPromise, tradesPromise]);
         }
       } catch (err) {
         if (!cancelled) {
@@ -375,6 +455,9 @@ export default function ExchangeDashboard() {
     };
   }, []);
 
+  const oandaOverview = exchanges.find((overview) => overview.exchange.id === "oanda") ?? null;
+  const otherExchanges = exchanges.filter((overview) => overview.exchange.id !== "oanda");
+
   return (
     <div className="dashboard">
       <header className="dashboard-header">
@@ -382,7 +465,7 @@ export default function ExchangeDashboard() {
         <p className="dashboard-lead">Connected exchanges and live account summaries.</p>
       </header>
 
-      {loading && <DashboardSkeleton cards={2} />}
+      {loading && <DashboardSkeleton layout="oanda-row" />}
 
       {!loading && error && (
         <p className="settings-error dashboard-message dashboard-message--enter">{error}</p>
@@ -397,21 +480,48 @@ export default function ExchangeDashboard() {
       )}
 
       {!loading && !error && exchanges.length > 0 && (
-        <div className="dashboard-grid">
-          {exchanges.map((overview, index) => (
-            <ExchangeDashboardCard
-              key={overview.exchange.id}
-              overview={overview}
-              oandaSummary={overview.exchange.id === "oanda" ? oandaSummary : null}
-              summaryLoading={overview.exchange.id === "oanda" ? summaryLoading : false}
-              summaryError={overview.exchange.id === "oanda" ? summaryError : null}
-              exposureRows={overview.exchange.id === "oanda" ? exposureRows : []}
-              exposureLoading={overview.exchange.id === "oanda" ? exposureLoading : false}
-              exposureError={overview.exchange.id === "oanda" ? exposureError : null}
-              enterDelayMs={index * 70}
-            />
-          ))}
-        </div>
+        <>
+          {oandaOverview && (
+            <div className="dashboard-oanda-row">
+              <ExchangeDashboardCard
+                overview={oandaOverview}
+                oandaSummary={oandaSummary}
+                summaryLoading={summaryLoading}
+                summaryError={summaryError}
+                enterDelayMs={0}
+              />
+              <RecentTradesPanel
+                trades={recentTrades}
+                loading={tradesLoading}
+                error={tradesError}
+                onSelectTrade={setSelectedTrade}
+              />
+            </div>
+          )}
+
+          {otherExchanges.length > 0 && (
+            <div className="dashboard-grid">
+              {otherExchanges.map((overview, index) => (
+                <ExchangeDashboardCard
+                  key={overview.exchange.id}
+                  overview={overview}
+                  oandaSummary={null}
+                  summaryLoading={false}
+                  summaryError={null}
+                  enterDelayMs={(oandaOverview ? 1 : 0) * 70 + index * 70}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {selectedTrade && (
+        <TradeDetailOverlay
+          trade={selectedTrade}
+          reconciliation={null}
+          onClose={() => setSelectedTrade(null)}
+        />
       )}
     </div>
   );

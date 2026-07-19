@@ -1,4 +1,4 @@
-"""Market data caching: OANDA sync, MongoDB persistence, forex calendar."""
+"""Market data caching: OANDA sync, Postgres persistence, forex calendar."""
 
 from brokerai.trading.data.candle_cache import OANDA_SOURCE, CandleCache
 from brokerai.trading.data.models import BackfillResult, CacheStatus, SyncResult, VerifyResult

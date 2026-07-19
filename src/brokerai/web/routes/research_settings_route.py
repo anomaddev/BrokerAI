@@ -27,7 +27,7 @@ from brokerai.config_backup.change_labels import (
     describe_weekly_research_settings_change,
 )
 from brokerai.config_backup.hooks import auto_backup_before
-from brokerai.db.repositories.ai_models import AiModelsRepository
+from brokerai.db.repositories.ai_models import AiModelsRepository, source_model_name
 from brokerai.db.repositories.data_connections import DataConnectionsRepository
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
 from brokerai.web.routes.auth import require_auth
@@ -37,6 +37,7 @@ router = APIRouter(prefix="/api/settings/research", tags=["settings-research"])
 
 class ContributorModelBody(BaseModel):
     model_id: str
+    model_name: str | None = None
     reasoning_effort: str = DAILY_REPORT_REASONING_EFFORT
     enabled: bool = True
 
@@ -54,6 +55,7 @@ class DataSourcesBody(BaseModel):
 class ResearchSettingsBody(BaseModel):
     contributor_models: list[ContributorModelBody] = Field(default_factory=list)
     synthesis_model_id: str | None = None
+    synthesis_model_name: str | None = None
     synthesis_reasoning_effort: str | None = None
     data_sources: DataSourcesBody | None = None
     daily_report_enabled: bool | None = None
@@ -64,11 +66,13 @@ class ResearchSettingsBody(BaseModel):
 class WeeklyResearchSettingsBody(BaseModel):
     weekly_brief_enabled: bool | None = None
     weekly_brief_model_id: str | None = None
+    weekly_brief_model_name: str | None = None
     weekly_brief_reasoning_effort: str | None = None
     weekly_brief_market_id: str | None = None
     weekly_brief_market_offset_hours: int | None = None
     weekly_debrief_enabled: bool | None = None
     weekly_debrief_model_id: str | None = None
+    weekly_debrief_model_name: str | None = None
     weekly_debrief_reasoning_effort: str | None = None
     weekly_debrief_market_id: str | None = None
     weekly_debrief_market_offset_hours: int | None = None
@@ -150,16 +154,26 @@ async def save_research_settings(
             raise HTTPException(status_code=400, detail=f"Model not found: {entry.model_id}")
         if not model.get("enabled"):
             raise HTTPException(status_code=400, detail=f"Model is disabled: {model.get('title')}")
+        model_name = (entry.model_name or "").strip() or source_model_name(model)
+        if not model_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"model_name is required for contributor {entry.model_id}",
+            )
         _check_effort(entry.reasoning_effort)
         contributors.append(
             {
                 "model_id": entry.model_id,
+                "model_name": model_name,
                 "reasoning_effort": entry.reasoning_effort,
                 "enabled": entry.enabled,
             }
         )
 
-    if body.synthesis_model_id:
+    synthesis_model_name = (body.synthesis_model_name or "").strip() or None
+    if not body.synthesis_model_id:
+        synthesis_model_name = None
+    elif body.synthesis_model_id:
         model = await models_repo.find_by_id(body.synthesis_model_id)
         if not model:
             raise HTTPException(
@@ -169,6 +183,9 @@ async def save_research_settings(
             raise HTTPException(
                 status_code=400, detail=f"Synthesis model is disabled: {model.get('title')}"
             )
+        synthesis_model_name = synthesis_model_name or source_model_name(model) or None
+        if not synthesis_model_name:
+            raise HTTPException(status_code=400, detail="synthesis_model_name is required")
 
     _check_effort(body.synthesis_reasoning_effort)
 
@@ -223,6 +240,7 @@ async def save_research_settings(
     settings = await repo.save(
         contributor_models=contributors,
         synthesis_model_id=body.synthesis_model_id,
+        synthesis_model_name=synthesis_model_name,
         synthesis_reasoning_effort=body.synthesis_reasoning_effort,
         data_sources=body.data_sources.model_dump() if body.data_sources else None,
         daily_report_enabled=body.daily_report_enabled,
@@ -245,16 +263,32 @@ async def save_weekly_research_settings(
 ) -> JSONResponse:
     models_repo = AiModelsRepository()
 
-    for model_id, label in (
-        (body.weekly_brief_model_id, "Weekly brief"),
-        (body.weekly_debrief_model_id, "Weekly debrief"),
+    weekly_brief_model_name = (body.weekly_brief_model_name or "").strip() or None
+    weekly_debrief_model_name = (body.weekly_debrief_model_name or "").strip() or None
+    if not body.weekly_brief_model_id:
+        weekly_brief_model_name = None
+    if not body.weekly_debrief_model_id:
+        weekly_debrief_model_name = None
+    for model_id, label, name_attr in (
+        (body.weekly_brief_model_id, "Weekly brief", "brief"),
+        (body.weekly_debrief_model_id, "Weekly debrief", "debrief"),
     ):
-        if model_id:
-            model = await models_repo.find_by_id(model_id)
-            if not model:
-                raise HTTPException(status_code=400, detail=f"{label} model not found")
-            if not model.get("enabled"):
-                raise HTTPException(status_code=400, detail=f"{label} model is disabled")
+        if not model_id:
+            continue
+        model = await models_repo.find_by_id(model_id)
+        if not model:
+            raise HTTPException(status_code=400, detail=f"{label} model not found")
+        if not model.get("enabled"):
+            raise HTTPException(status_code=400, detail=f"{label} model is disabled")
+        resolved = (
+            weekly_brief_model_name if name_attr == "brief" else weekly_debrief_model_name
+        ) or source_model_name(model)
+        if not resolved:
+            raise HTTPException(status_code=400, detail=f"{label} model_name is required")
+        if name_attr == "brief":
+            weekly_brief_model_name = resolved
+        else:
+            weekly_debrief_model_name = resolved
 
     _check_effort(body.weekly_brief_reasoning_effort)
     _check_effort(body.weekly_debrief_reasoning_effort)
@@ -306,6 +340,7 @@ async def save_weekly_research_settings(
     settings = await repo.save(
         weekly_brief_enabled=body.weekly_brief_enabled,
         weekly_brief_model_id=body.weekly_brief_model_id,
+        weekly_brief_model_name=weekly_brief_model_name,
         weekly_brief_reasoning_effort=body.weekly_brief_reasoning_effort,
         weekly_brief_market_id=normalize_market_id(body.weekly_brief_market_id)
         if body.weekly_brief_market_id is not None
@@ -317,6 +352,7 @@ async def save_weekly_research_settings(
         else None,
         weekly_debrief_enabled=body.weekly_debrief_enabled,
         weekly_debrief_model_id=body.weekly_debrief_model_id,
+        weekly_debrief_model_name=weekly_debrief_model_name,
         weekly_debrief_reasoning_effort=body.weekly_debrief_reasoning_effort,
         weekly_debrief_market_id=normalize_market_id(body.weekly_debrief_market_id)
         if body.weekly_debrief_market_id is not None

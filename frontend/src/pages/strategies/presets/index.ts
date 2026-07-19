@@ -1,32 +1,39 @@
 import { LineChart, SlidersHorizontal } from "lucide-react";
 import { ROUTES } from "../../../lib/routes";
-import { ASSET_CLASS_LABELS } from "../../../lib/strategies/instruments";
+import { ALL_ASSET_CLASSES } from "../../../lib/strategies/instruments";
 import type { StrategyPreset } from "./types";
 
 export const STRATEGY_PRESETS: StrategyPreset[] = [
   {
-    id: "ema_crossover",
-    label: "EMA Crossover",
-    description: "9/21 EMA crossover on M15 with ADX + ATR filters for any forex pair.",
-    assetClasses: ["forex"],
-    enabledPills: [{ label: ASSET_CLASS_LABELS.forex, assetClass: "forex" }],
-    route: ROUTES.research.strategyNew("ema-crossover"),
-    icon: LineChart,
-    tags: ["Trend", "Forex"],
-    locked: true,
-  },
-  {
     id: "custom",
     label: "Custom",
     description: "Build your own strategy by adding signals, filters, and rules from scratch.",
-    assetClasses: ["forex", "metals", "stocks", "crypto", "futures", "options"],
+    assetClasses: [...ALL_ASSET_CLASSES],
     enabledPills: [{ label: "All asset classes", assetClass: "forex" }],
     route: ROUTES.research.strategyNew("custom"),
     icon: SlidersHorizontal,
     tags: ["Flexible"],
-    locked: false,
+    locked: true,
+  },
+  {
+    id: "ema_crossover",
+    label: "EMA Crossover",
+    description: "9/21 EMA crossover on M15 with ADX + ATR filters for any asset class.",
+    assetClasses: [...ALL_ASSET_CLASSES],
+    enabledPills: [{ label: "All asset classes", assetClass: "forex" }],
+    route: ROUTES.research.strategyNew("ema-crossover"),
+    icon: LineChart,
+    tags: ["Trend"],
+    locked: true,
   },
 ];
+
+/** Presets shown in the Build Strategy overlay (Custom always first). */
+export function getBuildStrategyPresets(): StrategyPreset[] {
+  const custom = STRATEGY_PRESETS.find((p) => p.id === "custom");
+  const rest = STRATEGY_PRESETS.filter((p) => p.id !== "custom");
+  return custom ? [custom, ...rest] : [...STRATEGY_PRESETS];
+}
 
 export function getPresetById(id: string): StrategyPreset | undefined {
   return STRATEGY_PRESETS.find((p) => p.id === id);

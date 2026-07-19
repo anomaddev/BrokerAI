@@ -3,24 +3,21 @@
 #
 # Usage:
 #   ./scripts/dev.sh              Start dev stack (bootstrap if needed)
-#   ./scripts/dev.sh --setup      Bootstrap only (venv, .env, mongo, npm)
-#   ./scripts/dev.sh --oidc          Use local Authelia OIDC auth (Docker required)
+#   ./scripts/dev.sh --setup      Bootstrap only (venv, .env, supabase, npm)
 #   ./scripts/dev.sh --backend-only   API + orchestrator only (no Vite)
-#   ./scripts/dev.sh --no-mongo   Skip MongoDB Docker container
+#   ./scripts/dev.sh --no-supabase Skip self-hosted Supabase Docker stack
 #   ./scripts/dev.sh --no-open    Do not open browser (macOS)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="${ROOT}/venv"
 ENV_FILE="${ROOT}/.env"
-MONGO_CONTAINER="brokerai-mongo"
 PIDS=()
 
 SETUP_ONLY=false
-NO_MONGO=false
+NO_SUPABASE=false
 NO_OPEN=false
 BACKEND_ONLY=false
-USE_OIDC=false
 
 usage() {
   cat <<EOF
@@ -29,9 +26,8 @@ Usage: $(basename "$0") [OPTIONS]
 Bootstrap and run BrokerAI locally for development.
 
 Options:
-  --setup          Bootstrap venv, .env, MongoDB, and npm deps; do not start servers
-  --oidc           Enable local Authelia OIDC auth (requires Docker)
-  --no-mongo       Skip Docker MongoDB auto-start
+  --setup          Bootstrap venv, .env, Supabase, and npm deps; do not start servers
+  --no-supabase    Skip self-hosted Supabase Docker auto-start
   --no-open        Do not open the browser (macOS)
   --backend-only   Skip Vite; serve built static via uvicorn only
   -h, --help       Show this help
@@ -41,8 +37,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --setup) SETUP_ONLY=true; shift ;;
-    --oidc) USE_OIDC=true; shift ;;
-    --no-mongo) NO_MONGO=true; shift ;;
+    --no-supabase) NO_SUPABASE=true; shift ;;
     --no-open) NO_OPEN=true; shift ;;
     --backend-only) BACKEND_ONLY=true; shift ;;
     -h | --help) usage; exit 0 ;;
@@ -140,6 +135,7 @@ ensure_env_file() {
     echo "BROKERAI_AUTO_UPDATE=false"
     echo "BROKERAI_ENABLED_BOTS=secretary,broker,researcher"
     echo "BROKERAI_SECRET_KEY=$(openssl rand -hex 16)"
+    echo "BROKERAI_USE_POSTGRES=true"
   } >>"${ENV_FILE}"
 }
 
@@ -147,34 +143,35 @@ ensure_dirs() {
   mkdir -p "${ROOT}/data" "${ROOT}/logs"
 }
 
-ensure_mongo() {
-  if [[ "${NO_MONGO}" == "true" ]]; then
+ensure_supabase() {
+  if [[ "${NO_SUPABASE}" == "true" ]]; then
     return 0
   fi
 
   if ! command -v docker >/dev/null 2>&1; then
-    warn "Docker not found — skipping MongoDB (install Docker Desktop for Mac)"
+    warn "Docker not found — skipping Supabase (install Docker Desktop for Mac)"
     return 0
   fi
 
   if ! docker info >/dev/null 2>&1; then
-    warn "Docker is not running — start Docker Desktop and re-run, or use --no-mongo"
+    warn "Docker is not running — start Docker Desktop and re-run, or use --no-supabase"
     return 0
   fi
 
-  if docker ps --format '{{.Names}}' | grep -qx "${MONGO_CONTAINER}"; then
-    log "MongoDB container already running (${MONGO_CONTAINER})"
-    return 0
-  fi
+  log "Ensuring self-hosted Supabase"
+  "${ROOT}/scripts/setup-supabase.sh" --start
 
-  if docker ps -a --format '{{.Names}}' | grep -qx "${MONGO_CONTAINER}"; then
-    log "Starting MongoDB container (${MONGO_CONTAINER})"
-    docker start "${MONGO_CONTAINER}" >/dev/null
-    return 0
+  if [[ -x "${VENV}/bin/python" ]]; then
+    log "Ensuring Postgres brokerai schema"
+    (
+      cd "${ROOT}"
+      set -a
+      # shellcheck disable=SC1090
+      source "${ENV_FILE}"
+      set +a
+      "${VENV}/bin/python" -c "import asyncio; from brokerai.db.indexes import ensure_indexes; asyncio.run(ensure_indexes())"
+    ) || warn "Schema ensure failed — start API after Postgres is healthy"
   fi
-
-  log "Creating MongoDB container (${MONGO_CONTAINER})"
-  docker run -d --name "${MONGO_CONTAINER}" -p 27017:27017 mongo:7 >/dev/null
 }
 
 ensure_frontend_deps() {
@@ -192,26 +189,6 @@ ensure_static_build() {
   "${ROOT}/scripts/build-frontend.sh"
 }
 
-ensure_oidc_dev() {
-  # Start Authelia when --oidc is passed or .env already has OIDC auth enabled.
-  load_env
-  if [[ "${USE_OIDC}" != "true" && "${BROKERAI_AUTH_MODE:-builtin}" != "oidc" ]]; then
-    return 0
-  fi
-  local setup_args=()
-  if [[ "${BACKEND_ONLY}" == "true" ]]; then
-    setup_args+=(--backend-only)
-  fi
-  if [[ "${SETUP_ONLY}" == "true" ]]; then
-    setup_args+=(--configure-only)
-  fi
-  if ((${#setup_args[@]} > 0)); then
-    "${ROOT}/scripts/setup-dev-oidc.sh" "${setup_args[@]}"
-  else
-    "${ROOT}/scripts/setup-dev-oidc.sh"
-  fi
-}
-
 preflight() {
   if [[ "${BACKEND_ONLY}" != "true" ]]; then
     require_cmd npm
@@ -226,7 +203,7 @@ bootstrap() {
   ensure_venv
   ensure_env_file
   ensure_dirs
-  ensure_mongo
+  ensure_supabase
   if [[ "${BACKEND_ONLY}" != "true" ]]; then
     ensure_frontend_deps
   fi
@@ -275,17 +252,18 @@ print_banner() {
     echo "  UI:      http://localhost:5173  (Vite, hot reload)"
     echo "  API:     http://127.0.0.1:${port}"
   fi
-  echo "  MongoDB: mongodb://127.0.0.1:27017/brokerai"
-  if [[ "${USE_OIDC}" == "true" || "${BROKERAI_AUTH_MODE:-builtin}" == "oidc" ]]; then
-    echo "  Auth:    OIDC via Authelia — https://127.0.0.1:9091"
-    echo "           dev / BrokerAI!2026"
+  echo "  Postgres: 127.0.0.1:5432 (Supabase)"
+  echo "  Studio:  http://127.0.0.1:3000"
+  if [[ "${BROKERAI_AUTH_MODE:-builtin}" == "oidc" ]]; then
+    echo "  Auth:    OIDC (${BROKERAI_OIDC_ISSUER:-issuer not set})"
+  else
+    echo "  Auth:    builtin (+ Supabase Auth when configured)"
   fi
   echo "  Ctrl+C to stop all"
   echo ""
 }
 
 bootstrap
-ensure_oidc_dev
 load_env
 
 if [[ "${SETUP_ONLY}" == "true" ]]; then

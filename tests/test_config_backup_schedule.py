@@ -15,6 +15,9 @@ from brokerai.config_backup.service import ConfigBackupService
 from tests.test_config_backup import _FakeDb
 
 
+pytestmark = pytest.mark.usefixtures("sqlite_db")
+
+
 def test_normalize_schedule_settings_defaults():
     settings = normalize_schedule_settings(None)
     assert settings["enabled"] is False
@@ -98,8 +101,6 @@ async def test_run_scheduled_backup_if_due_creates_full_backup():
     )
 
     with (
-        patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=type("H", (), {"db": fake_db})())),
-        patch("brokerai.config_backup.service.get_db", AsyncMock(return_value=type("H", (), {"db": fake_db})())),
         patch(
             "brokerai.config_backup.service.get_backup_schedule_settings",
             AsyncMock(return_value=enabled_settings),

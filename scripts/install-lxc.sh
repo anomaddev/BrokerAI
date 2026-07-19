@@ -41,9 +41,11 @@ Options:
   --skip-clone     Skip git clone; use files already in ${BROKERAI_INSTALL_DIR}
   -h, --help       Show this help message
 
-Optional environment (skip web setup wizard):
+Optional environment:
   BROKERAI_ADMIN_USER       Admin username (lowercase, 3-32 chars)
   BROKERAI_ADMIN_PASSWORD   Strong password (12+ chars, mixed case, digit, special)
+  BROKERAI_DOMAIN           Public hostname — installs Caddy TLS (e.g. brokerai.example.com)
+  BROKERAI_SUPABASE_DOMAIN  Optional second hostname for Kong + Studio (host Caddy)
 EOF
 }
 
@@ -128,10 +130,11 @@ else
   msg_ok "Cloned BrokerAI"
 fi
 
-msg_info "Installing MongoDB"
-chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
-bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-mongodb.sh"
-msg_ok "MongoDB ready"
+msg_info "Installing Docker + self-hosted Supabase"
+# Docker must be available before Python venv so setup can write DATABASE_URL hints later.
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-supabase.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/setup-supabase.sh"
+msg_ok "Supabase install scripts ready"
 
 msg_info "Setting up Python virtual environment"
 # shellcheck source=scripts/lib/install-common.sh
@@ -156,14 +159,53 @@ _brokerai_seed_production_config \
   "${BROKERAI_INSTALL_DIR}/config/config.env.example" \
   "${BROKERAI_DATA_DIR}" \
   "${BROKERAI_LOG_DIR}"
+if [[ -n "${BROKERAI_DOMAIN:-}" ]]; then
+  _brokerai_upsert_config_kv "${BROKERAI_CONFIG_DIR}/config.env" "BROKERAI_DOMAIN" "${BROKERAI_DOMAIN}"
+fi
+if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
+  _brokerai_upsert_config_kv "${BROKERAI_CONFIG_DIR}/config.env" "BROKERAI_SUPABASE_DOMAIN" "${BROKERAI_SUPABASE_DOMAIN}"
+fi
 msg_ok "Configured BrokerAI"
+
+msg_info "Starting self-hosted Supabase"
+# setup-supabase.sh appends BROKERAI_DATABASE_URL to repo .env; also merge into production config.
+# Pass public domains so GoTrue SITE_URL / SUPABASE_PUBLIC_URL match host Caddy when set.
+ENV_FILE="${BROKERAI_INSTALL_DIR}/.env" \
+  BROKERAI_DOMAIN="${BROKERAI_DOMAIN:-}" \
+  BROKERAI_SUPABASE_DOMAIN="${BROKERAI_SUPABASE_DOMAIN:-}" \
+  bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-supabase.sh" "${BROKERAI_INSTALL_DIR}"
+if [[ -f "${BROKERAI_INSTALL_DIR}/.env" ]]; then
+  while IFS= read -r line; do
+    case "${line}" in
+      BROKERAI_DATABASE_URL=*|BROKERAI_SUPABASE_*=*)
+        key="${line%%=*}"
+        value="${line#*=}"
+        _brokerai_upsert_config_kv "${BROKERAI_CONFIG_DIR}/config.env" "${key}" "${value}"
+        ;;
+    esac
+  done <"${BROKERAI_INSTALL_DIR}/.env"
+fi
+(
+  cd "${BROKERAI_INSTALL_DIR}"
+  set -a
+  # shellcheck disable=SC1091
+  source "${BROKERAI_CONFIG_DIR}/config.env"
+  set +a
+  "${BROKERAI_INSTALL_DIR}/venv/bin/python" -c "import asyncio; from brokerai.db.indexes import ensure_indexes; asyncio.run(ensure_indexes())"
+)
+msg_ok "Supabase + schema ready"
+
+msg_info "Configuring TLS (Caddy)"
+_brokerai_maybe_install_caddy_tls "${BROKERAI_INSTALL_DIR}" "${BROKERAI_CONFIG_DIR}/config.env"
+msg_ok "TLS configuration done"
 
 BROKERAI_INSTALLED_COMMIT="$(git -C "${BROKERAI_INSTALL_DIR}" rev-parse HEAD)"
 
 msg_info "Setting permissions"
+mkdir -p /var/lib/brokerai/backups/postgres
 chown -R brokerai:brokerai "${BROKERAI_INSTALL_DIR}" "${BROKERAI_DATA_DIR}" "${BROKERAI_LOG_DIR}"
-chown -R root:brokerai "${BROKERAI_CONFIG_DIR}"
-chmod 750 "${BROKERAI_CONFIG_DIR}"
+chown -R root:brokerai "${BROKERAI_CONFIG_DIR}" /var/lib/brokerai/backups
+chmod 750 "${BROKERAI_CONFIG_DIR}" /var/lib/brokerai/backups /var/lib/brokerai/backups/postgres
 chmod 640 "${BROKERAI_CONFIG_DIR}/config.env"
 # shellcheck source=scripts/lib/update-track.sh
 source "${BROKERAI_INSTALL_DIR}/scripts/lib/update-track.sh"
@@ -180,15 +222,23 @@ chmod +x "${BROKERAI_INSTALL_DIR}/scripts/update-now.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/provision-admin-user.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/bootstrap-admin.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/backup-postgres.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-caddy.sh"
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/apply-domain-tls.sh"
 ln -sf "${BROKERAI_INSTALL_DIR}/scripts/check-update.sh" /usr/local/bin/brokerai-check-update
 ln -sf "${BROKERAI_INSTALL_DIR}/venv/bin/brokerai" /usr/local/bin/brokerai
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/brokerai-update
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-power" /etc/sudoers.d/brokerai-power
-chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin /etc/sudoers.d/brokerai-power
+cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-domain" /etc/sudoers.d/brokerai-domain
+chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin \
+  /etc/sudoers.d/brokerai-power /etc/sudoers.d/brokerai-domain
+chmod +x "${BROKERAI_INSTALL_DIR}/scripts/apply-domain-tls.sh"
 visudo -cf /etc/sudoers.d/brokerai-update
 visudo -cf /etc/sudoers.d/brokerai-admin
 visudo -cf /etc/sudoers.d/brokerai-power
+visudo -cf /etc/sudoers.d/brokerai-domain
+_brokerai_install_postgres_backup "${BROKERAI_INSTALL_DIR}" "${BROKERAI_CONFIG_DIR}/config.env"
 systemctl daemon-reload
 systemctl enable --now brokerai-orchestrator brokerai-web brokerai-update.timer
 msg_ok "Systemd services installed"
@@ -214,14 +264,24 @@ fi
 _brokerai_install_container_update_command
 
 WEB_PORT=$(grep -E '^BROKERAI_WEB_PORT=' "${BROKERAI_CONFIG_DIR}/config.env" | cut -d= -f2 || echo "1989")
+DOMAIN=$(grep -E '^BROKERAI_DOMAIN=' "${BROKERAI_CONFIG_DIR}/config.env" | cut -d= -f2 || true)
+SUPABASE_DOMAIN=$(grep -E '^BROKERAI_SUPABASE_DOMAIN=' "${BROKERAI_CONFIG_DIR}/config.env" | cut -d= -f2 || true)
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 
 echo ""
 echo -e "${GREEN}${APP} installation complete.${NC}"
 echo ""
-echo "  Web UI:  http://${LOCAL_IP:-localhost}:${WEB_PORT:-1989}"
-echo "  Config:  ${BROKERAI_CONFIG_DIR}/config.env"
-echo "  Logs:    journalctl -u brokerai-orchestrator -u brokerai-web -f"
+if [[ -n "${DOMAIN}" ]]; then
+  echo "  Web UI:     https://${DOMAIN}"
+else
+  echo "  Web UI:     http://${LOCAL_IP:-localhost}:${WEB_PORT:-1989}"
+fi
+if [[ -n "${SUPABASE_DOMAIN}" ]]; then
+  echo "  Supabase:   https://${SUPABASE_DOMAIN} (Kong API; Studio basic auth)"
+fi
+echo "  Config:     ${BROKERAI_CONFIG_DIR}/config.env"
+echo "  Backups:    /var/lib/brokerai/backups/postgres (timer: brokerai-postgres-backup.timer)"
+echo "  Logs:       journalctl -u brokerai-orchestrator -u brokerai-web -f"
 echo ""
 
 msg_info "Cleaning up"

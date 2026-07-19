@@ -1,29 +1,24 @@
-import { STRATEGY_PRESETS } from "../../pages/strategies/presets";
+import { getBuildStrategyPresets } from "../../pages/strategies/presets";
 
 type StrategyPresetStepProps = {
   onSelect: (route: string) => void;
-  onBack: () => void;
   onCancel: () => void;
 };
 
-export default function StrategyPresetStep({
-  onSelect,
-  onBack,
-  onCancel,
-}: StrategyPresetStepProps) {
+export default function StrategyPresetStep({ onSelect, onCancel }: StrategyPresetStepProps) {
+  const presets = getBuildStrategyPresets();
+
   return (
     <>
-      <button type="button" className="model-form-back" onClick={onBack}>
-        ← Back
-      </button>
       <h4 className="model-overlay-title" id="create-strategy-preset-title">
-        Choose a template
+        Build Strategy
       </h4>
       <p className="model-overlay-desc">
-        Select a built-in strategy template to customize and save as your own.
+        Start from a built-in template. Templates are read-only starters — your saved strategy is
+        always a new copy you can edit freely.
       </p>
       <div className="strategy-preset-list">
-        {STRATEGY_PRESETS.map((preset) => {
+        {presets.map((preset) => {
           const Icon = preset.icon;
           return (
             <button

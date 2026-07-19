@@ -17,7 +17,12 @@ def test_normalize_settings_reads_contributor_models():
     }
     normalized = _normalize_settings(doc)
     assert normalized["contributor_models"] == [
-        {"model_id": "model-a", "reasoning_effort": "medium", "enabled": True}
+        {
+            "model_id": "model-a",
+            "model_name": None,
+            "reasoning_effort": "medium",
+            "enabled": True,
+        }
     ]
 
 

@@ -4,20 +4,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from brokerai.bots.researcher.llm import test_model
+from brokerai.bots.researcher.llm import list_available_models, test_model
 from brokerai.config_backup.change_labels import describe_ai_model_update
 from brokerai.config_backup.hooks import auto_backup_before
 from brokerai.db.repositories.ai_models import AiModelsRepository, mask_api_key
+from brokerai.provider_defaults import default_title, resolve_base_url
 from brokerai.web.routes.auth import require_auth
 
 router = APIRouter(prefix="/api/settings/models", tags=["settings-models"])
 
 
 class CreateModelBody(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
+    title: str = Field(default="", max_length=120)
     type: str = Field(default="open_webui", pattern="^(open_webui|openai|claude|grok)$")
-    base_url: str = Field(min_length=1, max_length=500)
-    model_name: str = Field(min_length=1, max_length=120)
+    base_url: str = Field(default="", max_length=500)
+    model_name: str = Field(default="", max_length=120)
     api_key: str = Field(default="", max_length=500)
     enabled: bool = True
 
@@ -34,6 +35,12 @@ class ToggleModelBody(BaseModel):
     enabled: bool
 
 
+class ListAvailableBody(BaseModel):
+    type: str = Field(pattern="^(open_webui|openai|claude|grok)$")
+    base_url: str = Field(default="", max_length=500)
+    api_key: str = Field(default="", max_length=500)
+
+
 def _public_model(doc: dict) -> dict:
     return {
         **doc,
@@ -42,29 +49,54 @@ def _public_model(doc: dict) -> dict:
     }
 
 
+async def _maybe_set_default_model(doc: dict) -> dict:
+    """After a successful catalog fetch, persist default_model_name when missing."""
+    if doc.get("default_model_name") or doc.get("model_name"):
+        return doc
+    ok, _message, models = await list_available_models(
+        str(doc.get("type") or ""),
+        str(doc.get("base_url") or ""),
+        doc.get("api_key") or None,
+    )
+    if not ok or not models:
+        return doc
+    first = models[0]["id"]
+    repo = AiModelsRepository()
+    updated = await repo.update(str(doc["id"]), default_model_name=first, model_name=first)
+    return updated or doc
+
+
 @router.get("")
 async def list_models(_username: str = Depends(require_auth)) -> JSONResponse:
     repo = AiModelsRepository()
+    await repo.dedupe_by_type()
     models = await repo.list_all()
     return JSONResponse({"models": [_public_model(m) for m in models]})
 
 
 @router.post("")
 async def create_model(body: CreateModelBody, _username: str = Depends(require_auth)) -> JSONResponse:
+    title = body.title.strip() or default_title(body.type)
     await auto_backup_before(
         trigger="ai_models.create",
-        summary=f"Create AI model: {body.title.strip()}",
-        change_label=f"Added AI model: {body.title.strip()}",
+        summary=f"Create AI model: {title}",
+        change_label=f"Added AI model: {title}",
     )
     repo = AiModelsRepository()
-    doc = await repo.create(
-        title=body.title,
-        model_type=body.type,
-        base_url=body.base_url,
-        model_name=body.model_name,
-        api_key=body.api_key or None,
-        enabled=body.enabled,
-    )
+    try:
+        doc = await repo.create(
+            title=title,
+            model_type=body.type,
+            base_url=body.base_url or None,
+            model_name=body.model_name or None,
+            api_key=body.api_key or None,
+            enabled=body.enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if body.api_key:
+        doc = await _maybe_set_default_model(doc)
     return JSONResponse(_public_model(doc))
 
 
@@ -112,6 +144,8 @@ async def update_model(
     )
     if not doc:
         raise HTTPException(status_code=404, detail="Model not found")
+    if api_key_changed:
+        doc = await _maybe_set_default_model(doc)
     return JSONResponse(_public_model(doc))
 
 
@@ -147,12 +181,46 @@ async def toggle_model(
     return JSONResponse(_public_model(doc))
 
 
+@router.post("/list-available")
+async def list_available_from_credentials(
+    body: ListAvailableBody,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    base_url = resolve_base_url(body.type, body.base_url)
+    ok, message, models = await list_available_models(body.type, base_url, body.api_key or None)
+    return JSONResponse({"ok": ok, "message": message, "models": models})
+
+
+@router.get("/{model_id}/available")
+async def list_available_for_saved(
+    model_id: str,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    repo = AiModelsRepository()
+    doc = await repo.find_by_id(model_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Model not found")
+    ok, message, models = await list_available_models(
+        str(doc.get("type") or ""),
+        str(doc.get("base_url") or ""),
+        doc.get("api_key") or None,
+    )
+    if ok and models and not (doc.get("default_model_name") or doc.get("model_name")):
+        await repo.update(
+            model_id,
+            default_model_name=models[0]["id"],
+            model_name=models[0]["id"],
+        )
+    return JSONResponse({"ok": ok, "message": message, "models": models})
+
+
 @router.post("/test-connection")
 async def test_connection(body: CreateModelBody, _username: str = Depends(require_auth)) -> JSONResponse:
+    base_url = resolve_base_url(body.type, body.base_url)
     ok, message = await test_model(
         body.type,
-        body.base_url,
-        body.model_name,
+        base_url,
+        body.model_name or None,
         body.api_key or None,
     )
     return JSONResponse({"ok": ok, "message": message})
@@ -168,7 +236,7 @@ async def test_saved_model(model_id: str, _username: str = Depends(require_auth)
     ok, message = await test_model(
         doc["type"],
         doc["base_url"],
-        doc["model_name"],
+        doc.get("default_model_name") or doc.get("model_name") or None,
         doc.get("api_key") or None,
     )
     return JSONResponse({"ok": ok, "message": message})

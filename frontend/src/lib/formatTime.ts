@@ -279,6 +279,57 @@ export function parseAppInstant(value: string | number | Date | null | undefined
   return parseInstant(value);
 }
 
+/** Calendar day key (`YYYY-MM-DD`) in the user's display timezone. */
+export function appCalendarDayKey(
+  value: string | number | Date | null | undefined,
+  options: TimeFormatOptions,
+): string | null {
+  const date = parseInstant(value);
+  if (!date) return null;
+  const { year, month, day } = calendarDateInZone(effectiveTimeZone(options), date);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** Clock time only (no date / timezone suffix) for rows under a day section. */
+export function formatAppClockTime(
+  value: string | number | Date | null | undefined,
+  options: TimeFormatOptions,
+): string {
+  const date = parseInstant(value);
+  if (!date) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: effectiveTimeZone(options),
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: useHour12(options),
+  }).format(date);
+}
+
+/** Day section label: Today / Yesterday / Jul 18, 2026. */
+export function formatAppDaySection(
+  value: string | number | Date | null | undefined,
+  options: TimeFormatOptions,
+  now = new Date(),
+): string {
+  const date = parseInstant(value);
+  if (!date) return "Unknown date";
+
+  const key = appCalendarDayKey(date, options);
+  const todayKey = appCalendarDayKey(now, options);
+  if (key && key === todayKey) return "Today";
+
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayKey = appCalendarDayKey(yesterday, options);
+  if (key && key === yesterdayKey) return "Yesterday";
+
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone: effectiveTimeZone(options),
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
 export function createChartTimeFormatter(options: TimeFormatOptions) {
   const timeZone = effectiveTimeZone(options);
   const hour12 = useHour12(options);

@@ -12,7 +12,22 @@ import ToggleSwitch from "../../components/ToggleSwitch";
 import SettingsPanelHeader from "../../components/SettingsPanelHeader";
 import useAutoSave from "../../hooks/useAutoSave";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
-import { getProvider, providerLabel } from "./modelProviders";
+import {
+  catalogSelectionKey,
+  getProvider,
+  parseCatalogSelectionKey,
+  providerLabel,
+} from "./modelProviders";
+
+type CatalogOption = {
+  key: string;
+  sourceId: string;
+  modelName: string;
+  label: string;
+  sourceTitle: string;
+  providerType: string;
+  sourceEnabled: boolean;
+};
 import {
   closeOffsetLabel,
   closeSchedulePreviewParts,
@@ -106,8 +121,10 @@ function PromptPreviewModal({
 
 type ReportsSnapshot = {
   models: AiModel[];
+  catalog: CatalogOption[];
   contributors: Record<string, ContributorModel>;
   synthesisModelId: string | null;
+  synthesisModelName: string | null;
   synthesisReasoning: ReasoningEffort;
   dailyReportEnabled: boolean;
   scheduleMarkets: ResearchScheduleMarket[];
@@ -115,11 +132,13 @@ type ReportsSnapshot = {
   dailyReportMarketOffsetHours: number;
   weeklyBriefEnabled: boolean;
   weeklyBriefModelId: string | null;
+  weeklyBriefModelName: string | null;
   weeklyBriefReasoning: ReasoningEffort;
   weeklyBriefMarketId: string;
   weeklyBriefMarketOffsetHours: number;
   weeklyDebriefEnabled: boolean;
   weeklyDebriefModelId: string | null;
+  weeklyDebriefModelName: string | null;
   weeklyDebriefReasoning: ReasoningEffort;
   weeklyDebriefMarketId: string;
   weeklyDebriefMarketOffsetHours: number;
@@ -128,9 +147,12 @@ type ReportsSnapshot = {
 export default function ReportsTab() {
   const { timeOptions } = useGeneralSettings();
   const [models, setModels] = useState<AiModel[]>([]);
+  const [catalog, setCatalog] = useState<CatalogOption[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const [contributors, setContributors] = useState<Record<string, ContributorModel>>({});
   const [synthesisModelId, setSynthesisModelId] = useState<string | null>(null);
+  const [synthesisModelName, setSynthesisModelName] = useState<string | null>(null);
   const [synthesisReasoning, setSynthesisReasoning] = useState<ReasoningEffort>(DEFAULT_REASONING);
 
   const [dailyReportEnabled, setDailyReportEnabled] = useState(false);
@@ -142,6 +164,7 @@ export default function ReportsTab() {
 
   const [weeklyBriefEnabled, setWeeklyBriefEnabled] = useState(false);
   const [weeklyBriefModelId, setWeeklyBriefModelId] = useState<string | null>(null);
+  const [weeklyBriefModelName, setWeeklyBriefModelName] = useState<string | null>(null);
   const [weeklyBriefReasoning, setWeeklyBriefReasoning] = useState<ReasoningEffort>(DEFAULT_REASONING);
   const [weeklyBriefMarketId, setWeeklyBriefMarketId] = useState(DEFAULT_DAILY_REPORT_MARKET_ID);
   const [weeklyBriefMarketOffsetHours, setWeeklyBriefMarketOffsetHours] = useState(
@@ -150,6 +173,7 @@ export default function ReportsTab() {
 
   const [weeklyDebriefEnabled, setWeeklyDebriefEnabled] = useState(false);
   const [weeklyDebriefModelId, setWeeklyDebriefModelId] = useState<string | null>(null);
+  const [weeklyDebriefModelName, setWeeklyDebriefModelName] = useState<string | null>(null);
   const [weeklyDebriefReasoning, setWeeklyDebriefReasoning] =
     useState<ReasoningEffort>(DEFAULT_REASONING);
   const [weeklyDebriefMarketId, setWeeklyDebriefMarketId] = useState(DEFAULT_DAILY_REPORT_MARKET_ID);
@@ -167,12 +191,17 @@ export default function ReportsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const enabledModels = useMemo(() => models.filter((m) => m.enabled), [models]);
+  const enabledCatalog = useMemo(
+    () => catalog.filter((item) => item.sourceEnabled),
+    [catalog],
+  );
 
   const snapshotRef = useRef<ReportsSnapshot>({
     models: [],
+    catalog: [],
     contributors: {},
     synthesisModelId: null,
+    synthesisModelName: null,
     synthesisReasoning: DEFAULT_REASONING,
     dailyReportEnabled: false,
     scheduleMarkets: [],
@@ -180,11 +209,13 @@ export default function ReportsTab() {
     dailyReportMarketOffsetHours: DEFAULT_DAILY_REPORT_MARKET_OFFSET_HOURS,
     weeklyBriefEnabled: false,
     weeklyBriefModelId: null,
+    weeklyBriefModelName: null,
     weeklyBriefReasoning: DEFAULT_REASONING,
     weeklyBriefMarketId: DEFAULT_DAILY_REPORT_MARKET_ID,
     weeklyBriefMarketOffsetHours: DEFAULT_WEEKLY_BRIEF_MARKET_OFFSET_HOURS,
     weeklyDebriefEnabled: false,
     weeklyDebriefModelId: null,
+    weeklyDebriefModelName: null,
     weeklyDebriefReasoning: DEFAULT_REASONING,
     weeklyDebriefMarketId: DEFAULT_DAILY_REPORT_MARKET_ID,
     weeklyDebriefMarketOffsetHours: DEFAULT_WEEKLY_DEBRIEF_MARKET_OFFSET_HOURS,
@@ -192,8 +223,10 @@ export default function ReportsTab() {
 
   snapshotRef.current = {
     models,
+    catalog,
     contributors,
     synthesisModelId,
+    synthesisModelName,
     synthesisReasoning,
     dailyReportEnabled,
     scheduleMarkets,
@@ -201,11 +234,13 @@ export default function ReportsTab() {
     dailyReportMarketOffsetHours,
     weeklyBriefEnabled,
     weeklyBriefModelId,
+    weeklyBriefModelName,
     weeklyBriefReasoning,
     weeklyBriefMarketId,
     weeklyBriefMarketOffsetHours,
     weeklyDebriefEnabled,
     weeklyDebriefModelId,
+    weeklyDebriefModelName,
     weeklyDebriefReasoning,
     weeklyDebriefMarketId,
     weeklyDebriefMarketOffsetHours,
@@ -215,10 +250,16 @@ export default function ReportsTab() {
     (saved: Awaited<ReturnType<typeof api.getResearchSettings>>) => {
       const map: Record<string, ContributorModel> = {};
       for (const entry of saved.contributor_models ?? []) {
-        map[entry.model_id] = entry;
+        const modelName = entry.model_name || "";
+        if (!modelName) continue;
+        map[catalogSelectionKey(entry.model_id, modelName)] = {
+          ...entry,
+          model_name: modelName,
+        };
       }
       setContributors(map);
       setSynthesisModelId(saved.synthesis_model_id ?? null);
+      setSynthesisModelName(saved.synthesis_model_name ?? null);
       setSynthesisReasoning(saved.synthesis_reasoning_effort ?? DEFAULT_REASONING);
       setDailyReportEnabled(saved.daily_report_enabled ?? false);
       setScheduleMarkets((prev) => saved.schedule_markets ?? prev);
@@ -228,6 +269,7 @@ export default function ReportsTab() {
       );
       setWeeklyBriefEnabled(saved.weekly_brief_enabled ?? false);
       setWeeklyBriefModelId(saved.weekly_brief_model_id ?? null);
+      setWeeklyBriefModelName(saved.weekly_brief_model_name ?? null);
       setWeeklyBriefReasoning(saved.weekly_brief_reasoning_effort ?? DEFAULT_REASONING);
       setWeeklyBriefMarketId(saved.weekly_brief_market_id ?? DEFAULT_DAILY_REPORT_MARKET_ID);
       setWeeklyBriefMarketOffsetHours(
@@ -235,6 +277,7 @@ export default function ReportsTab() {
       );
       setWeeklyDebriefEnabled(saved.weekly_debrief_enabled ?? false);
       setWeeklyDebriefModelId(saved.weekly_debrief_model_id ?? null);
+      setWeeklyDebriefModelName(saved.weekly_debrief_model_name ?? null);
       setWeeklyDebriefReasoning(saved.weekly_debrief_reasoning_effort ?? DEFAULT_REASONING);
       setWeeklyDebriefMarketId(saved.weekly_debrief_market_id ?? DEFAULT_DAILY_REPORT_MARKET_ID);
       setWeeklyDebriefMarketOffsetHours(
@@ -247,16 +290,79 @@ export default function ReportsTab() {
     [],
   );
 
-  const persistReportsSettings = useCallback(async () => {
-    const snapshot = snapshotRef.current;
+  const loadCatalog = useCallback(async (sources: AiModel[]) => {
+    const enabled = sources.filter((source) => source.enabled);
+    const results = await Promise.all(
+      enabled.map(async (source) => {
+        try {
+          const response = await api.listAvailableModels(source.id);
+          return { source, response };
+        } catch (err) {
+          return {
+            source,
+            response: {
+              ok: false,
+              message: err instanceof Error ? err.message : "Failed to list models",
+              models: [] as Array<{ id: string; name: string }>,
+            },
+          };
+        }
+      }),
+    );
 
-    const contributorList = Object.values(snapshot.contributors).filter((c) =>
-      snapshot.models.some((m) => m.id === c.model_id && m.enabled),
+    const next: CatalogOption[] = [];
+    const errors: string[] = [];
+    for (const { source, response } of results) {
+      if (!response.ok) {
+        errors.push(`${source.title}: ${response.message}`);
+        const fallback =
+          source.default_model_name || source.model_name || "";
+        if (fallback) {
+          next.push({
+            key: catalogSelectionKey(source.id, fallback),
+            sourceId: source.id,
+            modelName: fallback,
+            label: `${source.title} · ${fallback}`,
+            sourceTitle: source.title,
+            providerType: source.type,
+            sourceEnabled: source.enabled,
+          });
+        }
+        continue;
+      }
+      for (const model of response.models) {
+        next.push({
+          key: catalogSelectionKey(source.id, model.id),
+          sourceId: source.id,
+          modelName: model.id,
+          label: `${source.title} · ${model.name || model.id}`,
+          sourceTitle: source.title,
+          providerType: source.type,
+          sourceEnabled: source.enabled,
+        });
+      }
+    }
+    setCatalog(next);
+    setCatalogError(errors.length ? errors.join("; ") : null);
+  }, []);
+
+  const saveEpochRef = useRef(0);
+
+  const persistReportsSettings = useCallback(async () => {
+    const epoch = ++saveEpochRef.current;
+    const snapshot = snapshotRef.current;
+    const enabledSourceIds = new Set(
+      snapshot.models.filter((m) => m.enabled).map((m) => m.id),
+    );
+
+    const contributorList = Object.values(snapshot.contributors).filter(
+      (c) => c.enabled && c.model_name && enabledSourceIds.has(c.model_id),
     );
 
     await api.saveResearchSettings({
       contributor_models: contributorList,
       synthesis_model_id: snapshot.synthesisModelId,
+      synthesis_model_name: snapshot.synthesisModelName,
       synthesis_reasoning_effort: snapshot.synthesisReasoning,
       daily_report_enabled: snapshot.dailyReportEnabled,
       daily_report_market_id: snapshot.dailyReportMarketId,
@@ -266,18 +372,27 @@ export default function ReportsTab() {
     const saved = await api.saveWeeklyResearchSettings({
       weekly_brief_enabled: snapshot.weeklyBriefEnabled,
       weekly_brief_model_id: snapshot.weeklyBriefModelId,
+      weekly_brief_model_name: snapshot.weeklyBriefModelName,
       weekly_brief_reasoning_effort: snapshot.weeklyBriefReasoning,
       weekly_brief_market_id: snapshot.weeklyBriefMarketId,
       weekly_brief_market_offset_hours: snapshot.weeklyBriefMarketOffsetHours,
       weekly_debrief_enabled: snapshot.weeklyDebriefEnabled,
       weekly_debrief_model_id: snapshot.weeklyDebriefModelId,
+      weekly_debrief_model_name: snapshot.weeklyDebriefModelName,
       weekly_debrief_reasoning_effort: snapshot.weeklyDebriefReasoning,
       weekly_debrief_market_id: snapshot.weeklyDebriefMarketId,
       weekly_debrief_market_offset_hours: snapshot.weeklyDebriefMarketOffsetHours,
     });
 
-    applySavedSettings(saved);
-  }, [applySavedSettings]);
+    // Ignore stale responses so an older in-flight save cannot overwrite optimistic
+    // toggle/UI state (that race made Enable switches feel delayed).
+    if (epoch !== saveEpochRef.current) return;
+
+    // Only sync server-derived fields; local form state is already optimistic.
+    setScheduleWarnings(saved.schedule_warnings ?? []);
+    setBriefPromptPreview(saved.weekly_brief_prompt_preview ?? null);
+    setDebriefPromptPreview(saved.weekly_debrief_prompt_preview ?? null);
+  }, []);
 
   const { saveStatus, saveNow, markReady, markNotReady, error: saveError } =
     useAutoSave({
@@ -296,6 +411,7 @@ export default function ReportsTab() {
         ]);
         setModels(modelsData.models);
         applySavedSettings(settings);
+        await loadCatalog(modelsData.models);
         markReady();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load report settings");
@@ -303,27 +419,117 @@ export default function ReportsTab() {
         setLoading(false);
       }
     })();
-  }, [applySavedSettings, markNotReady, markReady]);
+  }, [applySavedSettings, loadCatalog, markNotReady, markReady]);
 
   const contributorCount = useMemo(
     () => Object.values(contributors).filter((c) => c.enabled).length,
     [contributors],
   );
 
-  function contributorFor(modelId: string): ContributorModel {
-    return contributors[modelId] ?? { model_id: modelId, reasoning_effort: DEFAULT_REASONING, enabled: false };
+  const displayCatalog = useMemo(() => {
+    const byKey = new Map(catalog.map((item) => [item.key, item]));
+    for (const [key, entry] of Object.entries(contributors)) {
+      if (!entry.model_name || byKey.has(key)) continue;
+      const source = models.find((m) => m.id === entry.model_id);
+      byKey.set(key, {
+        key,
+        sourceId: entry.model_id,
+        modelName: entry.model_name,
+        label: `${source?.title || providerLabel(source?.type || "")} · ${entry.model_name}`,
+        sourceTitle: source?.title || "Source",
+        providerType: source?.type || "",
+        sourceEnabled: Boolean(source?.enabled),
+      });
+    }
+    for (const [sourceId, modelName] of [
+      [synthesisModelId, synthesisModelName],
+      [weeklyBriefModelId, weeklyBriefModelName],
+      [weeklyDebriefModelId, weeklyDebriefModelName],
+    ] as const) {
+      if (!sourceId || !modelName) continue;
+      const key = catalogSelectionKey(sourceId, modelName);
+      if (byKey.has(key)) continue;
+      const source = models.find((m) => m.id === sourceId);
+      byKey.set(key, {
+        key,
+        sourceId,
+        modelName,
+        label: `${source?.title || "Source"} · ${modelName}`,
+        sourceTitle: source?.title || "Source",
+        providerType: source?.type || "",
+        sourceEnabled: Boolean(source?.enabled),
+      });
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [
+    catalog,
+    contributors,
+    models,
+    synthesisModelId,
+    synthesisModelName,
+    weeklyBriefModelId,
+    weeklyBriefModelName,
+    weeklyDebriefModelId,
+    weeklyDebriefModelName,
+  ]);
+
+  function contributorFor(sourceId: string, modelName: string): ContributorModel {
+    const key = catalogSelectionKey(sourceId, modelName);
+    return (
+      contributors[key] ?? {
+        model_id: sourceId,
+        model_name: modelName,
+        reasoning_effort: DEFAULT_REASONING,
+        enabled: false,
+      }
+    );
   }
 
   function patchSnapshot(patch: Partial<ReportsSnapshot>) {
     snapshotRef.current = { ...snapshotRef.current, ...patch };
+    // Keep React state in sync immediately so toggles/selects don't wait on save.
+    if (patch.dailyReportEnabled !== undefined) setDailyReportEnabled(patch.dailyReportEnabled);
+    if (patch.dailyReportMarketId !== undefined) setDailyReportMarketId(patch.dailyReportMarketId);
+    if (patch.dailyReportMarketOffsetHours !== undefined) {
+      setDailyReportMarketOffsetHours(patch.dailyReportMarketOffsetHours);
+    }
+    if (patch.synthesisModelId !== undefined) setSynthesisModelId(patch.synthesisModelId);
+    if (patch.synthesisModelName !== undefined) setSynthesisModelName(patch.synthesisModelName);
+    if (patch.synthesisReasoning !== undefined) setSynthesisReasoning(patch.synthesisReasoning);
+    if (patch.weeklyBriefEnabled !== undefined) setWeeklyBriefEnabled(patch.weeklyBriefEnabled);
+    if (patch.weeklyBriefModelId !== undefined) setWeeklyBriefModelId(patch.weeklyBriefModelId);
+    if (patch.weeklyBriefModelName !== undefined) setWeeklyBriefModelName(patch.weeklyBriefModelName);
+    if (patch.weeklyBriefReasoning !== undefined) setWeeklyBriefReasoning(patch.weeklyBriefReasoning);
+    if (patch.weeklyBriefMarketId !== undefined) setWeeklyBriefMarketId(patch.weeklyBriefMarketId);
+    if (patch.weeklyBriefMarketOffsetHours !== undefined) {
+      setWeeklyBriefMarketOffsetHours(patch.weeklyBriefMarketOffsetHours);
+    }
+    if (patch.weeklyDebriefEnabled !== undefined) setWeeklyDebriefEnabled(patch.weeklyDebriefEnabled);
+    if (patch.weeklyDebriefModelId !== undefined) setWeeklyDebriefModelId(patch.weeklyDebriefModelId);
+    if (patch.weeklyDebriefModelName !== undefined) {
+      setWeeklyDebriefModelName(patch.weeklyDebriefModelName);
+    }
+    if (patch.weeklyDebriefReasoning !== undefined) {
+      setWeeklyDebriefReasoning(patch.weeklyDebriefReasoning);
+    }
+    if (patch.weeklyDebriefMarketId !== undefined) setWeeklyDebriefMarketId(patch.weeklyDebriefMarketId);
+    if (patch.weeklyDebriefMarketOffsetHours !== undefined) {
+      setWeeklyDebriefMarketOffsetHours(patch.weeklyDebriefMarketOffsetHours);
+    }
     saveNow();
   }
 
-  function toggleContributor(modelId: string, enabled: boolean) {
+  function toggleContributor(sourceId: string, modelName: string, enabled: boolean) {
+    const key = catalogSelectionKey(sourceId, modelName);
     setContributors((prev) => {
       const next = {
         ...prev,
-        [modelId]: { ...contributorFor(modelId), model_id: modelId, enabled },
+        [key]: {
+          ...contributorFor(sourceId, modelName),
+          model_id: sourceId,
+          model_name: modelName,
+          enabled,
+        },
       };
       snapshotRef.current = { ...snapshotRef.current, contributors: next };
       return next;
@@ -331,11 +537,21 @@ export default function ReportsTab() {
     saveNow();
   }
 
-  function setContributorReasoning(modelId: string, reasoning: ReasoningEffort) {
+  function setContributorReasoning(
+    sourceId: string,
+    modelName: string,
+    reasoning: ReasoningEffort,
+  ) {
+    const key = catalogSelectionKey(sourceId, modelName);
     setContributors((prev) => {
       const next = {
         ...prev,
-        [modelId]: { ...contributorFor(modelId), model_id: modelId, reasoning_effort: reasoning },
+        [key]: {
+          ...contributorFor(sourceId, modelName),
+          model_id: sourceId,
+          model_name: modelName,
+          reasoning_effort: reasoning,
+        },
       };
       snapshotRef.current = { ...snapshotRef.current, contributors: next };
       return next;
@@ -454,8 +670,8 @@ export default function ReportsTab() {
           <p className="settings-muted">Loading…</p>
         ) : models.length === 0 ? (
           <div className="research-empty-callout">
-            <p className="research-empty-callout-title">No models configured</p>
-            <p className="settings-muted">Add a model under Settings → Models to get started.</p>
+            <p className="research-empty-callout-title">No API sources configured</p>
+            <p className="settings-muted">Add a provider under Settings → Models to get started.</p>
             <Link to="/settings/models" className="btn btn-secondary btn-sm research-empty-link">
               Go to Models
             </Link>
@@ -469,13 +685,19 @@ export default function ReportsTab() {
                 ))}
               </div>
             )}
+            {catalogError && (
+              <div className="settings-callout settings-callout-warning">
+                <p>Could not load some model catalogs: {catalogError}</p>
+              </div>
+            )}
 
             <section className="settings-card research-card">
               <div className="settings-card-header">
                 <div className="settings-section-intro">
                   <h3 className="research-card-title">Analysis models</h3>
                   <p className="settings-muted">
-                    Each enabled model writes its own report from the same sources.
+                    Models available from your connected API sources. Each enabled model writes its
+                    own report from the same sources.
                   </p>
                 </div>
                 {contributorCount > 0 && (
@@ -483,25 +705,32 @@ export default function ReportsTab() {
                 )}
               </div>
 
+              {displayCatalog.length === 0 ? (
+                <p className="settings-muted">
+                  No models listed yet. Check API keys under Settings → Models, then refresh.
+                </p>
+              ) : (
               <ul className="research-model-checklist">
-                {models.map((model) => {
-                  const provider = getProvider(model.type);
-                  const contributor = contributorFor(model.id);
-                  const rowDisabled = !model.enabled;
+                {displayCatalog.map((option) => {
+                  const provider = getProvider(option.providerType);
+                  const contributor = contributorFor(option.sourceId, option.modelName);
+                  const rowDisabled = !option.sourceEnabled;
 
                   return (
                     <li
-                      key={model.id}
+                      key={option.key}
                       className={`research-model-checklist-item${
                         contributor.enabled ? " research-model-checklist-item--selected" : ""
                       }${rowDisabled ? " research-model-checklist-item--disabled" : ""}`}
                     >
                       <div className="research-model-row-head">
                         <ToggleSwitch
-                          label={`Enable ${model.title}`}
+                          label={`Enable ${option.label}`}
                           checked={contributor.enabled}
                           disabled={rowDisabled}
-                          onChange={(checked) => toggleContributor(model.id, checked)}
+                          onChange={(checked) =>
+                            toggleContributor(option.sourceId, option.modelName, checked)
+                          }
                         />
                         {provider && (
                           <img
@@ -513,10 +742,10 @@ export default function ReportsTab() {
                           />
                         )}
                         <span className="research-model-checklist-meta">
-                          <span className="research-model-checklist-title">{model.title}</span>
+                          <span className="research-model-checklist-title">{option.modelName}</span>
                           <span className="settings-muted">
-                            {providerLabel(model.type)} · {model.model_name}
-                            {rowDisabled ? " · disabled" : ""}
+                            {providerLabel(option.providerType)} · {option.sourceTitle}
+                            {rowDisabled ? " · source disabled" : ""}
                           </span>
                         </span>
                         <div className="research-model-reasoning">
@@ -524,7 +753,9 @@ export default function ReportsTab() {
                           <ReasoningSelect
                             value={contributor.reasoning_effort}
                             disabled={rowDisabled || !contributor.enabled}
-                            onChange={(value) => setContributorReasoning(model.id, value)}
+                            onChange={(value) =>
+                              setContributorReasoning(option.sourceId, option.modelName, value)
+                            }
                           />
                         </div>
                       </div>
@@ -532,6 +763,7 @@ export default function ReportsTab() {
                   );
                 })}
               </ul>
+              )}
             </section>
 
             <div className="reports-section-intro">
@@ -555,10 +787,7 @@ export default function ReportsTab() {
                   <ToggleSwitch
                     label="Enable daily report"
                     checked={dailyReportEnabled}
-                    onChange={(next) => {
-                      setDailyReportEnabled(next);
-                      patchSnapshot({ dailyReportEnabled: next });
-                    }}
+                    onChange={(next) => patchSnapshot({ dailyReportEnabled: next })}
                   />
                 </div>
               </div>
@@ -578,14 +807,9 @@ export default function ReportsTab() {
                     marketId: dailyReportMarketId,
                     offsetHours: dailyReportMarketOffsetHours,
                     enabled: dailyReportEnabled,
-                    onMarketChange: (value) => {
-                      setDailyReportMarketId(value);
-                      patchSnapshot({ dailyReportMarketId: value });
-                    },
-                    onOffsetChange: (value) => {
-                      setDailyReportMarketOffsetHours(value);
-                      patchSnapshot({ dailyReportMarketOffsetHours: value });
-                    },
+                    onMarketChange: (value) => patchSnapshot({ dailyReportMarketId: value }),
+                    onOffsetChange: (value) =>
+                      patchSnapshot({ dailyReportMarketOffsetHours: value }),
                     offsetOptionsLabel: offsetLabel,
                   })}
 
@@ -622,19 +846,34 @@ export default function ReportsTab() {
                     <select
                       id="synthesis-model"
                       className="research-select"
-                      value={synthesisModelId ?? ""}
+                      value={
+                        synthesisModelId && synthesisModelName
+                          ? catalogSelectionKey(synthesisModelId, synthesisModelName)
+                          : ""
+                      }
                       onChange={(e) => {
-                        const next = e.target.value || null;
-                        setSynthesisModelId(next);
-                        patchSnapshot({ synthesisModelId: next });
+                        const value = e.target.value;
+                        if (!value) {
+                          patchSnapshot({
+                            synthesisModelId: null,
+                            synthesisModelName: null,
+                          });
+                          return;
+                        }
+                        const parsed = parseCatalogSelectionKey(value);
+                        if (!parsed) return;
+                        patchSnapshot({
+                          synthesisModelId: parsed.sourceId,
+                          synthesisModelName: parsed.modelName,
+                        });
                       }}
                     >
                       <option value="">
                         {contributorCount <= 1 ? "Use the single analysis model" : "Select a model…"}
                       </option>
-                      {enabledModels.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.title} · {model.model_name}
+                      {enabledCatalog.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
                         </option>
                       ))}
                     </select>
@@ -648,10 +887,7 @@ export default function ReportsTab() {
                   <ReasoningSelect
                     id="synthesis-reasoning"
                     value={synthesisReasoning}
-                    onChange={(next) => {
-                      setSynthesisReasoning(next);
-                      patchSnapshot({ synthesisReasoning: next });
-                    }}
+                    onChange={(next) => patchSnapshot({ synthesisReasoning: next })}
                   />
                 </div>
               </div>
@@ -675,10 +911,7 @@ export default function ReportsTab() {
                   <ToggleSwitch
                     label="Enable weekly brief"
                     checked={weeklyBriefEnabled}
-                    onChange={(next) => {
-                      setWeeklyBriefEnabled(next);
-                      patchSnapshot({ weeklyBriefEnabled: next });
-                    }}
+                    onChange={(next) => patchSnapshot({ weeklyBriefEnabled: next })}
                   />
                 </div>
               </div>
@@ -697,18 +930,33 @@ export default function ReportsTab() {
                       <select
                         id="weekly-brief-model"
                         className="research-select"
-                        value={weeklyBriefModelId ?? ""}
+                        value={
+                          weeklyBriefModelId && weeklyBriefModelName
+                            ? catalogSelectionKey(weeklyBriefModelId, weeklyBriefModelName)
+                            : ""
+                        }
                         disabled={!weeklyBriefEnabled}
                         onChange={(e) => {
-                          const next = e.target.value || null;
-                          setWeeklyBriefModelId(next);
-                          patchSnapshot({ weeklyBriefModelId: next });
+                          const value = e.target.value;
+                          if (!value) {
+                            patchSnapshot({
+                              weeklyBriefModelId: null,
+                              weeklyBriefModelName: null,
+                            });
+                            return;
+                          }
+                          const parsed = parseCatalogSelectionKey(value);
+                          if (!parsed) return;
+                          patchSnapshot({
+                            weeklyBriefModelId: parsed.sourceId,
+                            weeklyBriefModelName: parsed.modelName,
+                          });
                         }}
                       >
                         <option value="">Select a model…</option>
-                        {enabledModels.map((model) => (
-                          <option key={model.id} value={model.id}>
-                            {model.title}
+                        {enabledCatalog.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
@@ -722,10 +970,7 @@ export default function ReportsTab() {
                       id="weekly-brief-reasoning"
                       value={weeklyBriefReasoning}
                       disabled={!weeklyBriefEnabled}
-                      onChange={(next) => {
-                        setWeeklyBriefReasoning(next);
-                        patchSnapshot({ weeklyBriefReasoning: next });
-                      }}
+                      onChange={(next) => patchSnapshot({ weeklyBriefReasoning: next })}
                     />
                   </div>
                 </div>
@@ -740,14 +985,9 @@ export default function ReportsTab() {
                     marketId: weeklyBriefMarketId,
                     offsetHours: weeklyBriefMarketOffsetHours,
                     enabled: weeklyBriefEnabled,
-                    onMarketChange: (value) => {
-                      setWeeklyBriefMarketId(value);
-                      patchSnapshot({ weeklyBriefMarketId: value });
-                    },
-                    onOffsetChange: (value) => {
-                      setWeeklyBriefMarketOffsetHours(value);
-                      patchSnapshot({ weeklyBriefMarketOffsetHours: value });
-                    },
+                    onMarketChange: (value) => patchSnapshot({ weeklyBriefMarketId: value }),
+                    onOffsetChange: (value) =>
+                      patchSnapshot({ weeklyBriefMarketOffsetHours: value }),
                     offsetOptionsLabel: offsetLabel,
                   })}
 
@@ -790,10 +1030,7 @@ export default function ReportsTab() {
                   <ToggleSwitch
                     label="Enable weekly debrief"
                     checked={weeklyDebriefEnabled}
-                    onChange={(next) => {
-                      setWeeklyDebriefEnabled(next);
-                      patchSnapshot({ weeklyDebriefEnabled: next });
-                    }}
+                    onChange={(next) => patchSnapshot({ weeklyDebriefEnabled: next })}
                   />
                 </div>
               </div>
@@ -812,18 +1049,33 @@ export default function ReportsTab() {
                       <select
                         id="weekly-debrief-model"
                         className="research-select"
-                        value={weeklyDebriefModelId ?? ""}
+                        value={
+                          weeklyDebriefModelId && weeklyDebriefModelName
+                            ? catalogSelectionKey(weeklyDebriefModelId, weeklyDebriefModelName)
+                            : ""
+                        }
                         disabled={!weeklyDebriefEnabled}
                         onChange={(e) => {
-                          const next = e.target.value || null;
-                          setWeeklyDebriefModelId(next);
-                          patchSnapshot({ weeklyDebriefModelId: next });
+                          const value = e.target.value;
+                          if (!value) {
+                            patchSnapshot({
+                              weeklyDebriefModelId: null,
+                              weeklyDebriefModelName: null,
+                            });
+                            return;
+                          }
+                          const parsed = parseCatalogSelectionKey(value);
+                          if (!parsed) return;
+                          patchSnapshot({
+                            weeklyDebriefModelId: parsed.sourceId,
+                            weeklyDebriefModelName: parsed.modelName,
+                          });
                         }}
                       >
                         <option value="">Select a model…</option>
-                        {enabledModels.map((model) => (
-                          <option key={model.id} value={model.id}>
-                            {model.title}
+                        {enabledCatalog.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
@@ -837,10 +1089,7 @@ export default function ReportsTab() {
                       id="weekly-debrief-reasoning"
                       value={weeklyDebriefReasoning}
                       disabled={!weeklyDebriefEnabled}
-                      onChange={(next) => {
-                        setWeeklyDebriefReasoning(next);
-                        patchSnapshot({ weeklyDebriefReasoning: next });
-                      }}
+                      onChange={(next) => patchSnapshot({ weeklyDebriefReasoning: next })}
                     />
                   </div>
                 </div>
@@ -863,10 +1112,9 @@ export default function ReportsTab() {
                           className="research-select"
                           value={weeklyDebriefMarketId}
                           disabled={!weeklyDebriefEnabled}
-                          onChange={(e) => {
-                            setWeeklyDebriefMarketId(e.target.value);
-                            patchSnapshot({ weeklyDebriefMarketId: e.target.value });
-                          }}
+                          onChange={(e) =>
+                            patchSnapshot({ weeklyDebriefMarketId: e.target.value })
+                          }
                         >
                           {scheduleMarkets.map((market) => (
                             <option key={market.id} value={market.id}>
@@ -887,11 +1135,11 @@ export default function ReportsTab() {
                           className="research-select"
                           value={weeklyDebriefMarketOffsetHours}
                           disabled={!weeklyDebriefEnabled}
-                          onChange={(e) => {
-                            const next = Number(e.target.value);
-                            setWeeklyDebriefMarketOffsetHours(next);
-                            patchSnapshot({ weeklyDebriefMarketOffsetHours: next });
-                          }}
+                          onChange={(e) =>
+                            patchSnapshot({
+                              weeklyDebriefMarketOffsetHours: Number(e.target.value),
+                            })
+                          }
                         >
                           {MARKET_OFFSET_OPTIONS.map((hours) => (
                             <option key={hours} value={hours}>

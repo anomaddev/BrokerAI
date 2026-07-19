@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Place a random OANDA market order for manual testing.
 
-Uses OANDA credentials stored in MongoDB (Settings → Exchange Connections).
+Uses OANDA credentials stored in Postgres (Settings → Exchange Connections).
 Defaults to the practice environment and small unit sizes.
 
 Examples:
@@ -19,7 +19,7 @@ import random
 import sys
 from typing import Any
 
-from brokerai.db.client import close_db, get_db
+from brokerai.db.client import close_db, init_pg
 from brokerai.db.repositories.asset_settings import FOREX_PAIR_CATALOG
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository
@@ -77,7 +77,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--record",
         action="store_true",
-        help="Persist the trade in MongoDB via BrokerLotsRepository.",
+        help="Persist the trade in Postgres via BrokerLotsRepository.",
     )
     parser.add_argument(
         "--dry-run",
@@ -120,7 +120,7 @@ def _signed_units(units: float, direction: str) -> float:
 
 
 async def _load_oanda_config() -> dict[str, Any]:
-    await get_db()
+    await init_pg()
     return await ExchangeConnectionsRepository().get_oanda()
 
 
@@ -144,7 +144,7 @@ async def _place_trade(args: argparse.Namespace) -> dict[str, Any]:
     if not access_token or not account_id:
         raise RuntimeError(
             "OANDA is not configured. Set access token and account id in "
-            "Settings → Exchange Connections (or MongoDB exchange_connections)."
+            "Settings → Exchange Connections (or Postgres exchange_connections)."
         )
     if environment not in OANDA_ENVIRONMENTS:
         raise RuntimeError(f"Unknown OANDA environment {environment!r}")
@@ -154,7 +154,9 @@ async def _place_trade(args: argparse.Namespace) -> dict[str, Any]:
             "Use --allow-live if you really intend to."
         )
 
-    ok, message, _accounts = await test_connection(access_token, environment, account_id)
+    ok, message, _accounts, _suggested, _diagnostics = await test_connection(
+        access_token, environment, account_id
+    )
     if not ok:
         raise RuntimeError(message)
 
@@ -270,7 +272,7 @@ def _print_result(result: dict[str, Any], *, as_json: bool) -> None:
     if result.get("fill_price") is not None:
         print(f"  Fill price:  {result['fill_price']}")
     if recorded := result.get("recorded_trade"):
-        print(f"  Mongo id:    {recorded.get('id')}")
+        print(f"  Record id:   {recorded.get('id')}")
 
 
 async def _async_main(argv: list[str] | None = None) -> int:

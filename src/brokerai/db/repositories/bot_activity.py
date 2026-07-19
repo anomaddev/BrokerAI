@@ -4,13 +4,15 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from brokerai.db.client import get_db
+from sqlalchemy import select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import BotActivityRow
 
 
 def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
     occurred_at = doc.get("occurred_at")
     if isinstance(occurred_at, datetime):
-        # MongoDB stores UTC datetimes without tzinfo; do not use astimezone() on naive values.
         if occurred_at.tzinfo is None:
             occurred_at = occurred_at.replace(tzinfo=timezone.utc)
         else:
@@ -53,10 +55,13 @@ class BotActivityRepository:
             "detail": detail.strip() if detail else None,
             "source": source,
             "metadata": metadata or {},
-            "occurred_at": when,
+            # JSONB cannot store datetime objects — keep ISO string in doc.
+            "occurred_at": when.isoformat(),
         }
-        handle = await get_db()
-        await handle.db[self.COLLECTION].insert_one(doc)
+        async with session_scope() as session:
+            session.add(
+                BotActivityRow(id=doc["id"], occurred_at=when, doc=doc)
+            )
         return _serialize(doc)
 
     async def list_recent(
@@ -65,17 +70,17 @@ class BotActivityRepository:
         limit: int = 50,
         before: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        handle = await get_db()
-        query: dict[str, Any] = {}
-        if before is not None:
-            when = before.astimezone(timezone.utc) if before.tzinfo else before.replace(tzinfo=timezone.utc)
-            query["occurred_at"] = {"$lt": when}
-
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find(query, {"_id": 0})
-            .sort("occurred_at", -1)
-            .limit(max(1, min(limit, 200)))
-        )
-        rows = await cursor.to_list(length=limit)
-        return [_serialize(row) for row in rows]
+        async with session_scope() as session:
+            stmt = select(BotActivityRow)
+            if before is not None:
+                when = (
+                    before.astimezone(timezone.utc)
+                    if before.tzinfo
+                    else before.replace(tzinfo=timezone.utc)
+                )
+                stmt = stmt.where(BotActivityRow.occurred_at < when)
+            stmt = stmt.order_by(BotActivityRow.occurred_at.desc()).limit(
+                max(1, min(limit, 200))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_serialize(dict(row.doc)) for row in rows]

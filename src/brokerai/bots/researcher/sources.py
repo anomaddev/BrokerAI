@@ -12,6 +12,7 @@ from brokerai.bots.researcher.news import (
 from brokerai.bots.researcher.prompts import news_queries_for_group
 from brokerai.bots.researcher.rss import fetch_rss_articles, filter_articles_for_group
 from brokerai.bots.researcher.rss_feeds import normalize_rss_categories
+from brokerai.db.repositories.ai_models import bind_source_model
 from brokerai.provider_capabilities import supports_capability
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ def _resolve_search(
     if not capabilities_map.get(model_id, {}).get(capability):
         logger.warning("Capability %s not enabled for model %s", capability, model_id)
         return None
-    return SearchSource(model=model, capability=capability)
+    return SearchSource(model=bind_source_model(model), capability=capability)
 
 
 def resolve_sources(

@@ -5,7 +5,10 @@ from datetime import date, datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from brokerai.db.client import get_db
+from sqlalchemy import delete, func, select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import BrokerLotRow
 from brokerai.trading.analysis_runs import _format_dt
 from brokerai.trading.broker.models import ChildOrder, PositionLot
 from brokerai.trading.data.market_calendar import bar_open_string_for_instant
@@ -28,14 +31,14 @@ def _resolve_lot_state(doc: dict[str, Any]) -> str:
 
 
 def _state_match_query(state: str) -> dict[str, Any]:
-    """Mongo filter matching broker lot lifecycle state."""
+    """SQLAlchemy filter matching broker lot lifecycle state."""
     if state in ("closed", "cancelled", "open"):
         return {"state": state}
     return {}
 
 
 def _lot_time_sort_field(state: str) -> str:
-    """Canonical Mongo sort field for lot lists (``close_time`` / ``open_time``)."""
+    """Canonical sort field for lot lists (``close_time`` / ``open_time``)."""
     return "close_time" if state == "closed" else "open_time"
 
 
@@ -362,9 +365,30 @@ def _lot_from_doc(doc: dict[str, Any]) -> PositionLot:
         entry_candle_open=doc.get("entry_candle_open"),
         exit_candle_open=doc.get("exit_candle_open"),
         trade_date=doc.get("trade_date"),
-        synced_at=doc.get("synced_at"),
+        synced_at=_parse_lot_instant(doc.get("synced_at")),
         raw_broker=doc.get("raw_broker"),
     )
+
+
+def _sync_lot_row(row: BrokerLotRow, doc: dict[str, Any]) -> None:
+    row.exchange_id = str(doc.get("exchange_id") or "")
+    row.account_id = str(doc.get("account_id") or "")
+    row.broker_lot_id = str(doc.get("broker_lot_id") or "")
+    row.state = _resolve_lot_state(doc)
+    row.strategy_id = doc.get("strategy_id")
+    row.pair = doc.get("pair")
+    row.trade_date = doc.get("trade_date")
+    row.doc = doc
+
+
+def _doc_passes_before_filter(doc: dict[str, Any], state: str, before: datetime) -> bool:
+    sort_field = _lot_time_sort_field(state)
+    legacy_field = "closed_at" if state == "closed" else "opened_at"
+    when = _parse_sort_datetime(doc.get(sort_field))
+    if when is not None:
+        return when < before
+    legacy = _parse_sort_datetime(doc.get(legacy_field))
+    return legacy is not None and legacy < before
 
 
 def serialize_lot(doc: dict[str, Any]) -> dict[str, Any]:
@@ -401,7 +425,6 @@ class BrokerLotsRepository:
 
     async def upsert_lot(self, lot: PositionLot, *, preserve_overlay: bool = True) -> dict[str, Any]:
         """Idempotent upsert by ``(exchange_id, account_id, broker_lot_id)``."""
-        handle = await get_db()
         now = datetime.now(timezone.utc)
 
         if lot.broker_lot_id:
@@ -411,64 +434,74 @@ class BrokerLotsRepository:
                 preferred_account_id=lot.account_id or None,
             )
 
-        existing = None
-        if lot.broker_lot_id:
-            lookup: dict[str, Any] = {
-                "exchange_id": lot.exchange_id,
-                "broker_lot_id": lot.broker_lot_id,
-            }
-            if lot.account_id:
-                lookup["account_id"] = lot.account_id
-            existing = await handle.db[self.COLLECTION].find_one(lookup, {"_id": 0})
+        async with session_scope() as session:
+            existing = None
+            if lot.broker_lot_id:
+                stmt = select(BrokerLotRow).where(
+                    BrokerLotRow.exchange_id == lot.exchange_id,
+                    BrokerLotRow.broker_lot_id == lot.broker_lot_id,
+                )
+                if lot.account_id:
+                    stmt = stmt.where(BrokerLotRow.account_id == lot.account_id)
+                existing_row = (await session.execute(stmt)).scalar_one_or_none()
+                existing = dict(existing_row.doc) if existing_row else None
 
-        account_id = lot.account_id
-        if existing:
-            account_id = str(existing.get("account_id") or lot.account_id or "")
+            account_id = lot.account_id
+            if existing:
+                account_id = str(existing.get("account_id") or lot.account_id or "")
 
-        key = {
-            "exchange_id": lot.exchange_id,
-            "account_id": account_id,
-            "broker_lot_id": lot.broker_lot_id,
-        }
-        if existing is None:
-            existing = await handle.db[self.COLLECTION].find_one(key, {"_id": 0})
+            if existing is None and lot.broker_lot_id:
+                stmt = select(BrokerLotRow).where(
+                    BrokerLotRow.exchange_id == lot.exchange_id,
+                    BrokerLotRow.account_id == account_id,
+                    BrokerLotRow.broker_lot_id == lot.broker_lot_id,
+                )
+                existing_row = (await session.execute(stmt)).scalar_one_or_none()
+                existing = dict(existing_row.doc) if existing_row else None
 
-        doc = _lot_to_doc(lot)
-        doc["account_id"] = account_id
+            doc = _lot_to_doc(lot)
+            doc["account_id"] = account_id
 
-        if existing:
-            doc["id"] = existing.get("id")
-            doc["created_at"] = existing.get("created_at", now)
-            if preserve_overlay:
-                for field in (
-                    "strategy_id",
-                    "strategy_name",
-                    "execution_reason",
-                    "confidence",
-                    "risk_pct",
-                    "exit_mode",
-                    "stop_loss_price",
-                    "take_profit_price",
-                    "signal_entry_price",
-                ):
-                    if doc.get(field) is None and existing.get(field) is not None:
-                        doc[field] = existing[field]
-                # Candle anchors are strategy-derived and immutable once set. A sync
-                # never sees the signal candle, so it derives these from the *fill*
-                # time; letting that overwrite an existing anchor moves the trade
-                # marker from the signal bar to the fill bar (which excludes the
-                # bid/ask fill). Existing values always win when present.
-                for field in ("timeframe", "entry_candle_open", "exit_candle_open"):
-                    if existing.get(field) is not None:
-                        doc[field] = existing[field]
-        else:
-            doc["created_at"] = now
+            if existing:
+                doc["id"] = existing.get("id")
+                doc["created_at"] = existing.get("created_at", now)
+                if preserve_overlay:
+                    for field in (
+                        "strategy_id",
+                        "strategy_name",
+                        "execution_reason",
+                        "confidence",
+                        "risk_pct",
+                        "exit_mode",
+                        "stop_loss_price",
+                        "take_profit_price",
+                        "signal_entry_price",
+                    ):
+                        if doc.get(field) is None and existing.get(field) is not None:
+                            doc[field] = existing[field]
+                    for field in ("timeframe", "entry_candle_open", "exit_candle_open"):
+                        if existing.get(field) is not None:
+                            doc[field] = existing[field]
+            else:
+                doc["created_at"] = now
 
-        await handle.db[self.COLLECTION].update_one(key, {"$set": doc}, upsert=True)
-        saved = await handle.db[self.COLLECTION].find_one({"id": doc["id"]}, {"_id": 0})
-        if saved is None:
-            saved = await handle.db[self.COLLECTION].find_one(key, {"_id": 0})
-        assert saved is not None
+            saved_row = await session.get(BrokerLotRow, doc["id"])
+            if saved_row is None:
+                stmt = select(BrokerLotRow).where(
+                    BrokerLotRow.exchange_id == lot.exchange_id,
+                    BrokerLotRow.account_id == account_id,
+                    BrokerLotRow.broker_lot_id == lot.broker_lot_id,
+                )
+                saved_row = (await session.execute(stmt)).scalar_one_or_none()
+
+            if saved_row is None:
+                saved_row = BrokerLotRow(id=doc["id"], doc=doc)
+                _sync_lot_row(saved_row, doc)
+                session.add(saved_row)
+            else:
+                _sync_lot_row(saved_row, doc)
+
+            saved = dict(doc)
         return serialize_lot(saved)
 
     async def _consolidate_duplicate_lots(
@@ -481,38 +514,39 @@ class BrokerLotsRepository:
         """Remove duplicate rows for the same OANDA trade id (e.g. empty account_id)."""
         if not broker_lot_id:
             return
-        handle = await get_db()
-        cursor = handle.db[self.COLLECTION].find(
-            {"exchange_id": exchange_id, "broker_lot_id": broker_lot_id},
-            {"_id": 0},
-        )
-        docs = await cursor.to_list(length=20)
-        if len(docs) <= 1:
-            return
+        async with session_scope() as session:
+            stmt = select(BrokerLotRow).where(
+                BrokerLotRow.exchange_id == exchange_id,
+                BrokerLotRow.broker_lot_id == broker_lot_id,
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            docs = [dict(row.doc) for row in rows]
+            if len(docs) <= 1:
+                return
 
-        def score(doc: dict[str, Any]) -> tuple[int, int, datetime]:
-            account_id = str(doc.get("account_id") or "")
-            preferred = int(bool(preferred_account_id and account_id == preferred_account_id))
-            has_account = int(bool(account_id))
-            updated = doc.get("updated_at")
-            if not isinstance(updated, datetime):
-                updated = _MIN_SORT_DT
-            elif updated.tzinfo is None:
-                updated = updated.replace(tzinfo=timezone.utc)
-            return preferred, has_account, updated
+            def score(doc: dict[str, Any]) -> tuple[int, int, datetime]:
+                account_id = str(doc.get("account_id") or "")
+                preferred = int(bool(preferred_account_id and account_id == preferred_account_id))
+                has_account = int(bool(account_id))
+                updated = doc.get("updated_at")
+                if not isinstance(updated, datetime):
+                    updated = _MIN_SORT_DT
+                elif updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                return preferred, has_account, updated
 
-        docs.sort(key=score, reverse=True)
-        keeper = docs[0]
-        for duplicate in docs[1:]:
-            dup_id = duplicate.get("id")
-            if dup_id and dup_id != keeper.get("id"):
-                logger.info(
-                    "Removing duplicate broker lot %s for trade %s (keeper=%s)",
-                    dup_id,
-                    broker_lot_id,
-                    keeper.get("id"),
-                )
-                await handle.db[self.COLLECTION].delete_one({"id": dup_id})
+            docs.sort(key=score, reverse=True)
+            keeper = docs[0]
+            for duplicate in docs[1:]:
+                dup_id = duplicate.get("id")
+                if dup_id and dup_id != keeper.get("id"):
+                    logger.info(
+                        "Removing duplicate broker lot %s for trade %s (keeper=%s)",
+                        dup_id,
+                        broker_lot_id,
+                        keeper.get("id"),
+                    )
+                    await session.execute(delete(BrokerLotRow).where(BrokerLotRow.id == dup_id))
 
     async def get_by_broker_lot_id(
         self,
@@ -520,16 +554,14 @@ class BrokerLotsRepository:
         account_id: str,
         broker_lot_id: str,
     ) -> dict[str, Any] | None:
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one(
-            {
-                "exchange_id": exchange_id,
-                "account_id": account_id,
-                "broker_lot_id": broker_lot_id,
-            },
-            {"_id": 0},
-        )
-        return serialize_lot(doc) if doc else None
+        async with session_scope() as session:
+            stmt = select(BrokerLotRow).where(
+                BrokerLotRow.exchange_id == exchange_id,
+                BrokerLotRow.account_id == account_id,
+                BrokerLotRow.broker_lot_id == broker_lot_id,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return serialize_lot(dict(row.doc)) if row else None
 
     async def update_unrealized_pl(
         self,
@@ -540,31 +572,30 @@ class BrokerLotsRepository:
         account_id: str | None = None,
     ) -> bool:
         """Patch unrealized P/L on an open lot by broker trade id."""
-        handle = await get_db()
-        query: dict[str, Any] = {
-            "exchange_id": exchange_id,
-            "broker_lot_id": broker_lot_id,
-            "state": "open",
-        }
-        if account_id:
-            query["account_id"] = account_id
-        result = await handle.db[self.COLLECTION].update_one(
-            query,
-            {
-                "$set": {
-                    "unrealized_pl": unrealized_pl,
-                    "updated_at": datetime.now(timezone.utc),
-                }
-            },
-        )
-        return result.modified_count > 0
+        now = datetime.now(timezone.utc)
+        async with session_scope() as session:
+            stmt = select(BrokerLotRow).where(
+                BrokerLotRow.exchange_id == exchange_id,
+                BrokerLotRow.broker_lot_id == broker_lot_id,
+                BrokerLotRow.state == "open",
+            )
+            if account_id:
+                stmt = stmt.where(BrokerLotRow.account_id == account_id)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return False
+            doc = dict(row.doc)
+            doc["unrealized_pl"] = unrealized_pl
+            doc["updated_at"] = now
+            _sync_lot_row(row, doc)
+            return True
 
     async def get_by_id(self, lot_id: str) -> dict[str, Any] | None:
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one({"id": lot_id}, {"_id": 0})
-        if doc is None:
-            return None
-        return serialize_lot(doc)
+        async with session_scope() as session:
+            row = await session.get(BrokerLotRow, lot_id)
+            if row is None:
+                return None
+            return serialize_lot(dict(row.doc))
 
     async def list_lots(
         self,
@@ -618,35 +649,31 @@ class BrokerLotsRepository:
         limit: int,
         before: datetime | None,
     ) -> list[dict[str, Any]]:
-        handle = await get_db()
-        query: dict[str, Any] = dict(_state_match_query(state))
-        if exchange_id:
-            query["exchange_id"] = exchange_id
-        if strategy_id:
-            query["strategy_id"] = strategy_id
-        if pair:
-            query["pair"] = pair.replace("_", "/")
+        async with session_scope() as session:
+            stmt = select(BrokerLotRow)
+            if state in ("closed", "cancelled", "open"):
+                stmt = stmt.where(BrokerLotRow.state == state)
+            if exchange_id:
+                stmt = stmt.where(BrokerLotRow.exchange_id == exchange_id)
+            if strategy_id:
+                stmt = stmt.where(BrokerLotRow.strategy_id == strategy_id)
+            if pair:
+                stmt = stmt.where(BrokerLotRow.pair == pair.replace("_", "/"))
 
-        sort_field = _lot_time_sort_field(state)
+            rows = (await session.execute(stmt)).scalars().all()
+            docs = [dict(row.doc) for row in rows]
+
         if before is not None:
             when = before.astimezone(timezone.utc) if before.tzinfo else before.replace(tzinfo=timezone.utc)
-            legacy_field = "closed_at" if state == "closed" else "opened_at"
-            query["$or"] = [
-                {sort_field: {"$lt": when}},
-                {
-                    sort_field: {"$exists": False},
-                    legacy_field: {"$lt": when},
-                },
-            ]
+            docs = [doc for doc in docs if _doc_passes_before_filter(doc, state, when)]
 
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find(query, {"_id": 0})
-            .sort(sort_field, -1)
-            .limit(max(1, min(limit, 200)))
+        sort_field = _lot_time_sort_field(state)
+        docs.sort(
+            key=lambda doc: _parse_sort_datetime(doc.get(sort_field)) or _MIN_SORT_DT,
+            reverse=True,
         )
-        rows = await cursor.to_list(length=limit)
-        return [serialize_lot(row) for row in rows]
+        safe_limit = max(1, min(limit, 200))
+        return [serialize_lot(row) for row in docs[:safe_limit]]
 
     async def list_open_lots(
         self,
@@ -678,7 +705,6 @@ class BrokerLotsRepository:
         exit_candle_open: str | None = None,
         close_metadata: dict[str, Any] | None = None,
     ) -> None:
-        handle = await get_db()
         now = datetime.now(timezone.utc)
         closed = closed_at.astimezone(timezone.utc) if closed_at else now
         updates: dict[str, Any] = {
@@ -696,7 +722,13 @@ class BrokerLotsRepository:
             updates["exit_candle_open"] = exit_candle_open
         if close_metadata:
             updates["close_metadata"] = close_metadata
-        await handle.db[self.COLLECTION].update_one({"id": lot_id}, {"$set": updates})
+        async with session_scope() as session:
+            row = await session.get(BrokerLotRow, lot_id)
+            if row is None:
+                return
+            doc = dict(row.doc)
+            doc.update(updates)
+            _sync_lot_row(row, doc)
 
     async def cancel_lot(
         self,
@@ -706,21 +738,23 @@ class BrokerLotsRepository:
         cancelled_at: datetime | None = None,
     ) -> None:
         """Mark a lot as cancelled (order rejected or cancelled before fill)."""
-        handle = await get_db()
         now = datetime.now(timezone.utc)
         cancelled = cancelled_at.astimezone(timezone.utc) if cancelled_at else now
-        await handle.db[self.COLLECTION].update_one(
-            {"id": lot_id},
-            {
-                "$set": {
+        async with session_scope() as session:
+            row = await session.get(BrokerLotRow, lot_id)
+            if row is None:
+                return
+            doc = dict(row.doc)
+            doc.update(
+                {
                     "state": "cancelled",
                     "close_reason": reason,
                     "close_time": cancelled,
                     "current_qty": 0,
                     "updated_at": now,
                 }
-            },
-        )
+            )
+            _sync_lot_row(row, doc)
 
     async def apply_strategy_overlay(
         self,
@@ -729,16 +763,19 @@ class BrokerLotsRepository:
         broker_lot_id: str,
         overlay: dict[str, Any],
     ) -> None:
-        handle = await get_db()
         now = datetime.now(timezone.utc)
-        await handle.db[self.COLLECTION].update_one(
-            {
-                "exchange_id": exchange_id,
-                "account_id": account_id,
-                "broker_lot_id": broker_lot_id,
-            },
-            {"$set": {**overlay, "updated_at": now}},
-        )
+        async with session_scope() as session:
+            stmt = select(BrokerLotRow).where(
+                BrokerLotRow.exchange_id == exchange_id,
+                BrokerLotRow.account_id == account_id,
+                BrokerLotRow.broker_lot_id == broker_lot_id,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return
+            doc = dict(row.doc)
+            doc.update({**overlay, "updated_at": now})
+            _sync_lot_row(row, doc)
 
     async def count_lots_today(
         self,
@@ -747,48 +784,47 @@ class BrokerLotsRepository:
         *,
         on_date: date | None = None,
     ) -> int:
-        handle = await get_db()
         day = (on_date or datetime.now(timezone.utc).date()).isoformat()
-        return await handle.db[self.COLLECTION].count_documents(
-            {"strategy_id": strategy_id, "pair": pair.replace("_", "/"), "trade_date": day}
-        )
+        async with session_scope() as session:
+            stmt = select(func.count()).select_from(BrokerLotRow).where(
+                BrokerLotRow.strategy_id == strategy_id,
+                BrokerLotRow.pair == pair.replace("_", "/"),
+                BrokerLotRow.trade_date == day,
+            )
+            return int((await session.execute(stmt)).scalar_one())
 
     async def daily_lot_counts(self, *, on_date: date | None = None) -> dict[tuple[str, str], int]:
-        handle = await get_db()
         day = (on_date or datetime.now(timezone.utc).date()).isoformat()
-        pipeline = [
-            {"$match": {"trade_date": day}},
-            {"$group": {"_id": {"strategy_id": "$strategy_id", "pair": "$pair"}, "count": {"$sum": 1}}},
-        ]
-        rows = await handle.db[self.COLLECTION].aggregate(pipeline).to_list(length=1000)
-        return {
-            (row["_id"]["strategy_id"], row["_id"]["pair"]): int(row["count"])
-            for row in rows
-        }
+        async with session_scope() as session:
+            stmt = (
+                select(BrokerLotRow.strategy_id, BrokerLotRow.pair, func.count())
+                .where(BrokerLotRow.trade_date == day)
+                .group_by(BrokerLotRow.strategy_id, BrokerLotRow.pair)
+            )
+            rows = (await session.execute(stmt)).all()
+            return {
+                (str(strategy_id), str(pair)): int(count)
+                for strategy_id, pair, count in rows
+                if strategy_id and pair
+            }
 
     async def list_closed_lots_missing_close_details(self, *, limit: int = 200) -> list[dict[str, Any]]:
-        handle = await get_db()
-        query: dict[str, Any] = {
-            "$and": [
-                _state_match_query("closed"),
-                {
-                    "$or": [
-                        {"realized_pl": {"$exists": False}},
-                        {"realized_pl": None},
-                        {"exit_price": {"$exists": False}},
-                        {"exit_price": None},
-                    ],
-                },
-            ],
-        }
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find(query, {"_id": 0})
-            .sort("close_time", -1)
-            .limit(max(1, min(limit, 200)))
+        async with session_scope() as session:
+            stmt = select(BrokerLotRow).where(BrokerLotRow.state == "closed")
+            rows = (await session.execute(stmt)).scalars().all()
+            docs = [dict(row.doc) for row in rows]
+
+        missing = [
+            doc
+            for doc in docs
+            if doc.get("realized_pl") is None or doc.get("exit_price") is None
+        ]
+        missing.sort(
+            key=lambda doc: _parse_sort_datetime(doc.get("close_time")) or _MIN_SORT_DT,
+            reverse=True,
         )
-        rows = await cursor.to_list(length=limit)
-        return [serialize_lot(row) for row in rows]
+        safe_limit = max(1, min(limit, 200))
+        return [serialize_lot(row) for row in missing[:safe_limit]]
 
     async def backfill_close_details(
         self,
@@ -798,23 +834,25 @@ class BrokerLotsRepository:
         realized_pl: float | None = None,
         closed_at: datetime | None = None,
     ) -> bool:
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one({"id": lot_id, "state": "closed"}, {"_id": 0})
-        if doc is None:
-            return False
-        updates: dict[str, Any] = {}
-        if exit_price is not None and doc.get("exit_price") is None:
-            updates["exit_price"] = exit_price
-        if realized_pl is not None and doc.get("realized_pl") is None:
-            updates["realized_pl"] = realized_pl
-        if closed_at is not None:
-            closed = closed_at.astimezone(timezone.utc)
-            if doc.get("close_time") is None:
-                updates["close_time"] = closed
-            if doc.get("closed_at") is None:
-                updates["closed_at"] = closed
-        if not updates:
-            return False
-        updates["updated_at"] = datetime.now(timezone.utc)
-        await handle.db[self.COLLECTION].update_one({"id": lot_id}, {"$set": updates})
-        return True
+        async with session_scope() as session:
+            row = await session.get(BrokerLotRow, lot_id)
+            if row is None or row.state != "closed":
+                return False
+            doc = dict(row.doc)
+            updates: dict[str, Any] = {}
+            if exit_price is not None and doc.get("exit_price") is None:
+                updates["exit_price"] = exit_price
+            if realized_pl is not None and doc.get("realized_pl") is None:
+                updates["realized_pl"] = realized_pl
+            if closed_at is not None:
+                closed = closed_at.astimezone(timezone.utc)
+                if doc.get("close_time") is None:
+                    updates["close_time"] = closed
+                if doc.get("closed_at") is None:
+                    updates["closed_at"] = closed
+            if not updates:
+                return False
+            updates["updated_at"] = datetime.now(timezone.utc)
+            doc.update(updates)
+            _sync_lot_row(row, doc)
+            return True

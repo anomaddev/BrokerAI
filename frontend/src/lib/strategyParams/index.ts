@@ -29,6 +29,7 @@ export type {
   AtrFilterSpec,
   RsiFilterSpec,
   CustomFilterSpec,
+  EmaCrossoverApproachingSpec,
   EmaCrossoverSignalSpec,
   MonthlyHighSignalSpec,
   MonthlyLowSignalSpec,
@@ -42,6 +43,37 @@ export type {
   StrategyPresetMeta,
 } from "./types";
 
-export { SIGNAL_CATALOG, SIGNAL_CATALOG_SECTIONS, FILTER_CATALOG, findSignalCatalogEntry } from "./catalog";
-export type { SignalCatalogType, FilterCatalogType } from "./catalog";
-export { computeBuilderMinCandles, defaultAdxFilter, defaultAtrFilter } from "./helpers";
+export {
+  SIGNAL_CATALOG,
+  SIGNAL_CATALOG_SECTIONS,
+  FILTER_CATALOG,
+  INDICATOR_CATALOG,
+  STOP_LOSS_MODE_OPTIONS,
+  TAKE_PROFIT_MODE_OPTIONS,
+  TRAIL_MODE_OPTIONS,
+  stopLossModeOptions,
+  takeProfitModeOptions,
+  trailModeOptions,
+  findSignalCatalogEntry,
+  findFilterCatalogEntry,
+  findIndicatorCatalogEntry,
+} from "./catalog";
+export type {
+  SignalCatalogType,
+  FilterCatalogType,
+  IndicatorCatalogType,
+  ExitModeOption,
+} from "./catalog";
+export {
+  MIN_CANDLES_SLIDER_MIN,
+  MIN_CANDLES_SLIDER_MAX,
+  MIN_CANDLES_STEP,
+  TIMEFRAME_MINUTES,
+  computeBuilderMinCandles,
+  roundUpMinCandles,
+  candleLookbackMinutes,
+  formatDurationMinutes,
+  formatCandleLookback,
+  defaultAdxFilter,
+  defaultAtrFilter,
+} from "./helpers";

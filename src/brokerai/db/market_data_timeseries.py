@@ -1,13 +1,7 @@
-"""MongoDB Time Series setup and document helpers for OHLCV candles.
+"""OHLCV candle document helpers (Postgres ``market_candles`` table uses these shapes).
 
-OANDA candle cache uses a time-series ``market_data`` collection:
-
-- ``ts`` (timeField) — UTC ``datetime`` for range scans and bucket layout
-- ``meta`` (metaField) — ``symbol``, ``timeframe``, ``source`` series key
-- ``time`` — OANDA ISO string preserved for API compatibility
-
-Time-series collections do not support updates; upserts delete matching
-``(meta, ts)`` rows then insert fresh measurements (idempotent sync).
+Document field names ``ts`` and ``meta`` are preserved in helpers so repository
+callers keep receiving the same candle dicts.
 """
 
 from __future__ import annotations
@@ -33,7 +27,7 @@ def series_meta(symbol: str, timeframe: str, source: str) -> dict[str, str]:
 
 
 def meta_query_filter(symbol: str, timeframe: str, source: str) -> dict[str, str]:
-    """MongoDB filter matching one series inside a time-series collection."""
+    """Series key filter using ``meta.*`` field names."""
     return {
         f"{META_FIELD}.symbol": symbol,
         f"{META_FIELD}.timeframe": timeframe,
@@ -108,7 +102,10 @@ def timeseries_document_to_candle(document: dict[str, Any]) -> dict[str, Any]:
     """Normalize a time-series measurement document for callers."""
     meta = document.get(META_FIELD)
     if not isinstance(meta, dict):
-        raise ValueError("market_data document missing time-series meta field")
+        symbol = str(document.get("symbol", ""))
+        timeframe = str(document.get("timeframe", ""))
+        source = str(document.get("source", ""))
+        meta = series_meta(symbol, timeframe, source)
 
     symbol = str(meta.get("symbol", ""))
     timeframe = str(meta.get("timeframe", ""))
@@ -152,68 +149,25 @@ def candle_open_time_from_document(document: dict[str, Any]) -> str | None:
     return None
 
 
-async def collection_is_timeseries(db: Any, name: str) -> bool:
-    """Return True when *name* exists and is a time-series collection."""
-    cursor = db.list_collections(filter={"name": name})
-    if hasattr(cursor, "__await__"):
-        cursor = await cursor
-    async for spec in cursor:
-        options = spec.get("options") or {}
-        return "timeseries" in options
-    return False
+async def ensure_market_data_timeseries(db: Any = None) -> None:
+    """No-op: ``ensure_schema`` owns ``market_candles``."""
+    del db
 
 
-async def create_timeseries_collection(db: Any, name: str) -> None:
-    """Create an empty OHLCV time-series collection."""
-    await db.create_collection(
-        name,
-        timeseries={
-            "timeField": TIME_FIELD,
-            "metaField": META_FIELD,
-            "granularity": "minutes",
-        },
-    )
-    logger.info("Created MongoDB time-series collection %s", name)
+async def purge_expired_market_candles(session: Any) -> int:
+    """Delete ephemeral candles whose ``expires_at`` is in the past (idempotent)."""
+    from sqlalchemy import delete
 
+    from brokerai.db.pg.models import MarketCandle
 
-async def ensure_market_data_timeseries(db: Any) -> None:
-    """Ensure ``market_data`` exists as a MongoDB time-series collection."""
-    names = await db.list_collection_names()
-
-    if COLLECTION not in names:
-        await create_timeseries_collection(db, COLLECTION)
-        await _ensure_ttl_index(db[COLLECTION])
-        return
-
-    if not await collection_is_timeseries(db, COLLECTION):
-        raise RuntimeError(
-            f"Collection {COLLECTION!r} exists but is not a time-series collection; "
-            "drop it and restart for a clean install"
-        )
-
-    await _ensure_ttl_index(db[COLLECTION])
-
-
-async def _ensure_ttl_index(collection: Any) -> None:
-    """Expire ephemeral explore/watch candles (``expires_at`` field).
-
-    MongoDB 7+ time-series collections only support TTL indexes on the
-    ``timeField`` with a ``partialFilterExpression`` limited to the
-    ``metaField``. An ``expires_at`` TTL index is therefore unsupported;
-    purge expired rows at startup instead (idempotent).
-    """
     now = datetime.now(timezone.utc)
-    result = await collection.delete_many(
-        {
-            "expires_at": {"$exists": True, "$lte": now},
-        }
+    result = await session.execute(
+        delete(MarketCandle).where(
+            MarketCandle.expires_at.is_not(None),
+            MarketCandle.expires_at <= now,
+        )
     )
-    deleted = int(result.deleted_count)
+    deleted = int(result.rowcount or 0)
     if deleted:
         logger.info("Purged %d expired market_data candles", deleted)
-
-    # Drop a legacy flat-collection TTL index if it survived a migration.
-    try:
-        await collection.drop_index("market_data_expires_at_ttl")
-    except Exception:
-        pass
+    return deleted

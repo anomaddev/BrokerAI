@@ -6,6 +6,7 @@ from brokerai.db.repositories.data_connections import DataConnectionsRepository
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
 from brokerai.db.repositories.market_data import MarketDataRepository
 from brokerai.db.repositories.research_cache import ResearchCacheRepository
+from brokerai.db.repositories.research_report_reads import ResearchReportReadsRepository
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "ExchangeConnectionsRepository",
     "MarketDataRepository",
     "ResearchCacheRepository",
+    "ResearchReportReadsRepository",
     "ResearchSettingsRepository",
 ]

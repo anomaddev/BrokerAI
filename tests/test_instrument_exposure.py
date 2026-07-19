@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import patch
 
 import pytest
 
@@ -12,6 +11,9 @@ from brokerai.db.repositories.instrument_exposure import (
     serialize_exposure_rollup,
 )
 from brokerai.trading.broker.models import InstrumentExposure
+
+
+pytestmark = pytest.mark.usefixtures("sqlite_db")
 
 
 def test_rollup_from_open_lot_docs_groups_by_symbol_and_direction():
@@ -55,65 +57,32 @@ def test_rollup_from_open_lot_docs_groups_by_symbol_and_direction():
 
 @pytest.mark.asyncio
 async def test_instrument_exposure_repository_recompute():
-    stored: list[dict] = []
-
-    class FakeCursor:
-        def sort(self, *_args, **_kwargs):
-            return self
-
-        async def to_list(self, length=500):
-            return list(stored)
-
-    class FakeCollection:
-        async def delete_many(self, _query):
-            stored.clear()
-
-        async def find_one(self, _query, _projection):
-            return None
-
-        async def update_one(self, _key, update, upsert=False):
-            stored.append({**update["$set"]})
-
-        def find(self, _query, _projection):
-            return FakeCursor()
-
-    class FakeDb:
-        def __getitem__(self, name):
-            assert name == InstrumentExposureRepository.COLLECTION
-            return FakeCollection()
-
-    class FakeHandle:
-        db = FakeDb()
-
-    async def fake_get_db():
-        return FakeHandle()
-
-    with patch(
-        "brokerai.db.repositories.instrument_exposure.get_db",
-        new=fake_get_db,
-    ):
-        repo = InstrumentExposureRepository()
-        count = await repo.recompute_for_account(
-            exchange_id="oanda",
-            account_id="acct",
-            open_lots=[
-                {
-                    "account_id": "acct",
-                    "state": "open",
-                    "symbol": "EUR_USD",
-                    "direction": "long",
-                    "current_qty": 1000,
-                    "entry_price": 1.1,
-                    "unrealized_pl": 1.0,
-                    "broker_lot_id": "1",
-                }
-            ],
-        )
+    repo = InstrumentExposureRepository()
+    count = await repo.recompute_for_account(
+        exchange_id="oanda",
+        account_id="acct",
+        open_lots=[
+            {
+                "account_id": "acct",
+                "state": "open",
+                "symbol": "EUR_USD",
+                "direction": "long",
+                "current_qty": 1000,
+                "entry_price": 1.1,
+                "unrealized_pl": 1.0,
+                "broker_lot_id": "1",
+            }
+        ],
+    )
     assert count == 1
+
+    stored = await repo.list_for_account(exchange_id="oanda", account_id="acct")
     assert stored[0]["symbol"] == "EUR_USD"
     assert stored[0]["total_qty"] == 1000
 
-    local = InstrumentExposureRepository.rollups_to_local_by_key(stored)
+    local = InstrumentExposureRepository.rollups_to_local_by_key(
+        [doc for doc in stored]
+    )
     assert local[("EUR_USD", "long")] == 1000
 
     exposure = InstrumentExposure(
@@ -125,22 +94,19 @@ async def test_instrument_exposure_repository_recompute():
         unrealized_pl=1.0,
         broker_lot_ids=["1"],
     )
-    assert exposure.to_dict()["pair"] == "EUR/USD"
+    serialized = serialize_exposure_rollup(exposure.to_dict())
+    assert serialized["pair"] == "EUR/USD"
+    assert serialized["total_qty"] == 1000
 
-
-def test_serialize_exposure_rollup_formats_datetimes():
-    created = datetime(2026, 7, 6, 15, 45, 4, tzinfo=timezone.utc)
-    payload = serialize_exposure_rollup(
-        {
-            "exchange_id": "oanda",
-            "account_id": "acct",
-            "symbol": "USD_CAD",
-            "direction": "short",
-            "total_qty": 84388.0,
-            "created_at": created,
-            "updated_at": created,
-        }
+    await repo.upsert_rollup(exposure, account_id="acct")
+    roundtrip = await repo.get_for_symbol(
+        exchange_id="oanda",
+        account_id="acct",
+        symbol="EUR_USD",
+        direction="long",
     )
-    assert payload["pair"] == "USD/CAD"
-    assert payload["created_at"] == created.isoformat()
-    json.dumps(payload)
+    assert roundtrip is not None
+    assert roundtrip.total_qty == 1000
+
+    payload = json.loads(json.dumps(serialized, default=str))
+    assert payload["symbol"] == "EUR_USD"

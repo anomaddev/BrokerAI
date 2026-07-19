@@ -22,12 +22,13 @@ from brokerai.bots.researcher.reports import (
     load_historical_weekly_debriefs,
     load_weekend_daily_reports_for_week,
     load_weekly_brief_for_week,
-    weekly_brief_path,
-    weekly_debrief_path,
+    weekly_brief_key,
+    weekly_debrief_key,
     write_report_file,
 )
+from brokerai.bots.researcher.report_store import get_report_store
 from brokerai.bots.researcher.sources import resolve_sources
-from brokerai.db.repositories.ai_models import AiModelsRepository
+from brokerai.db.repositories.ai_models import AiModelsRepository, bind_source_model
 from brokerai.db.repositories.data_connections import DataConnectionsRepository
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
 from brokerai.research_markets import (
@@ -118,13 +119,19 @@ async def _resolve_weekly_model(settings: dict, key: str) -> tuple[dict | None, 
     if not model_id:
         return None, f"No model selected for {key}"
 
+    name_key = {
+        "weekly_brief_model_id": "weekly_brief_model_name",
+        "weekly_debrief_model_id": "weekly_debrief_model_name",
+    }.get(key)
+    model_name = settings.get(name_key) if name_key else None
+
     models_repo = AiModelsRepository()
     model = await models_repo.find_by_id(str(model_id))
     if not model:
         return None, f"Model no longer exists: {model_id}"
     if not model.get("enabled"):
         return None, f"Model is disabled: {_model_label(model)}"
-    return model, None
+    return bind_source_model(model, model_name), None
 
 
 def _daily_dicts(entries: list) -> list[dict[str, str]]:
@@ -146,7 +153,7 @@ async def preview_weekly_brief_skip_reason(
     )
     if not force and settings.get("last_weekly_brief_run_week") == week_key:
         return f"Weekly brief already ran for {week_key}"
-    if not force and load_weekly_brief_for_week(week_start):
+    if not force and await load_weekly_brief_for_week(week_start):
         return f"Weekly brief already exists for {week_key}"
 
     model, model_skip = await _resolve_weekly_model(settings, "weekly_brief_model_id")
@@ -155,7 +162,7 @@ async def preview_weekly_brief_skip_reason(
 
     today = now.date().isoformat()
     daily_completed = (
-        settings.get("last_daily_run_date") == today or daily_report_exists(today)
+        settings.get("last_daily_run_date") == today or await daily_report_exists(today)
     )
     if not manual:
         if should_defer_weekly_brief_for_daily(
@@ -172,7 +179,7 @@ async def preview_weekly_brief_skip_reason(
             return f"Daily report for {today} is not ready yet"
 
     open_day = week_start.isoformat()
-    if not load_daily_report_content(open_day):
+    if not await load_daily_report_content(open_day):
         return f"Open-day daily report missing for {open_day}"
 
     return None
@@ -195,14 +202,14 @@ async def preview_weekly_debrief_skip_reason(
     week_start, week_key = target
     if not force and settings.get("last_weekly_debrief_run_week") == week_key:
         return f"Weekly debrief already ran for {week_key}"
-    if not force and weekly_debrief_path(week_start).is_file():
+    if not force and await get_report_store().exists(weekly_debrief_key(week_start)):
         return f"Weekly debrief already exists for {week_key}"
 
     model, model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
     if model_skip:
         return model_skip
 
-    weekday_dailies = load_daily_reports_for_week(week_start)
+    weekday_dailies = await load_daily_reports_for_week(week_start)
     if len(weekday_dailies) < MIN_WEEKDAY_DAILIES_FOR_DEBRIEF:
         return f"Insufficient weekday dailies for week {week_key}"
 
@@ -234,11 +241,11 @@ async def run_weekly_brief(
     model, _model_skip = await _resolve_weekly_model(settings, "weekly_brief_model_id")
 
     open_day = week_start.isoformat()
-    open_daily = load_daily_report_content(open_day)
+    open_daily = await load_daily_report_content(open_day)
     assert open_daily is not None
 
     _emit_progress(on_progress, "load", "Loading daily reports…", 15)
-    weekend_dailies = load_weekend_daily_reports_for_week(week_start)
+    weekend_dailies = await load_weekend_daily_reports_for_week(week_start)
     dailies = _daily_dicts(weekend_dailies)
     dailies.append({"date": open_day, "content": open_daily.strip()})
 
@@ -306,9 +313,9 @@ async def run_weekly_brief(
         return WeeklyRunResult(ok=False, errors=[str(exc)])
 
     header = _weekly_header("Weekly Research Brief", week_start, model, reasoning)
-    path = weekly_brief_path(week_start)
+    path = weekly_brief_key(week_start)
     _emit_progress(on_progress, "write", "Saving report…", 95)
-    write_report_file(path, "\n".join([*header, body.strip()]).strip())
+    await write_report_file(path, "\n".join([*header, body.strip()]).strip())
     await settings_repo.set_last_weekly_brief_run_week(week_key)
 
     _emit_progress(on_progress, "done", "Complete", 100)
@@ -340,15 +347,15 @@ async def run_weekly_debrief(
     model, _model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
 
     _emit_progress(on_progress, "load", "Loading week context…", 15)
-    weekday_dailies = load_daily_reports_for_week(week_start)
+    weekday_dailies = await load_daily_reports_for_week(week_start)
     missing_dates: list[str] = []
     for offset in range(5):
         day = week_start + timedelta(days=offset)
-        if not daily_report_exists(day):
+        if not await daily_report_exists(day):
             missing_dates.append(day.isoformat())
 
-    weekly_brief = load_weekly_brief_for_week(week_start)
-    historical = load_historical_weekly_debriefs(week_start, max_weeks=4)
+    weekly_brief = await load_weekly_brief_for_week(week_start)
+    historical = await load_historical_weekly_debriefs(week_start, max_weeks=4)
 
     reasoning = settings.get("weekly_debrief_reasoning_effort") or "high"
     messages = build_weekly_debrief_messages(
@@ -381,9 +388,9 @@ async def run_weekly_debrief(
         return WeeklyRunResult(ok=False, errors=[str(exc)])
 
     header = _weekly_header("Weekly Research Debrief", week_start, model, reasoning)
-    path = weekly_debrief_path(week_start)
+    path = weekly_debrief_key(week_start)
     _emit_progress(on_progress, "write", "Saving report…", 95)
-    write_report_file(path, "\n".join([*header, body.strip()]).strip())
+    await write_report_file(path, "\n".join([*header, body.strip()]).strip())
     await settings_repo.set_last_weekly_debrief_run_week(week_key)
 
     _emit_progress(on_progress, "done", "Complete", 100)

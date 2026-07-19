@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from brokerai.config_backup.service import ConfigBackupService
+from brokerai.config_backup.service import ConfigBackupService, _strategy_row
 from brokerai.config_backup.validate import parse_import_bytes
+from brokerai.db.pg.client import session_scope
 from tests.test_config_backup import (
     AUTO_BACKUP_RETENTION,
     _FakeDb,
+    _list_strategy_docs,
     _sample_payload,
 )
+
+
+pytestmark = pytest.mark.usefixtures("sqlite_db")
 
 
 @pytest.fixture(autouse=True)
@@ -62,8 +67,7 @@ def service(fake_db: _FakeDb) -> ConfigBackupService:
 @pytest.mark.asyncio
 async def test_import_backup_creates_full_row(fake_db: _FakeDb, service: ConfigBackupService):
     payload = _sample_payload()
-    with patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))):
-        result = await service.import_backup(payload, label="From file")
+    result = await service.import_backup(payload, label="From file")
 
     assert result["backup"]["kind"] == "full"
     assert result["backup"]["source"] == "import"
@@ -74,17 +78,14 @@ async def test_import_backup_creates_full_row(fake_db: _FakeDb, service: ConfigB
 @pytest.mark.asyncio
 async def test_import_backup_restore_immediately(fake_db: _FakeDb, service: ConfigBackupService):
     payload = _sample_payload()
-    fake_db.strategies.docs = [{"id": "live", "name": "Live"}]
+    async with session_scope() as session:
+        session.add(_strategy_row({"id": "live", "name": "Live", "asset_class": "forex", "enabled": True}))
 
-    with (
-        patch("brokerai.db.repositories.config_backups.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-        patch("brokerai.config_backup.service.get_db", AsyncMock(return_value=MagicMock(db=fake_db))),
-    ):
-        result = await service.import_backup(payload, restore_immediately=True)
+    result = await service.import_backup(payload, restore_immediately=True)
 
     assert result["restored"] is True
     assert result["safety_backup_id"]
-    assert fake_db.strategies.docs == payload["strategies"]
+    assert await _list_strategy_docs() == payload["strategies"]
 
 
 def test_parse_import_bytes_rejects_empty_payload():

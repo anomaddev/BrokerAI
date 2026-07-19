@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pymongo import UpdateOne
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from brokerai.config.settings import get_settings
-from brokerai.db.client import get_db
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import BrokerEventRow
 from brokerai.trading.broker.event_retention import classify_event_retention
 from brokerai.trading.broker.models import BrokerEvent
 
@@ -70,6 +72,20 @@ def _event_to_doc(
     return doc
 
 
+def _row_values(doc: dict[str, Any]) -> dict[str, Any]:
+    event_time = doc.get("time")
+    if isinstance(event_time, str):
+        event_time = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+    return {
+        "exchange_id": doc["exchange_id"],
+        "account_id": doc["account_id"],
+        "broker_event_id": doc["broker_event_id"],
+        "event_time": event_time,
+        "retention_expires_at": doc.get("retention_expires_at"),
+        "doc": doc,
+    }
+
+
 class BrokerEventsRepository:
     COLLECTION = "broker_events"
 
@@ -103,35 +119,51 @@ class BrokerEventsRepository:
         batch_size: int = 500,
         protected_event_ids: frozenset[str] | None = None,
     ) -> int:
-        """Bulk upsert broker events using ``bulk_write`` (idempotent)."""
+        """Bulk upsert broker events (idempotent)."""
         if not events:
             return 0
 
-        handle = await get_db()
-        collection = handle.db[self.COLLECTION]
         chunk_size = max(1, batch_size)
         total = 0
 
         for offset in range(0, len(events), chunk_size):
             chunk = events[offset : offset + chunk_size]
-            operations: list[UpdateOne] = []
+            values: list[dict[str, Any]] = []
             for event in chunk:
-                key = {
-                    "exchange_id": event.exchange_id,
-                    "account_id": event.account_id,
-                    "broker_event_id": event.broker_event_id,
-                }
                 doc = _event_to_doc(event, protected_event_ids=protected_event_ids)
-                update: dict[str, Any] = {
-                    "$set": doc,
-                    "$setOnInsert": {"created_at": doc["updated_at"]},
-                }
-                if "retention_expires_at" not in doc:
-                    update["$unset"] = {"retention_expires_at": ""}
-                operations.append(UpdateOne(key, update, upsert=True))
-            if operations:
-                await collection.bulk_write(operations, ordered=False)
-                total += len(operations)
+                doc.setdefault("created_at", doc["updated_at"])
+                values.append(_row_values(doc))
+
+            async with session_scope() as session:
+                bind = session.get_bind()
+                dialect = bind.dialect.name if bind is not None else "postgresql"
+
+                if dialect == "postgresql":
+                    stmt = pg_insert(BrokerEventRow).values(values)
+                    stmt = stmt.on_conflict_do_update(
+                        constraint="uq_broker_events_natural",
+                        set_={
+                            "event_time": stmt.excluded.event_time,
+                            "retention_expires_at": stmt.excluded.retention_expires_at,
+                            "doc": stmt.excluded.doc,
+                        },
+                    )
+                    await session.execute(stmt)
+                else:
+                    for item in values:
+                        stmt = select(BrokerEventRow).where(
+                            BrokerEventRow.exchange_id == item["exchange_id"],
+                            BrokerEventRow.account_id == item["account_id"],
+                            BrokerEventRow.broker_event_id == item["broker_event_id"],
+                        )
+                        row = (await session.execute(stmt)).scalar_one_or_none()
+                        if row is None:
+                            session.add(BrokerEventRow(**item))
+                        else:
+                            row.event_time = item["event_time"]
+                            row.retention_expires_at = item["retention_expires_at"]
+                            row.doc = item["doc"]
+                total += len(values)
 
         return total
 
@@ -144,21 +176,23 @@ class BrokerEventsRepository:
         event_types: set[str] | None = None,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
-        handle = await get_db()
-        query: dict[str, Any] = {"exchange_id": exchange_id}
-        if account_id:
-            query["account_id"] = account_id
-        if broker_lot_id:
-            query["broker_lot_id"] = broker_lot_id
-        if event_types:
-            query["event_type"] = {"$in": sorted(event_types)}
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find(query, {"_id": 0})
-            .sort("time", -1)
-            .limit(max(1, min(limit, 2000)))
-        )
-        return await cursor.to_list(length=limit)
+        async with session_scope() as session:
+            stmt = select(BrokerEventRow).where(BrokerEventRow.exchange_id == exchange_id)
+            if account_id:
+                stmt = stmt.where(BrokerEventRow.account_id == account_id)
+            if broker_lot_id:
+                stmt = stmt.where(
+                    BrokerEventRow.doc["broker_lot_id"].as_string() == broker_lot_id
+                )
+            if event_types:
+                stmt = stmt.where(
+                    BrokerEventRow.doc["event_type"].as_string().in_(sorted(event_types))
+                )
+            stmt = stmt.order_by(BrokerEventRow.event_time.desc()).limit(
+                max(1, min(limit, 2000))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [dict(row.doc) for row in rows]
 
     async def list_events_by_order_id(
         self,
@@ -168,21 +202,19 @@ class BrokerEventsRepository:
         broker_order_id: str,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        handle = await get_db()
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find(
-                {
-                    "exchange_id": exchange_id,
-                    "account_id": account_id,
-                    "broker_order_id": broker_order_id,
-                },
-                {"_id": 0},
+        async with session_scope() as session:
+            stmt = (
+                select(BrokerEventRow)
+                .where(
+                    BrokerEventRow.exchange_id == exchange_id,
+                    BrokerEventRow.account_id == account_id,
+                    BrokerEventRow.doc["broker_order_id"].as_string() == broker_order_id,
+                )
+                .order_by(BrokerEventRow.event_time.asc())
+                .limit(max(1, min(limit, 200)))
             )
-            .sort("time", 1)
-            .limit(max(1, min(limit, 200)))
-        )
-        return await cursor.to_list(length=limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [dict(row.doc) for row in rows]
 
     async def list_events_for_lot(
         self,
@@ -207,12 +239,11 @@ class BrokerEventsRepository:
         account_id: str,
         broker_event_id: str,
     ) -> dict[str, Any] | None:
-        handle = await get_db()
-        return await handle.db[self.COLLECTION].find_one(
-            {
-                "exchange_id": exchange_id,
-                "account_id": account_id,
-                "broker_event_id": broker_event_id,
-            },
-            {"_id": 0},
-        )
+        async with session_scope() as session:
+            stmt = select(BrokerEventRow).where(
+                BrokerEventRow.exchange_id == exchange_id,
+                BrokerEventRow.account_id == account_id,
+                BrokerEventRow.broker_event_id == broker_event_id,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return dict(row.doc) if row else None

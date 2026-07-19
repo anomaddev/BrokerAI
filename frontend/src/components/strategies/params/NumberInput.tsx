@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 type NumberInputProps = {
   id: string;
@@ -14,6 +14,8 @@ type NumberInputProps = {
   inline?: boolean;
   embedded?: boolean;
   readOnly?: boolean;
+  /** Optional helper control shown next to the label. */
+  labelHelp?: ReactNode;
   onChange: (value: number) => void;
 };
 
@@ -56,9 +58,31 @@ export default function NumberInput({
   inline,
   embedded,
   readOnly,
+  labelHelp,
   onChange,
 }: NumberInputProps) {
   const display = `${formatNumber(value, step, formatValue)}${unit ? ` ${unit}` : ""}${suffix ?? ""}`;
+
+  const labelNode = label ? (
+    labelHelp ? (
+      <div className="param-control-label-with-help">
+        {readOnly ? (
+          <span className="param-control-label">{label}</span>
+        ) : (
+          <label htmlFor={id} className="param-control-label">
+            {label}
+          </label>
+        )}
+        {labelHelp}
+      </div>
+    ) : readOnly ? (
+      <span className="param-control-label">{label}</span>
+    ) : (
+      <label htmlFor={id} className="param-control-label">
+        {label}
+      </label>
+    )
+  ) : null;
 
   if (readOnly) {
     if (inline) {
@@ -67,7 +91,7 @@ export default function NumberInput({
 
     return (
       <div className="param-control param-control--readonly">
-        {label && <span className="param-control-label">{label}</span>}
+        {labelNode}
         <span className="param-control-value param-control-value--locked">{display}</span>
       </div>
     );
@@ -138,11 +162,7 @@ export default function NumberInput({
 
   return (
     <div className="param-control">
-      {label && (
-        <label htmlFor={id} className="param-control-label">
-          {label}
-        </label>
-      )}
+      {labelNode}
       {input}
     </div>
   );

@@ -13,7 +13,7 @@ import ExchangeLogo from "../../components/ExchangeLogo";
 import OandaConnectionOverlay from "../../components/OandaConnectionOverlay";
 import SettingsPanelHeader from "../../components/SettingsPanelHeader";
 import { connectedDataSourceIds, DATA_SOURCES, type DataSourceId } from "./dataSources";
-import { EXCHANGES } from "./exchanges";
+import { EXCHANGES, groupExchangesByAssetClass } from "./exchanges";
 
 export default function DataConnectionsTab() {
   const [loading, setLoading] = useState(true);
@@ -265,31 +265,38 @@ export default function DataConnectionsTab() {
           >
             <h4 className="model-overlay-title">Add exchange</h4>
             <p className="model-overlay-desc">Choose a broker or exchange to connect.</p>
-            <div className="model-provider-grid">
-              {EXCHANGES.map((exchange) => (
-                <button
-                  key={exchange.id}
-                  type="button"
-                  className="model-provider-card"
-                  disabled={!exchange.available}
-                  onClick={() => {
-                    if (exchange.id === "oanda") {
-                      setExchangeChooserOpen(false);
-                      setOandaOverlayOpen(true);
-                    }
-                  }}
-                >
-                  <ExchangeLogo
-                    exchange={exchange}
-                    size={36}
-                    className="exchange-logo model-provider-logo"
-                  />
-                  <span className="model-provider-card-label">{exchange.name}</span>
-                  <span className="model-provider-card-desc">{exchange.description}</span>
-                  {!exchange.available && (
-                    <span className="exchange-coming-soon">Coming soon</span>
-                  )}
-                </button>
+            <div className="exchange-chooser-groups">
+              {groupExchangesByAssetClass().map((group) => (
+                <section key={group.assetClass} className="exchange-chooser-group">
+                  <h5 className="exchange-chooser-group-title">{group.label}</h5>
+                  <div className="model-provider-grid">
+                    {group.exchanges.map((exchange) => (
+                      <button
+                        key={exchange.id}
+                        type="button"
+                        className="model-provider-card"
+                        disabled={!exchange.available}
+                        onClick={() => {
+                          if (exchange.id === "oanda") {
+                            setExchangeChooserOpen(false);
+                            setOandaOverlayOpen(true);
+                          }
+                        }}
+                      >
+                        <ExchangeLogo
+                          exchange={exchange}
+                          size={36}
+                          className="exchange-logo model-provider-logo"
+                        />
+                        <span className="model-provider-card-label">{exchange.name}</span>
+                        <span className="model-provider-card-desc">{exchange.description}</span>
+                        {!exchange.available && (
+                          <span className="exchange-coming-soon">Coming soon</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
             <div className="confirm-actions">

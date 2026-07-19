@@ -14,23 +14,27 @@ logger = logging.getLogger(__name__)
 
 async def backfill(*, dry_run: bool = False) -> dict[str, int]:
     from brokerai.bots.data_manager.candle_requirements import strategy_timeframe
-    from brokerai.db.client import close_db, get_db
-    from brokerai.db.repositories.broker_lots import fill_candle_anchors
+    from brokerai.db.client import init_pg
+    from brokerai.db.pg.client import session_scope
+    from brokerai.db.pg.models import BrokerLotRow
+    from brokerai.db.repositories.broker_lots import _sync_lot_row, fill_candle_anchors
+    from brokerai.db.repositories.strategies import StrategiesRepository
+    from sqlalchemy import select
 
-    handle = await get_db()
-    lots = await handle.db.broker_lots.find({}, {"_id": 0}).to_list(length=10000)
+    await init_pg()
+    async with session_scope() as session:
+        rows = (await session.execute(select(BrokerLotRow))).scalars().all()
+        lots = [dict(row.doc) for row in rows]
 
     strategy_cache: dict[str, str | None] = {}
     stats = {"scanned": len(lots), "updated": 0, "skipped": 0}
+    strategies_repo = StrategiesRepository()
 
     for lot in lots:
         strategy_id = str(lot.get("strategy_id") or "")
         strategy_tf: str | None = None
         if strategy_id and strategy_id not in strategy_cache:
-            doc = await handle.db.strategies.find_one(
-                {"id": strategy_id},
-                {"_id": 0, "timeframe": 1, "params": 1},
-            )
+            doc = await strategies_repo.get_by_id(strategy_id)
             strategy_cache[strategy_id] = strategy_timeframe(doc) if doc else None
         if strategy_id:
             strategy_tf = strategy_cache.get(strategy_id)
@@ -49,7 +53,13 @@ async def backfill(*, dry_run: bool = False) -> dict[str, int]:
         lot_id = lot.get("id", "?")
         logger.info("Lot %s: %s", lot_id, updates)
         if not dry_run:
-            await handle.db.broker_lots.update_one({"id": lot.get("id")}, {"$set": updates})
+            async with session_scope() as session:
+                row = await session.get(BrokerLotRow, lot.get("id"))
+                if row is None:
+                    continue
+                doc = dict(row.doc)
+                doc.update(updates)
+                _sync_lot_row(row, doc)
 
     return stats
 
@@ -59,7 +69,7 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Log updates without writing to MongoDB",
+        help="Log updates without writing to Postgres",
     )
     args = parser.parse_args()
 

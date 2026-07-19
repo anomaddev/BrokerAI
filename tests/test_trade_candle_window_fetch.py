@@ -94,7 +94,7 @@ async def test_fetch_count_from_oanda_uses_bar_count_not_cache():
 
 
 @pytest.mark.asyncio
-async def test_fetch_range_from_oanda_does_not_touch_mongo():
+async def test_fetch_range_from_oanda_does_not_touch_cache():
     """Direct OANDA fetch must not read or write the candle cache."""
     cache = CandleCache()
     cache._oanda_credentials = AsyncMock(return_value=("token", "practice"))  # type: ignore[method-assign]

@@ -44,6 +44,7 @@ async function requestForm<T>(path: string, form: FormData, method = "POST"): Pr
 export type MeResponse = {
   username: string;
   has_profile_photo: boolean;
+  display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   email?: string | null;
@@ -103,6 +104,17 @@ export type UpdateSettingsConfig = {
   config_writable: boolean;
 };
 
+export type DomainSettingsConfig = {
+  domain: string;
+  supabase_domain: string;
+  supabase_url: string;
+  config_path: string;
+  apply_available: boolean;
+  dev_mode?: boolean;
+  message?: string;
+  status?: string;
+};
+
 export type UpdateStatusResponse = {
   dev_mode?: boolean;
   checked?: boolean;
@@ -136,18 +148,69 @@ export type UpdateStatusResponse = {
   check_error?: string | null;
 };
 
+export type AuthConfig = {
+  mode: "builtin" | "oidc";
+  setup_complete: boolean;
+  mfa_available: boolean;
+  supabase_configured?: boolean;
+  supabase_url?: string;
+  supabase_anon_key?: string;
+};
+
+export type LoginResponse =
+  | { username: string; status: "ok" }
+  | { username: string; status: "mfa_required"; mfa_token: string };
+
+export type MfaFactor = {
+  id: string;
+  friendly_name: string;
+  factor_type: string;
+  status: string;
+};
+
+export type MfaStatus = {
+  available: boolean;
+  enabled: boolean;
+  factors: MfaFactor[];
+};
+
+export type MfaEnrollResponse = {
+  status: string;
+  enroll_token: string;
+  factor_id: string;
+  qr_code: string;
+  secret: string;
+  uri: string;
+};
+
 export const api = {
-  authConfig: () =>
-    request<{ mode: "builtin" | "oidc"; setup_complete: boolean }>("/api/auth/config"),
+  authConfig: () => request<AuthConfig>("/api/auth/config"),
   setupStatus: () => request<{ setup_complete: boolean }>("/api/auth/setup/status"),
+  onboardingStatus: () => request<OnboardingStatus>("/api/onboarding/status"),
+  updateOnboardingProgress: (data: OnboardingProgressInput) =>
+    request<OnboardingStatus>("/api/onboarding/progress", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  verifyOnboarding: () =>
+    request<OnboardingStatus & { verified: boolean; checks: Record<string, boolean | null> }>(
+      "/api/onboarding/verify",
+      { method: "POST" },
+    ),
+  completeOnboarding: () =>
+    request<OnboardingStatus>("/api/onboarding/complete", { method: "POST" }),
   setup: (data: {
-    username: string;
+    first_name: string;
+    last_name: string;
+    email: string;
     password: string;
     confirm_password: string;
     profile_photo?: File | null;
   }) => {
     const form = new FormData();
-    form.append("username", data.username);
+    form.append("first_name", data.first_name);
+    form.append("last_name", data.last_name);
+    form.append("email", data.email);
     form.append("password", data.password);
     form.append("confirm_password", data.confirm_password);
     if (data.profile_photo) {
@@ -159,7 +222,28 @@ export const api = {
     );
   },
   login: (data: { username: string; password: string }) =>
-    request("/api/auth/login", { method: "POST", body: JSON.stringify(data) }),
+    request<LoginResponse>("/api/auth/login", { method: "POST", body: JSON.stringify(data) }),
+  loginMfa: (data: { mfa_token: string; code: string }) =>
+    request<LoginResponse>("/api/auth/login/mfa", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  mfaStatus: () => request<MfaStatus>("/api/auth/mfa/status"),
+  mfaEnroll: (data: { password: string }) =>
+    request<MfaEnrollResponse>("/api/auth/mfa/enroll", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  mfaVerify: (data: { enroll_token: string; code: string }) =>
+    request<{ status: string; enabled: boolean; factor_id: string }>("/api/auth/mfa/verify", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  mfaDisable: (data: { password: string; factor_id: string }) =>
+    request<{ status: string; enabled: boolean }>("/api/auth/mfa/disable", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   logout: () => request<{ status: string; logout_url?: string | null }>("/api/auth/logout", { method: "POST" }),
   oidcLogout: () =>
     request<{ status: string; logout_url?: string | null }>("/api/auth/oidc/logout", {
@@ -194,13 +278,15 @@ export const api = {
       body: JSON.stringify(data),
     }),
   updateProfile: (data: { first_name?: string | null; last_name?: string | null }) =>
-    request<{ status: string; first_name: string | null; last_name: string | null }>(
-      "/api/auth/account/profile",
-      {
-        method: "PUT",
-        body: JSON.stringify(data),
-      },
-    ),
+    request<{
+      status: string;
+      display_name: string | null;
+      first_name: string | null;
+      last_name: string | null;
+    }>("/api/auth/account/profile", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   getDisplaySettings: () =>
     request<{ market_indicators: MarketIndicators }>("/api/auth/account/display"),
   updateDisplaySettings: (data: { market_indicators: MarketIndicators }) =>
@@ -226,9 +312,12 @@ export const api = {
       }>;
     }>("/api/bots"),
   dbStats: () =>
-    request<{ database: string; collections: Record<string, number>; error?: string }>(
-      "/api/system/db",
-    ),
+    request<{
+      database: string;
+      uri?: string;
+      tables: Record<string, number>;
+      error?: string;
+    }>("/api/system/db"),
   updateStatus: () => request<UpdateStatusResponse>("/api/update/status"),
   getUpdateSettings: () => request<UpdateSettingsConfig>("/api/settings/update"),
   saveUpdateSettings: (data: {
@@ -239,6 +328,12 @@ export const api = {
   }) =>
     request<UpdateSettingsConfig>("/api/settings/update", {
       method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  getDomainSettings: () => request<DomainSettingsConfig>("/api/settings/domain"),
+  applyDomainSettings: (data: { domain: string; supabase_domain: string }) =>
+    request<DomainSettingsConfig>("/api/settings/domain/apply", {
+      method: "POST",
       body: JSON.stringify(data),
     }),
   checkForUpdate: () =>
@@ -279,6 +374,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  listAvailableModels: (id: string) =>
+    request<{ ok: boolean; message: string; models: AvailableProviderModel[] }>(
+      `/api/settings/models/${id}/available`,
+    ),
+  listAvailableModelsFromCredentials: (data: {
+    type: ModelProviderType;
+    base_url?: string;
+    api_key?: string;
+  }) =>
+    request<{ ok: boolean; message: string; models: AvailableProviderModel[] }>(
+      "/api/settings/models/list-available",
+      { method: "POST", body: JSON.stringify(data) },
+    ),
 
   getDataConnections: () =>
     request<{ newsapi: NewsApiConnection; massive: MassiveConnection; models: ModelConnection[] }>(
@@ -465,6 +573,30 @@ export const api = {
     request<ResearchReportContent>(
       `/api/research/reports/content?filename=${encodeURIComponent(filename)}`,
     ),
+  getResearchReportSignedUrl: (filename: string) =>
+    request<{ filename: string; signed_url: string; expires_in: number }>(
+      `/api/research/reports/signed-url?filename=${encodeURIComponent(filename)}`,
+    ),
+  getResearchReportsUnreadCount: () =>
+    request<ResearchReportsUnreadCount>("/api/research/reports/unread-count"),
+  markResearchReportRead: (filename: string) =>
+    request<ResearchReportsUnreadCount & { ok: boolean; filename: string }>(
+      `/api/research/reports/mark-read?filename=${encodeURIComponent(filename)}`,
+      { method: "POST" },
+    ),
+  markResearchReportUnread: (filename: string) =>
+    request<ResearchReportsUnreadCount & { ok: boolean; filename: string }>(
+      `/api/research/reports/mark-unread?filename=${encodeURIComponent(filename)}`,
+      { method: "POST" },
+    ),
+  markAllResearchReportsRead: (filenames?: string[]) =>
+    request<ResearchReportsUnreadCount & { ok: boolean; marked: number }>(
+      "/api/research/reports/mark-all-read",
+      {
+        method: "POST",
+        body: JSON.stringify({ filenames: filenames ?? null }),
+      },
+    ),
   runResearchDailyReport: (force = true) =>
     request<BackgroundTaskAccepted>("/api/research/reports/run-daily", {
       method: "POST",
@@ -516,8 +648,53 @@ export const api = {
     request<{ status: string; id: string }>(`/api/strategies/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+  listStrategyVersions: (id: string, params?: { limit?: number; offset?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.offset != null) search.set("offset", String(params.offset));
+    const qs = search.toString();
+    return request<StrategyVersionsResponse>(
+      `/api/strategies/${encodeURIComponent(id)}/versions${qs ? `?${qs}` : ""}`,
+    );
+  },
+  getStrategyVersion: (strategyId: string, versionId: string) =>
+    request<StrategyVersionDetail>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/versions/${encodeURIComponent(versionId)}`,
+    ),
+  queueStrategyBacktests: (ids: string[]) =>
+    request<{ strategies: Strategy[]; queued: number; runs: BacktestRun[] }>(
+      "/api/strategies/backtest",
+      {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      },
+    ),
   listStrategyPresets: () =>
     request<{ presets: StrategyPresetMeta[] }>("/api/strategies/presets"),
+
+  listBacktestRuns: (params?: {
+    limit?: number;
+    before?: string;
+    strategy_id?: string;
+    status?: BacktestRunStatus;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.before) search.set("before", params.before);
+    if (params?.strategy_id) search.set("strategy_id", params.strategy_id);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    return request<BacktestRunsResponse>(`/api/backtest-runs${query ? `?${query}` : ""}`);
+  },
+
+  getBacktestRun: (runId: string) =>
+    request<BacktestRun>(`/api/backtest-runs/${encodeURIComponent(runId)}`),
+
+  deleteBacktestRun: (runId: string) =>
+    request<{ id: string; status: string }>(
+      `/api/backtest-runs/${encodeURIComponent(runId)}`,
+      { method: "DELETE" },
+    ),
 
   getMarketStatus: () => request<MarketStatusResponse>("/api/market-status"),
 
@@ -859,7 +1036,7 @@ export type TradeLedgerMarket = {
 
 export type TradeReconciliation = {
   configured: boolean;
-  mongo_open_count: number;
+  ledger_open_count: number;
   local_open_count?: number;
   broker_open_count: number;
   status: "matched" | "mismatch" | "unconfigured";
@@ -884,20 +1061,26 @@ export type AiModel = {
   title: string;
   type: string;
   base_url: string;
-  model_name: string;
+  model_name?: string;
+  default_model_name?: string;
   api_key: string | null;
   api_key_set: boolean;
   enabled: boolean;
   created_at: string;
 };
 
+export type AvailableProviderModel = {
+  id: string;
+  name: string;
+};
+
 export type ModelProviderType = "open_webui" | "openai" | "claude" | "grok";
 
 export type CreateModelInput = {
-  title: string;
+  title?: string;
   type: ModelProviderType;
-  base_url: string;
-  model_name: string;
+  base_url?: string;
+  model_name?: string;
   api_key?: string;
   enabled?: boolean;
 };
@@ -993,6 +1176,13 @@ export type OandaTestResult = {
   ok: boolean;
   message: string;
   accounts: OandaAccount[];
+  /** Set when the token works on the other OANDA environment (practice/live). */
+  suggested_environment?: OandaEnvironment;
+  diagnostics?: {
+    token_length?: number;
+    token_looks_masked?: boolean;
+    environments_tried?: string[];
+  };
 };
 
 export type OandaAccountSummary = {
@@ -1028,6 +1218,7 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high";
 
 export type ContributorModel = {
   model_id: string;
+  model_name?: string | null;
   reasoning_effort: ReasoningEffort;
   enabled: boolean;
 };
@@ -1088,11 +1279,13 @@ export type WeeklyPromptPreview = {
 export type WeeklyResearchSettings = {
   weekly_brief_enabled?: boolean;
   weekly_brief_model_id?: string | null;
+  weekly_brief_model_name?: string | null;
   weekly_brief_reasoning_effort?: ReasoningEffort;
   weekly_brief_market_id?: string;
   weekly_brief_market_offset_hours?: number;
   weekly_debrief_enabled?: boolean;
   weekly_debrief_model_id?: string | null;
+  weekly_debrief_model_name?: string | null;
   weekly_debrief_reasoning_effort?: ReasoningEffort;
   weekly_debrief_market_id?: string;
   weekly_debrief_market_offset_hours?: number;
@@ -1102,6 +1295,7 @@ export type ResearchSettings = {
   id: string;
   contributor_models: ContributorModel[];
   synthesis_model_id: string | null;
+  synthesis_model_name: string | null;
   synthesis_reasoning_effort: ReasoningEffort;
   data_sources: ResearchDataSources;
   daily_report_enabled: boolean;
@@ -1110,12 +1304,14 @@ export type ResearchSettings = {
   last_daily_run_date: string | null;
   weekly_brief_enabled: boolean;
   weekly_brief_model_id: string | null;
+  weekly_brief_model_name: string | null;
   weekly_brief_reasoning_effort: ReasoningEffort;
   weekly_brief_market_id: string;
   weekly_brief_market_offset_hours: number;
   last_weekly_brief_run_week: string | null;
   weekly_debrief_enabled: boolean;
   weekly_debrief_model_id: string | null;
+  weekly_debrief_model_name: string | null;
   weekly_debrief_reasoning_effort: ReasoningEffort;
   weekly_debrief_market_id: string;
   weekly_debrief_market_offset_hours: number;
@@ -1127,6 +1323,33 @@ export type ResearchSettings = {
   schedule_warnings?: string[];
   weekly_brief_prompt_preview?: WeeklyPromptPreview;
   weekly_debrief_prompt_preview?: WeeklyPromptPreview;
+};
+
+export type OnboardingStepId =
+  | "admin"
+  | "exchange"
+  | "instruments"
+  | "data_sources"
+  | "models"
+  | "finish";
+
+export type OnboardingStatus = {
+  auth_complete: boolean;
+  onboarding_complete: boolean;
+  current_step: OnboardingStepId;
+  selected_exchange_id: string | null;
+  enabled_pairs: string[] | null;
+  strategy_id: string | null;
+  strategy_name: string | null;
+};
+
+export type OnboardingProgressInput = {
+  current_step?: OnboardingStepId;
+  selected_exchange_id?: string | null;
+  enabled_pairs?: string[] | null;
+  strategy_id?: string | null;
+  strategy_name?: string | null;
+  clear_selected_exchange?: boolean;
 };
 
 export type AssetClass = "forex" | "metals" | "stocks" | "crypto" | "futures" | "options";
@@ -1185,17 +1408,34 @@ export type ResearchReportMeta = {
   generated_at: string | null;
   reasoning_effort: string | null;
   size_bytes: number;
+  is_read: boolean;
 };
 
 export type ResearchReportContent = {
   filename: string;
-  content: string;
+  content: string | null;
+  signed_url?: string | null;
+  expires_in?: number | null;
+  uses_storage?: boolean;
+  path?: string | null;
   date: string | null;
   type: ResearchReportType | null;
   model_label: string | null;
   generated_at: string | null;
   reasoning_effort: string | null;
 };
+
+export type ResearchReportsUnreadCount = {
+  unread_count: number;
+  daily: number;
+  weekly: number;
+};
+
+export const RESEARCH_REPORTS_UNREAD_UPDATED = "brokerai:research-reports-unread-updated";
+
+export function notifyResearchReportsUnreadUpdated(): void {
+  window.dispatchEvent(new Event(RESEARCH_REPORTS_UNREAD_UPDATED));
+}
 
 export type BackgroundTaskAccepted = {
   task_id: string;
@@ -1270,6 +1510,39 @@ export type ResearchRunWeeklyResult = {
 
 export type StrategyType = "preset" | "custom";
 
+export type BacktestStatus = "not_run" | "queued" | "running" | "completed" | "failed";
+
+export type BacktestRunStatus = "queued" | "running" | "completed" | "failed";
+
+export type BacktestRunStats = {
+  total_trades: number | null;
+  win_rate: number | null;
+  realized_pnl: number | null;
+  max_drawdown: number | null;
+};
+
+export type BacktestRun = {
+  id: string;
+  strategy_id: string;
+  strategy_name: string;
+  asset_class: AssetClass | string;
+  asset_class_label: string;
+  timeframe?: string | null;
+  instruments: string[];
+  status: BacktestRunStatus;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  stats: BacktestRunStats;
+  params_snapshot?: Record<string, unknown> | null;
+};
+
+export type BacktestRunsResponse = {
+  runs: BacktestRun[];
+  latest: BacktestRun | null;
+};
+
 export type StrategyStats = {
   total_trades: number;
   winning_trades: number;
@@ -1288,6 +1561,7 @@ export type Strategy = {
   timeframe?: Timeframe;
   description: string;
   enabled: boolean;
+  backtest_status?: BacktestStatus;
   instruments: string[];
   instrument_selection?: StrategyInstrumentSelection;
   stats: StrategyStats;
@@ -1318,6 +1592,36 @@ export type UpdateStrategyInput = {
   instrument_selection?: StrategyInstrumentSelection;
   enabled?: boolean;
 };
+
+export type StrategyVersionSummary = {
+  id: string;
+  strategy_id: string;
+  version: number;
+  created_at: string | null;
+  change_label: string;
+};
+
+export type StrategyVersionSnapshot = {
+  name: string;
+  description: string;
+  params: StrategyParamsV1;
+  instrument_selection: StrategyInstrumentSelection;
+  enabled: boolean;
+  preset_id?: string | null;
+};
+
+export type StrategyVersionDetail = StrategyVersionSummary & {
+  snapshot: StrategyVersionSnapshot;
+};
+
+export type StrategyVersionsResponse = {
+  versions: StrategyVersionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export const STRATEGY_VERSIONS_PAGE_SIZE = 20;
 
 export type ConfigBackupKind = "change" | "full";
 export type ConfigBackupPayloadType = "full" | "incremental";

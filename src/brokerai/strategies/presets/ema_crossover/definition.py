@@ -41,13 +41,15 @@ DEFAULT_PARAMS: dict = {
     ],
     "exits": {
         "stop_loss": {
-            "mode": "atr_based",
+            "enabled": True,
+            "mode": "fixed_pips",
             "atr_multiplier": 1.5,
             "fixed_pips": 15,
             "structure_lookback": 10,
         },
         "take_profit": {
-            "mode": "rr_ratio",
+            "enabled": True,
+            "mode": "reverse_crossover",
             "risk_reward_ratio": 2.0,
             "fixed_pips": 30,
             "atr_multiplier": 2.5,

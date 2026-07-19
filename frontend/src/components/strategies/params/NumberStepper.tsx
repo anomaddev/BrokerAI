@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import NumberInput from "./NumberInput";
 
 type NumberStepperProps = {
@@ -11,6 +12,8 @@ type NumberStepperProps = {
   readOnly?: boolean;
   /** Show +/- increment buttons. Defaults to false. */
   showButtons?: boolean;
+  /** Optional helper control shown next to the label. */
+  labelHelp?: ReactNode;
   onChange: (value: number) => void;
 };
 
@@ -28,13 +31,28 @@ export default function NumberStepper({
   invalid,
   readOnly,
   showButtons = false,
+  labelHelp,
   onChange,
 }: NumberStepperProps) {
+  const labelNode = labelHelp ? (
+    <div className="param-control-label-with-help">
+      <label htmlFor={id} className="param-control-label">
+        {label}
+      </label>
+      {labelHelp}
+    </div>
+  ) : (
+    <label htmlFor={id} className="param-control-label">
+      {label}
+    </label>
+  );
+
   if (readOnly || !showButtons) {
     return (
       <NumberInput
         id={id}
         label={label}
+        labelHelp={labelHelp}
         value={value}
         min={min}
         max={max}
@@ -48,9 +66,7 @@ export default function NumberStepper({
 
   return (
     <div className="param-control">
-      <label htmlFor={id} className="param-control-label">
-        {label}
-      </label>
+      {labelNode}
       <div className={`param-stepper${invalid ? " param-stepper--invalid" : ""}`}>
         <button
           type="button"

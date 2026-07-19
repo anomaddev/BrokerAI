@@ -1,5 +1,6 @@
 import type { AssetClass } from "../api/client";
 import oandaLogo from "../assets/providers/oanda.png";
+import { ASSET_CLASS_LABELS, TRADING_ASSET_CLASSES } from "./assetClassStatus";
 
 export type ExchangeId =
   | "oanda"
@@ -30,19 +31,19 @@ export const EXCHANGES: Exchange[] = [
     logo: oandaLogo,
   },
   {
-    id: "ibkr",
-    name: "Interactive Brokers",
-    description: "Multi-asset trading across global markets.",
-    category: "Multi-asset",
-    assetClasses: ["forex", "metals", "stocks", "crypto", "futures", "options"],
-    available: false,
-  },
-  {
     id: "metatrader5",
     name: "MetaTrader 5",
     description: "Forex and CFD execution through MT5 bridge.",
     category: "Forex",
     assetClasses: ["forex"],
+    available: false,
+  },
+  {
+    id: "ibkr",
+    name: "Interactive Brokers",
+    description: "Multi-asset trading across global markets.",
+    category: "Multi-asset",
+    assetClasses: ["forex", "metals", "stocks", "crypto", "futures", "options"],
     available: false,
   },
   {
@@ -71,9 +72,67 @@ export const EXCHANGES: Exchange[] = [
   },
 ];
 
+/** Primary asset class used for catalog sort/group order. */
+export function primaryAssetClass(exchange: Exchange): AssetClass {
+  return exchange.assetClasses[0] ?? "forex";
+}
+
+function assetClassRank(assetClass: AssetClass): number {
+  const index = TRADING_ASSET_CLASSES.indexOf(assetClass);
+  return index < 0 ? TRADING_ASSET_CLASSES.length : index;
+}
+
+/** Sort by allowed asset type, then availability, then specialized before multi-asset, then name. */
+export function compareExchangesByAssetClass(a: Exchange, b: Exchange): number {
+  const rankDiff = assetClassRank(primaryAssetClass(a)) - assetClassRank(primaryAssetClass(b));
+  if (rankDiff !== 0) return rankDiff;
+  if (a.available !== b.available) return a.available ? -1 : 1;
+  if (a.assetClasses.length !== b.assetClasses.length) {
+    return a.assetClasses.length - b.assetClasses.length;
+  }
+  return a.name.localeCompare(b.name);
+}
+
+export function exchangesSortedByAssetClass(
+  exchanges: readonly Exchange[] = EXCHANGES,
+): Exchange[] {
+  return [...exchanges].sort(compareExchangesByAssetClass);
+}
+
+export type ExchangeAssetClassGroup = {
+  assetClass: AssetClass;
+  label: string;
+  exchanges: Exchange[];
+};
+
+/** Group exchanges under their primary allowed asset type (catalog order). */
+export function groupExchangesByAssetClass(
+  exchanges: readonly Exchange[] = EXCHANGES,
+): ExchangeAssetClassGroup[] {
+  const sorted = exchangesSortedByAssetClass(exchanges);
+  const buckets = new Map<AssetClass, Exchange[]>();
+
+  for (const exchange of sorted) {
+    const key = primaryAssetClass(exchange);
+    const list = buckets.get(key);
+    if (list) list.push(exchange);
+    else buckets.set(key, [exchange]);
+  }
+
+  return TRADING_ASSET_CLASSES.filter((assetClass) => buckets.has(assetClass)).map(
+    (assetClass) => ({
+      assetClass,
+      label: ASSET_CLASS_LABELS[assetClass],
+      exchanges: buckets.get(assetClass)!,
+    }),
+  );
+}
+
 export function exchangesForAssetClass(assetClass: AssetClass): Exchange[] {
-  return EXCHANGES.filter(
-    (exchange) => exchange.available && exchange.assetClasses.includes(assetClass),
+  return exchangesSortedByAssetClass(
+    EXCHANGES.filter(
+      (exchange) => exchange.available && exchange.assetClasses.includes(assetClass),
+    ),
   );
 }
 
@@ -86,9 +145,9 @@ export type ExchangeConnectionSummary = {
 export function connectedExchangeIds(
   connections: Partial<Record<ExchangeId, ExchangeConnectionSummary>>,
 ): ExchangeId[] {
-  return EXCHANGES.filter((exchange) => connections[exchange.id]?.connected).map(
-    (exchange) => exchange.id,
-  );
+  return exchangesSortedByAssetClass(
+    EXCHANGES.filter((exchange) => connections[exchange.id]?.connected),
+  ).map((exchange) => exchange.id);
 }
 
 export function connectedExchangesForAssetClass(

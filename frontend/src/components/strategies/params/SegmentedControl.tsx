@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 type SegmentedOption<T extends string> = {
   value: T;
   label: string;
@@ -8,6 +10,8 @@ type SegmentedControlProps<T extends string> = {
   value: T;
   options: SegmentedOption<T>[];
   readOnly?: boolean;
+  /** Optional helper control aligned to the right of the label. */
+  labelHelp?: ReactNode;
   onChange: (value: T) => void;
 };
 
@@ -16,14 +20,24 @@ export default function SegmentedControl<T extends string>({
   value,
   options,
   readOnly,
+  labelHelp,
   onChange,
 }: SegmentedControlProps<T>) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
 
+  const labelNode = labelHelp ? (
+    <div className="param-control-label-with-help">
+      <span className="param-control-label">{label}</span>
+      {labelHelp}
+    </div>
+  ) : (
+    <span className="param-control-label">{label}</span>
+  );
+
   if (readOnly) {
     return (
       <div className="param-control param-control--readonly">
-        <span className="param-control-label">{label}</span>
+        <div className="param-control-label-row">{labelNode}</div>
         <span className="param-control-value param-control-value--locked">{selectedLabel}</span>
       </div>
     );
@@ -31,7 +45,7 @@ export default function SegmentedControl<T extends string>({
 
   return (
     <div className="param-control">
-      <span className="param-control-label">{label}</span>
+      <div className="param-control-label-row">{labelNode}</div>
       <div className="param-segmented" role="tablist" aria-label={label}>
         {options.map((option) => (
           <button

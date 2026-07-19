@@ -36,10 +36,12 @@ export type EmaCrossoverParams = {
   minAtr: number;
   direction: EmaCrossoverDirection;
   confirmation: EmaCrossoverConfirmation;
+  stopLossEnabled: boolean;
   stopLossType: StopLossType;
   slAtrMultiplier: number;
   slFixedPips: number;
   slStructureLookback: number;
+  takeProfitEnabled: boolean;
   takeProfitType: TakeProfitMode;
   riskRewardRatio: number;
   tpFixedPips: number;
@@ -72,11 +74,13 @@ const BASE_DEFAULTS = {
   minAtr: 0.0008,
   direction: "both" as EmaCrossoverDirection,
   confirmation: "close" as EmaCrossoverConfirmation,
-  stopLossType: "atr_based" as StopLossType,
+  stopLossEnabled: true,
+  stopLossType: "fixed_pips" as StopLossType,
   slAtrMultiplier: 1.5,
   slFixedPips: 15,
   slStructureLookback: 10,
-  takeProfitType: "rr_ratio" as TakeProfitMode,
+  takeProfitEnabled: true,
+  takeProfitType: "reverse_crossover" as TakeProfitMode,
   riskRewardRatio: 2.0,
   tpFixedPips: 30,
   tpAtrMultiplier: 2.5,

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, profilePhotoUrl } from "../../api/client";
+import { api, profilePhotoUrl, type MfaFactor } from "../../api/client";
+import MfaEnrollPanel from "../../components/MfaEnrollPanel";
 import ProfilePhotoField from "../../components/ProfilePhotoField";
 import SettingsPanelHeader from "../../components/SettingsPanelHeader";
 import { accountDisplayName, notifyAccountUpdated } from "../../lib/account";
@@ -9,7 +10,7 @@ type StrengthLevel = "weak" | "fair" | "strong";
 
 function passwordStrength(pw: string): { label: string; level: StrengthLevel; score: number } {
   let score = 0;
-  if (pw.length >= 12) score++;
+  if (pw.length >= 8 && pw.length <= 32) score++;
   if (/[A-Z]/.test(pw)) score++;
   if (/[a-z]/.test(pw)) score++;
   if (/[0-9]/.test(pw)) score++;
@@ -72,6 +73,15 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 
 export default function AccountTab() {
   const [authMode, setAuthMode] = useState<"builtin" | "oidc">("builtin");
+  const [mfaAvailable, setMfaAvailable] = useState(false);
+  const [mfaEnabled, setMfaEnabled] = useState(false);
+  const [mfaFactors, setMfaFactors] = useState<MfaFactor[]>([]);
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [mfaEnrolling, setMfaEnrolling] = useState(false);
+  const [mfaDisablePassword, setMfaDisablePassword] = useState("");
+  const [mfaMessage, setMfaMessage] = useState("");
+  const [mfaError, setMfaError] = useState("");
+  const [mfaSaving, setMfaSaving] = useState(false);
   const [currentUsername, setCurrentUsername] = useState("");
   const [savedEmail, setSavedEmail] = useState("");
   const [savedFirstName, setSavedFirstName] = useState("");
@@ -84,12 +94,6 @@ export default function AccountTab() {
   const [removeRequested, setRemoveRequested] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const [username, setUsername] = useState("");
-  const [usernamePassword, setUsernamePassword] = useState("");
-  const [usernameSaving, setUsernameSaving] = useState(false);
-  const [usernameMessage, setUsernameMessage] = useState("");
-  const [usernameError, setUsernameError] = useState("");
-
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -101,12 +105,28 @@ export default function AccountTab() {
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
 
+  async function refreshMfaStatus() {
+    setMfaLoading(true);
+    try {
+      const status = await api.mfaStatus();
+      setMfaAvailable(status.available);
+      setMfaEnabled(status.enabled);
+      setMfaFactors(status.factors);
+    } catch {
+      setMfaAvailable(false);
+      setMfaEnabled(false);
+      setMfaFactors([]);
+    } finally {
+      setMfaLoading(false);
+    }
+  }
+
   useEffect(() => {
     Promise.all([api.authConfig(), api.me()])
       .then(([config, user]) => {
         setAuthMode(config.mode);
+        setMfaAvailable(Boolean(config.mfa_available));
         setCurrentUsername(user.username);
-        setUsername(user.username);
         setSavedFirstName(user.first_name?.trim() ?? "");
         setSavedLastName(user.last_name?.trim() ?? "");
         setFirstName(user.first_name?.trim() ?? "");
@@ -115,6 +135,9 @@ export default function AccountTab() {
         setInitialHasPhoto(user.has_profile_photo);
         if (user.has_profile_photo) {
           setPhotoVersion(Date.now());
+        }
+        if (config.mode === "builtin" && config.mfa_available) {
+          void refreshMfaStatus();
         }
       })
       .catch(() => setInitialHasPhoto(false))
@@ -135,13 +158,12 @@ export default function AccountTab() {
     authMode === "builtin" &&
     (firstName.trim() !== savedFirstName.trim() || lastName.trim() !== savedLastName.trim());
   const profileDirty = photoDirty || namesDirty;
-  const usernameChanged = username.trim() !== currentUsername.trim();
+  const signInIdentity = savedEmail || currentUsername;
   const profileDisplayName = accountDisplayName({
-    username: currentUsername,
+    username: signInIdentity,
     first_name: savedFirstName,
-    last_name: savedLastName,
   });
-  const hasDisplayName = profileDisplayName !== currentUsername;
+  const hasDisplayName = Boolean(savedFirstName.trim());
 
   async function saveProfile() {
     if (!profileDirty) return;
@@ -187,29 +209,6 @@ export default function AccountTab() {
     }
   }
 
-  async function saveUsername(e: FormEvent) {
-    e.preventDefault();
-    if (!usernameChanged || !usernamePassword) return;
-    setUsernameError("");
-    setUsernameMessage("");
-    setUsernameSaving(true);
-    try {
-      const result = await api.changeUsername({
-        username: username.trim(),
-        current_password: usernamePassword,
-      });
-      setCurrentUsername(result.username);
-      setUsername(result.username);
-      setUsernamePassword("");
-      setUsernameMessage("Username updated.");
-      notifyAccountUpdated();
-    } catch (err) {
-      setUsernameError(err instanceof Error ? err.message : "Failed to update username");
-    } finally {
-      setUsernameSaving(false);
-    }
-  }
-
   async function savePassword(e: FormEvent) {
     e.preventDefault();
     if (!currentPassword || !newPassword || !confirmPassword) return;
@@ -233,6 +232,25 @@ export default function AccountTab() {
     }
   }
 
+  async function disableMfa(e: FormEvent) {
+    e.preventDefault();
+    const factorId = mfaFactors[0]?.id;
+    if (!factorId || !mfaDisablePassword) return;
+    setMfaError("");
+    setMfaMessage("");
+    setMfaSaving(true);
+    try {
+      await api.mfaDisable({ password: mfaDisablePassword, factor_id: factorId });
+      setMfaDisablePassword("");
+      setMfaMessage("Two-factor authentication disabled.");
+      await refreshMfaStatus();
+    } catch (err) {
+      setMfaError(err instanceof Error ? err.message : "Failed to disable 2FA");
+    } finally {
+      setMfaSaving(false);
+    }
+  }
+
   return (
     <div className="settings-panel">
       <SettingsPanelHeader
@@ -240,7 +258,7 @@ export default function AccountTab() {
         description={
           authMode === "oidc"
             ? "Manage your BrokerAI profile and display preferences. Sign-in is handled by your identity provider."
-            : "Manage your BrokerAI login profile, username, and password."
+            : "Manage your BrokerAI profile, email, and password."
         }
       />
       <div className="settings-panel-body settings-panel-body--stack">
@@ -248,23 +266,29 @@ export default function AccountTab() {
           <p className="settings-muted">Loading account…</p>
         ) : (
           <div className="account-settings">
-            {authMode === "oidc" ? (
-              <section className="account-section-card">
-                <div className="settings-section-intro">
-                  <h3 className="settings-subsection-title">Sign-in & identity</h3>
-                  <p className="settings-panel-desc">
-                    Username, email, and legal name come from your identity provider and refresh
-                    when you sign in. Change your password or enable 2FA at your IdP.
-                  </p>
-                </div>
-                <div className="account-readonly-grid">
-                  <ReadOnlyField label="Username" value={currentUsername} />
-                  {savedEmail ? <ReadOnlyField label="Email" value={savedEmail} /> : null}
-                  {savedFirstName ? <ReadOnlyField label="First name" value={savedFirstName} /> : null}
-                  {savedLastName ? <ReadOnlyField label="Last name" value={savedLastName} /> : null}
-                </div>
-              </section>
-            ) : null}
+            <section className="account-section-card">
+              <div className="settings-section-intro">
+                <h3 className="settings-subsection-title">Sign-in & identity</h3>
+                <p className="settings-panel-desc">
+                  {authMode === "oidc"
+                    ? "Email and legal name come from your identity provider and refresh when you sign in. Change your password or enable 2FA at your IdP."
+                    : "You sign in with your email address. Your name and photo are for display across BrokerAI."}
+                </p>
+              </div>
+              <div className="account-readonly-grid">
+                {savedEmail ? (
+                  <ReadOnlyField label="Email" value={savedEmail} />
+                ) : (
+                  <ReadOnlyField label="Sign-in" value={currentUsername} />
+                )}
+                {authMode === "oidc" && savedFirstName ? (
+                  <ReadOnlyField label="First name" value={savedFirstName} />
+                ) : null}
+                {authMode === "oidc" && savedLastName ? (
+                  <ReadOnlyField label="Last name" value={savedLastName} />
+                ) : null}
+              </div>
+            </section>
 
             <section className="account-section-card">
               <div className="settings-section-intro">
@@ -289,12 +313,12 @@ export default function AccountTab() {
                   {hasDisplayName ? (
                     <>
                       <span className="account-profile-display-name">{profileDisplayName}</span>
-                      <span className="account-profile-handle">@{currentUsername}</span>
+                      <span className="account-profile-handle">{signInIdentity}</span>
                     </>
                   ) : (
                     <>
                       <span className="account-profile-label">Signed in as</span>
-                      <span className="account-profile-username">{currentUsername}</span>
+                      <span className="account-profile-username">{signInIdentity}</span>
                     </>
                   )}
                 </div>
@@ -321,7 +345,7 @@ export default function AccountTab() {
                         autoComplete="given-name"
                         disabled={profileSaving}
                         maxLength={64}
-                        placeholder="Optional"
+                        placeholder="Jordan"
                       />
                     </label>
                     <label htmlFor="account-last-name">
@@ -337,7 +361,7 @@ export default function AccountTab() {
                         autoComplete="family-name"
                         disabled={profileSaving}
                         maxLength={64}
-                        placeholder="Optional"
+                        placeholder="Belfort"
                       />
                     </label>
                   </div>
@@ -357,128 +381,147 @@ export default function AccountTab() {
             </section>
 
             {authMode === "builtin" ? (
-              <>
-            <section className="account-section-card">
-              <div className="settings-section-intro">
-                <h3 className="settings-subsection-title">Username</h3>
-                <p className="settings-panel-desc">
-                  Lowercase letters, numbers, underscores, and hyphens. Must start with a letter.
-                </p>
-              </div>
-              <form className="settings-form account-form" onSubmit={(e) => void saveUsername(e)}>
-                <label htmlFor="account-username">
-                  Username
-                  <input
-                    id="account-username"
-                    value={username}
-                    onChange={(e) => {
-                      setUsername(e.target.value);
-                      setUsernameMessage("");
-                      setUsernameError("");
-                    }}
-                    pattern="[a-z][a-z0-9_-]{2,31}"
-                    required
-                    autoComplete="username"
-                    disabled={usernameSaving}
-                    spellCheck={false}
-                  />
-                </label>
-                <label htmlFor="account-username-password">
-                  Current password
-                  <input
-                    id="account-username-password"
-                    type="password"
-                    value={usernamePassword}
-                    onChange={(e) => {
-                      setUsernamePassword(e.target.value);
-                      setUsernameMessage("");
-                      setUsernameError("");
-                    }}
-                    required={usernameChanged}
-                    autoComplete="current-password"
-                    disabled={usernameSaving}
-                  />
-                  <span className="settings-field-hint">Required to confirm a username change.</span>
-                </label>
-                <FormFooter
-                  message={usernameMessage}
-                  error={usernameError}
-                  saving={usernameSaving}
-                  saveLabel="Save username"
-                  disabled={!usernameChanged || !usernamePassword}
-                />
-              </form>
-            </section>
-
-            <section className="account-section-card">
-              <div className="settings-section-intro">
-                <h3 className="settings-subsection-title">Password</h3>
-                <p className="settings-panel-desc">
-                  At least 12 characters with uppercase, lowercase, a digit, and a special character.
-                </p>
-              </div>
-              <form className="settings-form account-form" onSubmit={(e) => void savePassword(e)}>
-                <div className="account-password-grid">
-                  <label htmlFor="account-current-password">
-                    Current password
-                    <input
-                      id="account-current-password"
-                      type="password"
-                      value={currentPassword}
-                      onChange={(e) => {
-                        setCurrentPassword(e.target.value);
-                        setPasswordMessage("");
-                        setPasswordError("");
-                      }}
-                      required
-                      autoComplete="current-password"
-                      disabled={passwordSaving}
-                    />
-                  </label>
-                  <label htmlFor="account-new-password">
-                    New password
-                    <input
-                      id="account-new-password"
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => {
-                        setNewPassword(e.target.value);
-                        setPasswordMessage("");
-                        setPasswordError("");
-                      }}
-                      required
-                      autoComplete="new-password"
-                      disabled={passwordSaving}
-                    />
-                    {newPassword ? <PasswordStrengthMeter password={newPassword} /> : null}
-                  </label>
-                  <label htmlFor="account-confirm-password">
-                    Confirm new password
-                    <input
-                      id="account-confirm-password"
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => {
-                        setConfirmPassword(e.target.value);
-                        setPasswordMessage("");
-                        setPasswordError("");
-                      }}
-                      required
-                      autoComplete="new-password"
-                      disabled={passwordSaving}
-                    />
-                  </label>
+              <section className="account-section-card">
+                <div className="settings-section-intro">
+                  <h3 className="settings-subsection-title">Password</h3>
+                  <p className="settings-panel-desc">
+                    8–32 characters with uppercase, lowercase, a digit, and a special character.
+                  </p>
                 </div>
-                <FormFooter
-                  message={passwordMessage}
-                  error={passwordError}
-                  saving={passwordSaving}
-                  saveLabel="Change password"
-                  disabled={!currentPassword || !newPassword || !confirmPassword}
-                />
-              </form>
-            </section>
-              </>
+                <form className="settings-form account-form" onSubmit={(e) => void savePassword(e)}>
+                  <div className="account-password-grid">
+                    <label htmlFor="account-current-password">
+                      Current password
+                      <input
+                        id="account-current-password"
+                        type="password"
+                        value={currentPassword}
+                        onChange={(e) => {
+                          setCurrentPassword(e.target.value);
+                          setPasswordMessage("");
+                          setPasswordError("");
+                        }}
+                        required
+                        autoComplete="current-password"
+                        disabled={passwordSaving}
+                      />
+                    </label>
+                    <label htmlFor="account-new-password">
+                      New password
+                      <input
+                        id="account-new-password"
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => {
+                          setNewPassword(e.target.value);
+                          setPasswordMessage("");
+                          setPasswordError("");
+                        }}
+                        required
+                        autoComplete="new-password"
+                        disabled={passwordSaving}
+                      />
+                      {newPassword ? <PasswordStrengthMeter password={newPassword} /> : null}
+                    </label>
+                    <label htmlFor="account-confirm-password">
+                      Confirm new password
+                      <input
+                        id="account-confirm-password"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => {
+                          setConfirmPassword(e.target.value);
+                          setPasswordMessage("");
+                          setPasswordError("");
+                        }}
+                        required
+                        autoComplete="new-password"
+                        disabled={passwordSaving}
+                      />
+                    </label>
+                  </div>
+                  <FormFooter
+                    message={passwordMessage}
+                    error={passwordError}
+                    saving={passwordSaving}
+                    saveLabel="Change password"
+                    disabled={!currentPassword || !newPassword || !confirmPassword}
+                  />
+                </form>
+              </section>
+            ) : null}
+
+            {authMode === "builtin" && mfaAvailable ? (
+              <section className="account-section-card">
+                <div className="settings-section-intro">
+                  <h3 className="settings-subsection-title">Two-factor authentication</h3>
+                  <p className="settings-panel-desc">
+                    Optional authenticator app (TOTP). When enabled, sign-in asks for a code after
+                    your password.
+                  </p>
+                </div>
+                {mfaLoading ? (
+                  <p className="settings-muted">Loading 2FA status…</p>
+                ) : mfaEnrolling ? (
+                  <MfaEnrollPanel
+                    variant="settings"
+                    onCancel={() => setMfaEnrolling(false)}
+                    onEnabled={() => {
+                      setMfaEnrolling(false);
+                      setMfaMessage("Two-factor authentication enabled.");
+                      void refreshMfaStatus();
+                    }}
+                  />
+                ) : mfaEnabled ? (
+                  <form className="settings-form account-form" onSubmit={(e) => void disableMfa(e)}>
+                    <p className="settings-muted">
+                      Authenticator is on
+                      {mfaFactors[0]?.friendly_name
+                        ? ` (${mfaFactors[0].friendly_name})`
+                        : ""}.
+                    </p>
+                    <label htmlFor="account-mfa-disable-password">
+                      Current password to disable
+                      <input
+                        id="account-mfa-disable-password"
+                        type="password"
+                        value={mfaDisablePassword}
+                        onChange={(e) => {
+                          setMfaDisablePassword(e.target.value);
+                          setMfaMessage("");
+                          setMfaError("");
+                        }}
+                        required
+                        autoComplete="current-password"
+                        disabled={mfaSaving}
+                      />
+                    </label>
+                    <FormFooter
+                      message={mfaMessage}
+                      error={mfaError}
+                      saving={mfaSaving}
+                      saveLabel="Disable 2FA"
+                      disabled={!mfaDisablePassword}
+                    />
+                  </form>
+                ) : (
+                  <div className="account-form-footer">
+                    {mfaMessage ? <p className="settings-success">{mfaMessage}</p> : null}
+                    {mfaError ? <p className="settings-error">{mfaError}</p> : null}
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => {
+                        setMfaMessage("");
+                        setMfaError("");
+                        setMfaEnrolling(true);
+                      }}
+                    >
+                      Set up authenticator
+                    </button>
+                  </div>
+                )}
+              </section>
             ) : null}
           </div>
         )}

@@ -6,6 +6,13 @@ export type AssetClassStatus = {
   enabled: boolean;
 };
 
+/** Fired after asset-class enable/settings are persisted (Settings → Broker). */
+export const ASSET_CLASS_STATUSES_UPDATED = "brokerai:asset-class-statuses-updated";
+
+export function notifyAssetClassStatusesUpdated(): void {
+  window.dispatchEvent(new Event(ASSET_CLASS_STATUSES_UPDATED));
+}
+
 export const ASSET_CLASS_LABELS: Record<AssetClass, string> = {
   forex: "Forex",
   metals: "Precious Metals",

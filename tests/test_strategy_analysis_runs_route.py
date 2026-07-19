@@ -56,6 +56,7 @@ def test_list_strategy_analysis_runs_returns_payload(mock_repo_cls, client: Test
     repo.list_recent.assert_awaited_once_with(
         strategy_id="strategy-1",
         pair="EUR/USD",
+        analysis_purpose=None,
         limit=25,
         before=None,
     )

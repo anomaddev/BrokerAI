@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
+from sqlalchemy import delete, select
+
 from brokerai.auth.store import AuthStore
 from brokerai.config.env_file import config_file_writable, save_update_env_values
 from brokerai.config.settings import get_settings, reload_settings
@@ -24,7 +26,17 @@ from brokerai.config_backup.schedule_settings import (
 )
 from brokerai.config_backup.summary import summarize_payload
 from brokerai.config_backup.validate import validate_payload
-from brokerai.db.client import get_db
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import (
+    AiModelRow,
+    AssetSettingsRow,
+    DataConnectionRow,
+    ExchangeConnectionRow,
+    ResearchSettingsRow,
+    StrategyRow,
+)
+from brokerai.db.repositories.ai_models import AiModelsRepository
+from brokerai.db.repositories.strategies import _sync_row_columns
 from brokerai.db.repositories.asset_settings import ASSET_CLASSES, AssetSettingsRepository
 from brokerai.db.repositories.config_backups import (
     DEFAULT_CHANGE_RETENTION as REPO_DEFAULT_CHANGE_RETENTION,
@@ -32,7 +44,10 @@ from brokerai.db.repositories.config_backups import (
     ConfigBackupsRepository,
     SCHEMA_VERSION,
 )
-from brokerai.db.repositories.research_settings import SINGLETON_ID as RESEARCH_SINGLETON_ID
+from brokerai.db.repositories.research_settings import (
+    SINGLETON_ID as RESEARCH_SINGLETON_ID,
+    ResearchSettingsRepository,
+)
 from brokerai.market_sessions import normalize_market_indicators
 from brokerai.web.update_runner import clear_update_check_cache
 
@@ -47,6 +62,111 @@ RestoreScope = Literal["setting", "full"]
 
 def _strip_id(doc: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in doc.items() if key != "_id"}
+
+
+def _asset_settings_row(doc: dict[str, Any]) -> AssetSettingsRow:
+    cleaned = _strip_id(doc)
+    return AssetSettingsRow(asset_class=str(cleaned["asset_class"]), doc=cleaned)
+
+
+def _strategy_row(doc: dict[str, Any]) -> StrategyRow:
+    cleaned = _strip_id(doc)
+    row = StrategyRow(
+        id=str(cleaned["id"]),
+        asset_class=str(cleaned["asset_class"]),
+        name=str(cleaned["name"]),
+        enabled=bool(cleaned.get("enabled", False)),
+        preset_id=cleaned.get("preset_id"),
+        doc=cleaned,
+    )
+    _sync_row_columns(row, cleaned)
+    return row
+
+
+def _exchange_connection_row(doc: dict[str, Any]) -> ExchangeConnectionRow:
+    cleaned = _strip_id(doc)
+    exchange_id = str(cleaned.get("exchange_id") or "")
+    return ExchangeConnectionRow(exchange_id=exchange_id, doc=cleaned)
+
+
+def _data_connection_row(doc: dict[str, Any]) -> DataConnectionRow:
+    cleaned = _strip_id(doc)
+    conn_type = str(cleaned.get("type") or cleaned.get("conn_type") or "")
+    model_id = cleaned.get("model_id")
+    return DataConnectionRow(
+        conn_type=conn_type,
+        model_id=str(model_id) if model_id else None,
+        doc=cleaned,
+    )
+
+
+def _research_settings_row(doc: dict[str, Any]) -> ResearchSettingsRow:
+    cleaned = _strip_id(doc)
+    return ResearchSettingsRow(id=str(cleaned.get("id") or RESEARCH_SINGLETON_ID), doc=cleaned)
+
+
+def _ai_model_row(doc: dict[str, Any]) -> AiModelRow:
+    cleaned = _strip_id(doc)
+    return AiModelRow(
+        id=str(cleaned["id"]),
+        enabled=bool(cleaned.get("enabled", True)),
+        created_at=str(cleaned.get("created_at") or ""),
+        doc=cleaned,
+    )
+
+
+async def _list_strategy_docs() -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        rows = (await session.execute(select(StrategyRow))).scalars().all()
+        return [dict(row.doc) for row in rows]
+
+
+async def _list_exchange_connection_docs() -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        rows = (await session.execute(select(ExchangeConnectionRow))).scalars().all()
+        return [dict(row.doc) for row in rows]
+
+
+async def _list_data_connection_docs() -> list[dict[str, Any]]:
+    async with session_scope() as session:
+        rows = (await session.execute(select(DataConnectionRow))).scalars().all()
+        return [dict(row.doc) for row in rows]
+
+
+async def _replace_asset_settings(session, docs: list[dict[str, Any]]) -> None:
+    await session.execute(delete(AssetSettingsRow))
+    for doc in docs:
+        session.add(_asset_settings_row(doc))
+
+
+async def _replace_strategies(session, docs: list[dict[str, Any]]) -> None:
+    await session.execute(delete(StrategyRow))
+    for doc in docs:
+        session.add(_strategy_row(doc))
+
+
+async def _replace_exchange_connections(session, docs: list[dict[str, Any]]) -> None:
+    await session.execute(delete(ExchangeConnectionRow))
+    for doc in docs:
+        session.add(_exchange_connection_row(doc))
+
+
+async def _replace_data_connections(session, docs: list[dict[str, Any]]) -> None:
+    await session.execute(delete(DataConnectionRow))
+    for doc in docs:
+        session.add(_data_connection_row(doc))
+
+
+async def _replace_research_settings(session, doc: dict[str, Any] | None) -> None:
+    await session.execute(delete(ResearchSettingsRow))
+    if isinstance(doc, dict) and doc:
+        session.add(_research_settings_row(doc))
+
+
+async def _replace_ai_models(session, docs: list[dict[str, Any]]) -> None:
+    await session.execute(delete(AiModelRow))
+    for doc in docs:
+        session.add(_ai_model_row(doc))
 
 
 def _backup_summary(doc: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -81,32 +201,18 @@ class ConfigBackupService:
         }
 
     async def capture_snapshot(self) -> dict[str, Any]:
-        """Read current MongoDB and file-based settings into a versioned payload."""
-        handle = await get_db()
-        db = handle.db
-
+        """Read current Postgres and file-based settings into a versioned payload."""
         asset_settings: list[dict[str, Any]] = []
         asset_repo = AssetSettingsRepository()
         for asset_class in ASSET_CLASSES:
             doc = await asset_repo.get(asset_class)
             asset_settings.append(doc)
 
-        strategies_cursor = db.strategies.find({}, {"_id": 0})
-        strategies = await strategies_cursor.to_list(length=500)
-
-        exchange_cursor = db.exchange_connections.find({}, {"_id": 0})
-        exchange_connections = await exchange_cursor.to_list(length=50)
-
-        research_settings = await db.research_settings.find_one(
-            {"id": RESEARCH_SINGLETON_ID},
-            {"_id": 0},
-        )
-
-        data_cursor = db.data_connections.find({}, {"_id": 0})
-        data_connections = await data_cursor.to_list(length=200)
-
-        ai_cursor = db.ai_models.find({}, {"_id": 0})
-        ai_models = await ai_cursor.to_list(length=100)
+        strategies = await _list_strategy_docs()
+        exchange_connections = await _list_exchange_connection_docs()
+        research_settings = await ResearchSettingsRepository().get()
+        data_connections = await _list_data_connection_docs()
+        ai_models = await AiModelsRepository().list_all()
 
         return {
             "schema_version": SCHEMA_VERSION,
@@ -452,59 +558,46 @@ class ConfigBackupService:
 
     async def _apply_scoped_payload(self, payload: dict[str, Any]) -> None:
         """Apply only the sections present in a scoped/incremental payload."""
-        handle = await get_db()
-        db = handle.db
-
         if "user_preferences" in payload:
             await self._restore_user_preferences(payload.get("user_preferences"))
         if "system_settings" in payload:
             await self._restore_system_settings(payload.get("system_settings"))
 
-        if "asset_settings" in payload:
-            asset_settings = list(payload.get("asset_settings") or [])
-            for doc in asset_settings:
-                asset_class = doc.get("asset_class")
-                if not asset_class:
-                    continue
-                await db.asset_settings.delete_many({"asset_class": asset_class})
-                await db.asset_settings.insert_one(_strip_id(doc))
+        async with session_scope() as session:
+            if "asset_settings" in payload:
+                asset_settings = list(payload.get("asset_settings") or [])
+                for doc in asset_settings:
+                    asset_class = doc.get("asset_class")
+                    if not asset_class:
+                        continue
+                    await session.execute(
+                        delete(AssetSettingsRow).where(
+                            AssetSettingsRow.asset_class == asset_class
+                        )
+                    )
+                    session.add(_asset_settings_row(doc))
 
-        if "strategies" in payload:
-            strategies = list(payload.get("strategies") or [])
-            await db.strategies.delete_many({})
-            if strategies:
-                await db.strategies.insert_many([_strip_id(doc) for doc in strategies])
+            if "strategies" in payload:
+                strategies = list(payload.get("strategies") or [])
+                await _replace_strategies(session, strategies)
 
-        if "exchange_connections" in payload:
-            exchange_connections = list(payload.get("exchange_connections") or [])
-            await db.exchange_connections.delete_many({})
-            if exchange_connections:
-                await db.exchange_connections.insert_many(
-                    [_strip_id(doc) for doc in exchange_connections]
-                )
+            if "exchange_connections" in payload:
+                exchange_connections = list(payload.get("exchange_connections") or [])
+                await _replace_exchange_connections(session, exchange_connections)
 
-        if "research_settings" in payload:
-            research_settings = payload.get("research_settings")
-            await db.research_settings.delete_many({})
-            if isinstance(research_settings, dict) and research_settings:
-                await db.research_settings.insert_one(_strip_id(research_settings))
+            if "research_settings" in payload:
+                research_settings = payload.get("research_settings")
+                await _replace_research_settings(session, research_settings)
 
-        if "data_connections" in payload:
-            data_connections = list(payload.get("data_connections") or [])
-            await db.data_connections.delete_many({})
-            if data_connections:
-                await db.data_connections.insert_many([_strip_id(doc) for doc in data_connections])
+            if "data_connections" in payload:
+                data_connections = list(payload.get("data_connections") or [])
+                await _replace_data_connections(session, data_connections)
 
-        if "ai_models" in payload:
-            ai_models = list(payload.get("ai_models") or [])
-            await db.ai_models.delete_many({})
-            if ai_models:
-                await db.ai_models.insert_many([_strip_id(doc) for doc in ai_models])
+            if "ai_models" in payload:
+                ai_models = list(payload.get("ai_models") or [])
+                await _replace_ai_models(session, ai_models)
 
     async def _apply_payload(self, payload: dict[str, Any]) -> None:
-        handle = await get_db()
-        db = handle.db
-
         await self._restore_user_preferences(payload.get("user_preferences"))
         await self._restore_system_settings(payload.get("system_settings"))
 
@@ -515,31 +608,13 @@ class ConfigBackupService:
         data_connections = list(payload.get("data_connections") or [])
         ai_models = list(payload.get("ai_models") or [])
 
-        await db.asset_settings.delete_many({})
-        if asset_settings:
-            await db.asset_settings.insert_many([_strip_id(doc) for doc in asset_settings])
-
-        await db.strategies.delete_many({})
-        if strategies:
-            await db.strategies.insert_many([_strip_id(doc) for doc in strategies])
-
-        await db.exchange_connections.delete_many({})
-        if exchange_connections:
-            await db.exchange_connections.insert_many(
-                [_strip_id(doc) for doc in exchange_connections]
-            )
-
-        await db.research_settings.delete_many({})
-        if isinstance(research_settings, dict) and research_settings:
-            await db.research_settings.insert_one(_strip_id(research_settings))
-
-        await db.data_connections.delete_many({})
-        if data_connections:
-            await db.data_connections.insert_many([_strip_id(doc) for doc in data_connections])
-
-        await db.ai_models.delete_many({})
-        if ai_models:
-            await db.ai_models.insert_many([_strip_id(doc) for doc in ai_models])
+        async with session_scope() as session:
+            await _replace_asset_settings(session, asset_settings)
+            await _replace_strategies(session, strategies)
+            await _replace_exchange_connections(session, exchange_connections)
+            await _replace_research_settings(session, research_settings)
+            await _replace_data_connections(session, data_connections)
+            await _replace_ai_models(session, ai_models)
 
         logger.info(
             "Restored config backup: %d strategies, %d asset settings, %d exchange connections",

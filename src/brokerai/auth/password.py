@@ -4,7 +4,8 @@ import re
 
 import bcrypt
 
-MIN_LENGTH = 12
+MIN_LENGTH = 8
+MAX_LENGTH = 32
 
 
 class PasswordValidationError(ValueError):
@@ -14,8 +15,10 @@ class PasswordValidationError(ValueError):
 def validate_password(password: str, confirm: str) -> None:
     if password != confirm:
         raise PasswordValidationError("Passwords do not match")
-    if len(password) < MIN_LENGTH:
-        raise PasswordValidationError(f"Password must be at least {MIN_LENGTH} characters")
+    if len(password) < MIN_LENGTH or len(password) > MAX_LENGTH:
+        raise PasswordValidationError(
+            f"Password must be between {MIN_LENGTH} and {MAX_LENGTH} characters"
+        )
     if not re.search(r"[A-Z]", password):
         raise PasswordValidationError("Password must include an uppercase letter")
     if not re.search(r"[a-z]", password):

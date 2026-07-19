@@ -13,6 +13,8 @@ type ApiKeyDataSourceRowProps = {
   apiKeyPlaceholder: string;
   onConnectionChange: (connection: ApiKeyConnection) => void;
   onDisconnected?: () => void;
+  /** When true (default), a newly saved key is enabled. Setup passes false. */
+  autoEnableOnConnect?: boolean;
   testConnection: (data?: { api_key?: string }) => Promise<{ ok: boolean; message: string }>;
   saveConnection: (data: { api_key: string; enabled: boolean }) => Promise<ApiKeyConnection>;
   deleteConnection: () => Promise<ApiKeyConnection>;
@@ -25,6 +27,7 @@ export default function ApiKeyDataSourceRow({
   apiKeyPlaceholder,
   onConnectionChange,
   onDisconnected,
+  autoEnableOnConnect = true,
   testConnection,
   saveConnection,
   deleteConnection,
@@ -84,7 +87,7 @@ export default function ApiKeyDataSourceRow({
       }
 
       const isNewConnection = !apiKeySet && Boolean(apiKey.trim());
-      const nextEnabled = isNewConnection ? true : enabled;
+      const nextEnabled = isNewConnection ? autoEnableOnConnect : enabled;
       enabledRef.current = nextEnabled;
       setEnabled(nextEnabled);
 

@@ -13,7 +13,25 @@ from brokerai import __version__
 from brokerai.config.settings import get_settings, validate_startup_settings
 from brokerai.core.control import ControlClient, ControlTimeout
 from brokerai.db import ping_db
-from brokerai.db.client import get_db
+from brokerai.db.client import close_db, init_pg
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import (
+    AiModelRow,
+    AnalysisResultRow,
+    AssetSettingsRow,
+    BacktestRunRow,
+    BotActivityRow,
+    BrokerLotRow,
+    CostLedgerRow,
+    DataConnectionRow,
+    ExchangeConnectionRow,
+    MarketCandle,
+    ResearchCacheRow,
+    ResearchSettingsRow,
+    StrategyAnalysisRunRow,
+    StrategyRow,
+)
+from sqlalchemy import func, select
 from brokerai.web.routes.bot_activity import router as bot_activity_router
 from brokerai.web.routes.cost_ledger import router as cost_ledger_router
 from brokerai.web.routes.assets_settings import router as assets_settings_router
@@ -24,10 +42,12 @@ from brokerai.web.routes.exchange_connections_settings import router as exchange
 from brokerai.web.routes.market_data import router as market_data_router
 from brokerai.web.routes.market_status import router as market_status_router
 from brokerai.web.routes.models_settings import router as models_settings_router
+from brokerai.web.routes.onboarding import router as onboarding_router
 from brokerai.web.routes.research import router as research_router
 from brokerai.web.routes.research_settings_route import router as research_settings_router
 from brokerai.web.routes.rss_feeds_settings import router as rss_feeds_router
 from brokerai.web.routes.settings import router as settings_router
+from brokerai.web.routes.backtest_runs import router as backtest_runs_router
 from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.strategy_analysis_runs import router as strategy_analysis_runs_router
 from brokerai.web.routes.trades import router as trades_router
@@ -109,11 +129,24 @@ async def _app_lifespan(_app: FastAPI):
     logging.getLogger("httpx").setLevel(logging.WARNING)
     validate_startup_settings()
     try:
+        await init_pg()
         from brokerai.db.indexes import ensure_indexes
 
         await ensure_indexes()
     except Exception:
-        logger.warning("MongoDB unavailable — indexes not ensured", exc_info=True)
+        logger.warning("Postgres unavailable — startup DB init failed", exc_info=True)
+    try:
+        from brokerai.auth.supabase_auth import supabase_configured
+        from brokerai.bots.researcher.report_store import (
+            get_report_store,
+            migrate_local_reports_to_storage,
+        )
+
+        if supabase_configured():
+            await get_report_store().ensure()
+            await migrate_local_reports_to_storage()
+    except Exception:
+        logger.warning("Research reports Storage ensure/migrate failed", exc_info=True)
     try:
         from brokerai.tasks.runner import reconcile_stale_active_task
 
@@ -129,8 +162,6 @@ async def _app_lifespan(_app: FastAPI):
     from brokerai.integrations.oanda_client import close_oanda_client
 
     await close_oanda_client()
-    from brokerai.db.client import close_db
-
     await close_db()
 
 
@@ -141,6 +172,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 VERSION_FILE = Path("/opt/BrokerAI_version.txt")
 
 app.include_router(auth_router)
+app.include_router(onboarding_router)
 app.include_router(settings_router)
 app.include_router(models_settings_router)
 app.include_router(data_connections_router)
@@ -153,6 +185,7 @@ app.include_router(assets_settings_router)
 app.include_router(backups_settings_router)
 app.include_router(research_router)
 app.include_router(strategies_router)
+app.include_router(backtest_runs_router)
 app.include_router(strategy_analysis_runs_router)
 app.include_router(trades_router)
 app.include_router(system_router)
@@ -237,7 +270,7 @@ async def trading_page(path: str) -> FileResponse:
 async def health() -> JSONResponse:
     heartbeat = _read_heartbeat()
     lock = _read_version_lock()
-    mongo_ok = await ping_db()
+    postgres_ok = await ping_db()
     return JSONResponse(
         {
             "status": "ok",
@@ -251,43 +284,50 @@ async def health() -> JSONResponse:
             "configured_pin": settings.update_pin_display,
             "orchestrator_running": heartbeat.get("running", False),
             "orchestrator_started_at": heartbeat.get("started_at"),
-            "mongodb": {"status": "ok" if mongo_ok else "unavailable"},
+            "postgres": {"status": "ok" if postgres_ok else "unavailable"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
 
 
+_DB_TABLE_COUNTS: tuple[tuple[str, type], ...] = (
+    ("market_data", MarketCandle),
+    ("research_cache", ResearchCacheRow),
+    ("analysis_results", AnalysisResultRow),
+    ("ai_models", AiModelRow),
+    ("data_connections", DataConnectionRow),
+    ("exchange_connections", ExchangeConnectionRow),
+    ("research_settings", ResearchSettingsRow),
+    ("asset_settings", AssetSettingsRow),
+    ("strategies", StrategyRow),
+    ("backtest_runs", BacktestRunRow),
+    ("strategy_analysis_runs", StrategyAnalysisRunRow),
+    ("trades", BrokerLotRow),
+    ("bot_activity", BotActivityRow),
+    ("cost_ledger", CostLedgerRow),
+)
+
+
 @app.get("/api/system/db")
 async def db_stats(_username: str = Depends(require_auth)) -> JSONResponse:
     try:
-        handle = await get_db()
-        counts = {}
-        for name in (
-            "market_data",
-            "research_cache",
-            "analysis_results",
-            "ai_models",
-            "data_connections",
-            "exchange_connections",
-            "research_settings",
-            "asset_settings",
-            "strategies",
-            "strategy_analysis_runs",
-            "trades",
-            "bot_activity",
-            "cost_ledger",
-        ):
-            counts[name] = await handle.db[name].count_documents({})
+        counts: dict[str, int] = {}
+        async with session_scope() as session:
+            for name, model in _DB_TABLE_COUNTS:
+                result = await session.execute(select(func.count()).select_from(model))
+                counts[name] = int(result.scalar_one())
+        db_url = (settings.database_url or "").strip()
+        display_url = db_url.split("@")[-1] if "@" in db_url else db_url
         return JSONResponse(
             {
-                "database": settings.mongodb_db,
-                "uri": settings.mongodb_uri.split("@")[-1],
-                "collections": counts,
+                "database": "postgres",
+                "uri": display_url,
+                "tables": counts,
             }
         )
     except Exception as exc:
         return JSONResponse(
-            {"database": settings.mongodb_db, "error": str(exc), "collections": {}},
+            {"database": "postgres", "error": str(exc), "tables": {}},
             status_code=503,
         )
 

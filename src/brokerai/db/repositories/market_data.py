@@ -3,16 +3,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from brokerai.db.client import get_db
+from sqlalchemy import delete, func, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from brokerai.db.market_data_timeseries import (
     COLLECTION,
     TIME_FIELD,
     candle_open_time_from_document,
     candle_open_time_to_datetime,
     candle_to_timeseries_document,
-    meta_query_filter,
     timeseries_document_to_candle,
 )
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import MarketCandle
 
 
 def _dedupe_candle_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -36,6 +39,49 @@ def _dedupe_candle_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
+def _row_to_document(row: MarketCandle) -> dict[str, Any]:
+    return {
+        TIME_FIELD: row.ts,
+        "symbol": row.symbol,
+        "timeframe": row.timeframe,
+        "source": row.source,
+        "time": row.time,
+        "open": row.open,
+        "high": row.high,
+        "low": row.low,
+        "close": row.close,
+        "volume": row.volume,
+        "sessions": row.sessions,
+        "trading_day_et": row.trading_day_et,
+        "fetched_at": row.fetched_at,
+        "expires_at": row.expires_at,
+    }
+
+
+def _document_to_row_values(
+    symbol: str,
+    timeframe: str,
+    source: str,
+    document: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "source": source,
+        "ts": document[TIME_FIELD],
+        "time": document["time"],
+        "open": document["open"],
+        "high": document["high"],
+        "low": document["low"],
+        "close": document["close"],
+        "volume": document.get("volume", 0),
+        "sessions": document.get("sessions"),
+        "trading_day_et": document.get("trading_day_et"),
+        "fetched_at": document["fetched_at"],
+        "expires_at": document.get("expires_at"),
+    }
+
+
 class MarketDataRepository:
     COLLECTION = COLLECTION
 
@@ -48,17 +94,12 @@ class MarketDataRepository:
         *,
         expires_at: datetime | None = None,
     ) -> int:
-        """Insert OHLCV candles into the time-series cache (idempotent per open time).
-
-        Time-series collections do not support in-place updates. Existing rows for
-        the same ``(symbol, timeframe, source, ts)`` are deleted before insert.
-        """
+        """Insert OHLCV candles into the cache (idempotent per open time)."""
         if not candles:
             return 0
 
-        handle = await get_db()
         now = datetime.now(timezone.utc)
-        documents: list[dict[str, Any]] = []
+        row_values: list[dict[str, Any]] = []
 
         for candle in candles:
             document = candle_to_timeseries_document(
@@ -70,17 +111,46 @@ class MarketDataRepository:
                 expires_at=expires_at,
             )
             if document is not None:
-                documents.append(document)
+                row_values.append(_document_to_row_values(symbol, timeframe, source, document))
 
-        if not documents:
+        if not row_values:
             return 0
 
-        collection = handle.db[self.COLLECTION]
-        series_filter = meta_query_filter(symbol, timeframe, source)
-        timestamps = [document[TIME_FIELD] for document in documents]
-        await collection.delete_many({**series_filter, TIME_FIELD: {"$in": timestamps}})
-        await collection.insert_many(documents, ordered=False)
-        return len(documents)
+        async with session_scope() as session:
+            bind = session.get_bind()
+            dialect = bind.dialect.name if bind is not None else "postgresql"
+
+            if dialect == "postgresql":
+                stmt = pg_insert(MarketCandle).values(row_values)
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_market_candles_series_ts",
+                    set_={
+                        "time": stmt.excluded.time,
+                        "open": stmt.excluded.open,
+                        "high": stmt.excluded.high,
+                        "low": stmt.excluded.low,
+                        "close": stmt.excluded.close,
+                        "volume": stmt.excluded.volume,
+                        "sessions": stmt.excluded.sessions,
+                        "trading_day_et": stmt.excluded.trading_day_et,
+                        "fetched_at": stmt.excluded.fetched_at,
+                        "expires_at": stmt.excluded.expires_at,
+                    },
+                )
+                await session.execute(stmt)
+            else:
+                timestamps = [values["ts"] for values in row_values]
+                await session.execute(
+                    delete(MarketCandle).where(
+                        MarketCandle.symbol == symbol,
+                        MarketCandle.timeframe == timeframe,
+                        MarketCandle.source == source,
+                        MarketCandle.ts.in_(timestamps),
+                    )
+                )
+                await session.execute(insert(MarketCandle), row_values)
+
+        return len(row_values)
 
     async def latest_candle_time(
         self,
@@ -88,15 +158,21 @@ class MarketDataRepository:
         timeframe: str,
         source: str,
     ) -> str | None:
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one(
-            meta_query_filter(symbol, timeframe, source),
-            {"_id": 0, "time": 1, TIME_FIELD: 1},
-            sort=[(TIME_FIELD, -1)],
-        )
-        if not doc:
-            return None
-        return candle_open_time_from_document(doc)
+        async with session_scope() as session:
+            stmt = (
+                select(MarketCandle.time, MarketCandle.ts)
+                .where(
+                    MarketCandle.symbol == symbol,
+                    MarketCandle.timeframe == timeframe,
+                    MarketCandle.source == source,
+                )
+                .order_by(MarketCandle.ts.desc())
+                .limit(1)
+            )
+            row = (await session.execute(stmt)).first()
+            if not row:
+                return None
+            return candle_open_time_from_document({"time": row[0], TIME_FIELD: row[1]})
 
     async def earliest_candle_time(
         self,
@@ -104,15 +180,48 @@ class MarketDataRepository:
         timeframe: str,
         source: str,
     ) -> str | None:
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one(
-            meta_query_filter(symbol, timeframe, source),
-            {"_id": 0, "time": 1, TIME_FIELD: 1},
-            sort=[(TIME_FIELD, 1)],
+        async with session_scope() as session:
+            stmt = (
+                select(MarketCandle.time, MarketCandle.ts)
+                .where(
+                    MarketCandle.symbol == symbol,
+                    MarketCandle.timeframe == timeframe,
+                    MarketCandle.source == source,
+                )
+                .order_by(MarketCandle.ts.asc())
+                .limit(1)
+            )
+            row = (await session.execute(stmt)).first()
+            if not row:
+                return None
+            return candle_open_time_from_document({"time": row[0], TIME_FIELD: row[1]})
+
+    def _series_query(
+        self,
+        symbol: str,
+        timeframe: str,
+        source: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        sessions: list[str] | None = None,
+    ):
+        stmt = select(MarketCandle).where(
+            MarketCandle.symbol == symbol,
+            MarketCandle.timeframe == timeframe,
+            MarketCandle.source == source,
         )
-        if not doc:
-            return None
-        return candle_open_time_from_document(doc)
+        if since is not None:
+            since_dt = candle_open_time_to_datetime(since)
+            if since_dt is not None:
+                stmt = stmt.where(MarketCandle.ts >= since_dt)
+        if until is not None:
+            until_dt = candle_open_time_to_datetime(until)
+            if until_dt is not None:
+                stmt = stmt.where(MarketCandle.ts <= until_dt)
+        if sessions:
+            stmt = stmt.where(MarketCandle.sessions.is_not(None))
+        return stmt
 
     async def find_candles(
         self,
@@ -127,32 +236,30 @@ class MarketDataRepository:
         sessions: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return individual cached candles, optionally bounded by open time."""
-        handle = await get_db()
-        query: dict[str, Any] = meta_query_filter(symbol, timeframe, source)
-        time_filter: dict[str, Any] = {}
-        if since is not None:
-            since_dt = candle_open_time_to_datetime(since)
-            if since_dt is not None:
-                time_filter["$gte"] = since_dt
-        if until is not None:
-            until_dt = candle_open_time_to_datetime(until)
-            if until_dt is not None:
-                time_filter["$lte"] = until_dt
-        if time_filter:
-            query[TIME_FIELD] = time_filter
-        if sessions:
-            query["sessions"] = {"$in": sessions}
+        async with session_scope() as session:
+            stmt = self._series_query(
+                symbol,
+                timeframe,
+                source,
+                since=since,
+                until=until,
+                sessions=sessions,
+            ).order_by(MarketCandle.ts.asc() if ascending else MarketCandle.ts.desc())
+            if limit is not None:
+                stmt = stmt.limit(max(1, limit))
 
-        cursor = handle.db[self.COLLECTION].find(query, {"_id": 0}).sort(
-            TIME_FIELD,
-            1 if ascending else -1,
-        )
-        if limit is not None:
-            cursor = cursor.limit(max(1, limit))
-
-        rows = await cursor.to_list(length=limit or 5000)
-        rows = _dedupe_candle_rows(rows)
-        return [timeseries_document_to_candle(row) for row in rows]
+            rows = (await session.execute(stmt)).scalars().all()
+            documents = [_row_to_document(row) for row in rows]
+            if sessions:
+                session_set = set(sessions)
+                documents = [
+                    doc
+                    for doc in documents
+                    if isinstance(doc.get("sessions"), list)
+                    and session_set.intersection(doc["sessions"])
+                ]
+            documents = _dedupe_candle_rows(documents)
+            return [timeseries_document_to_candle(row) for row in documents]
 
     async def find_candles_after(
         self,
@@ -164,25 +271,24 @@ class MarketDataRepository:
         limit: int = 5,
     ) -> list[dict[str, Any]]:
         """Return candles strictly after *after* in ascending time order."""
-        handle = await get_db()
         after_dt = candle_open_time_to_datetime(after)
         if after_dt is None:
             return []
 
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find(
-                {
-                    **meta_query_filter(symbol, timeframe, source),
-                    TIME_FIELD: {"$gt": after_dt},
-                },
-                {"_id": 0},
+        async with session_scope() as session:
+            stmt = (
+                select(MarketCandle)
+                .where(
+                    MarketCandle.symbol == symbol,
+                    MarketCandle.timeframe == timeframe,
+                    MarketCandle.source == source,
+                    MarketCandle.ts > after_dt,
+                )
+                .order_by(MarketCandle.ts.asc())
+                .limit(max(1, limit))
             )
-            .sort(TIME_FIELD, 1)
-            .limit(max(1, limit))
-        )
-        rows = await cursor.to_list(length=max(1, limit))
-        return [timeseries_document_to_candle(row) for row in rows]
+            rows = (await session.execute(stmt)).scalars().all()
+            return [timeseries_document_to_candle(_row_to_document(row)) for row in rows]
 
     async def find_latest_candles(
         self,
@@ -219,28 +325,15 @@ class MarketDataRepository:
         until: str | None = None,
     ) -> set[str]:
         """Return stored candle open times (projection-only) for gap detection."""
-        handle = await get_db()
-        query: dict[str, Any] = meta_query_filter(symbol, timeframe, source)
-        time_filter: dict[str, Any] = {}
-        if since is not None:
-            since_dt = candle_open_time_to_datetime(since)
-            if since_dt is not None:
-                time_filter["$gte"] = since_dt
-        if until is not None:
-            until_dt = candle_open_time_to_datetime(until)
-            if until_dt is not None:
-                time_filter["$lte"] = until_dt
-        if time_filter:
-            query[TIME_FIELD] = time_filter
-
-        cursor = handle.db[self.COLLECTION].find(query, {"_id": 0, "time": 1, TIME_FIELD: 1})
-        docs = await cursor.to_list(length=None)
-        times: set[str] = set()
-        for doc in docs:
-            time_value = candle_open_time_from_document(doc)
-            if time_value:
-                times.add(time_value)
-        return times
+        async with session_scope() as session:
+            stmt = self._series_query(symbol, timeframe, source, since=since, until=until)
+            rows = (await session.execute(stmt)).scalars().all()
+            times: set[str] = set()
+            for row in rows:
+                time_value = candle_open_time_from_document(_row_to_document(row))
+                if time_value:
+                    times.add(time_value)
+            return times
 
     async def count_candles(
         self,
@@ -248,7 +341,10 @@ class MarketDataRepository:
         timeframe: str,
         source: str,
     ) -> int:
-        handle = await get_db()
-        return await handle.db[self.COLLECTION].count_documents(
-            meta_query_filter(symbol, timeframe, source),
-        )
+        async with session_scope() as session:
+            stmt = select(func.count()).select_from(MarketCandle).where(
+                MarketCandle.symbol == symbol,
+                MarketCandle.timeframe == timeframe,
+                MarketCandle.source == source,
+            )
+            return int((await session.execute(stmt)).scalar_one())

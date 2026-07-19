@@ -21,7 +21,7 @@ def _coerce_utc(value: datetime | str | None) -> datetime | None:
 
 
 def normalize_candle_time(value: datetime | str | None) -> datetime | None:
-    """Return a UTC naive datetime suitable for MongoDB candle-time keys."""
+    """Return a UTC naive datetime suitable for candle-time keys."""
     coerced = _coerce_utc(value)
     if coerced is None:
         return None

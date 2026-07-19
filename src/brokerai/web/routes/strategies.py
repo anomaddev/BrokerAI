@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from brokerai.config_backup.change_labels import describe_strategy_update
 from brokerai.config_backup.hooks import auto_backup_before
+from brokerai.db.repositories.backtest_runs import BacktestRunsRepository
 from brokerai.db.repositories.strategies import StrategiesRepository, clean_instrument_selection
+from brokerai.db.repositories.strategy_versions import StrategyVersionsRepository
 from brokerai.strategies.params import ParamsValidationError
 from brokerai.strategies.registry import get_preset, list_presets, serialize_preset
 from brokerai.web.routes.auth import require_auth
@@ -18,7 +20,7 @@ router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
 class CreateStrategyBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    description: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=2000)
     preset_id: str = Field(min_length=1, max_length=64)
     params: dict[str, Any] = Field(default_factory=dict)
     instrument_selection: dict[str, list[str]] = Field(default_factory=dict)
@@ -27,10 +29,14 @@ class CreateStrategyBody(BaseModel):
 
 class UpdateStrategyBody(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    description: str | None = Field(default=None, max_length=160)
+    description: str | None = Field(default=None, max_length=2000)
     params: dict[str, Any] | None = None
     instrument_selection: dict[str, list[str]] | None = None
     enabled: bool | None = None
+
+
+class QueueBacktestBody(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=200)
 
 
 @router.get("/presets")
@@ -43,6 +49,65 @@ async def list_strategy_presets(_username: str = Depends(require_auth)) -> JSONR
 async def list_strategies(_username: str = Depends(require_auth)) -> JSONResponse:
     repo = StrategiesRepository()
     return JSONResponse({"strategies": await repo.list_all()})
+
+
+@router.post("/backtest")
+async def queue_strategy_backtests(
+    body: QueueBacktestBody,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    ids = [strategy_id.strip() for strategy_id in body.ids if strategy_id and strategy_id.strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Select at least one strategy")
+
+    repo = StrategiesRepository()
+    strategies = await repo.queue_backtests(ids)
+    if not strategies:
+        raise HTTPException(status_code=404, detail="No matching strategies found")
+
+    runs_repo = BacktestRunsRepository()
+    runs = await runs_repo.create_queued_runs(strategies)
+    return JSONResponse({"strategies": strategies, "queued": len(strategies), "runs": runs})
+
+
+@router.get("/{strategy_id}/versions")
+async def list_strategy_versions(
+    strategy_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    strategies = StrategiesRepository()
+    if not await strategies.get_by_id(strategy_id):
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    versions, total = await StrategyVersionsRepository().list_for_strategy(
+        strategy_id,
+        limit=limit,
+        offset=offset,
+    )
+    return JSONResponse(
+        {
+            "versions": versions,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
+
+
+@router.get("/{strategy_id}/versions/{version_id}")
+async def get_strategy_version(
+    strategy_id: str,
+    version_id: str,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    strategies = StrategiesRepository()
+    if not await strategies.get_by_id(strategy_id):
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    version = await StrategyVersionsRepository().get_by_id(strategy_id, version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Strategy version not found")
+    return JSONResponse(version)
 
 
 @router.get("/{strategy_id}")

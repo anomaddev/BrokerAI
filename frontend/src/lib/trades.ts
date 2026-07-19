@@ -401,18 +401,18 @@ export function reconciliationBannerClassName(
 export function reconciliationBannerText(
   reconciliation: {
     configured: boolean;
-    mongo_open_count: number;
+    ledger_open_count: number;
     broker_open_count: number;
     status: "matched" | "mismatch" | "unconfigured";
   },
 ): string {
   if (!reconciliation.configured) {
-    return `Ledger: ${reconciliation.mongo_open_count} open trade(s). Connect OANDA to reconcile with your broker.`;
+    return `Ledger: ${reconciliation.ledger_open_count} open trade(s). Connect OANDA to reconcile with your broker.`;
   }
   if (reconciliation.status === "matched") {
-    return `Ledger and OANDA agree: ${reconciliation.mongo_open_count} open trade(s).`;
+    return `Ledger and OANDA agree: ${reconciliation.ledger_open_count} open trade(s).`;
   }
-  return `Reconciliation mismatch — BrokerAI ledger: ${reconciliation.mongo_open_count}, OANDA broker: ${reconciliation.broker_open_count}.`;
+  return `Reconciliation mismatch — BrokerAI ledger: ${reconciliation.ledger_open_count}, OANDA broker: ${reconciliation.broker_open_count}.`;
 }
 
 export function tradeExitPrice(trade: Trade): number | null | undefined {

@@ -48,6 +48,7 @@ export default function StrategyEditPage() {
       <EmaCrossoverBuilder
         {...commonProps}
         initialParams={v1ToEmaCrossoverParams(strategy.params)}
+        initialParamsV1={strategy.params}
       />
     );
   }
@@ -57,6 +58,7 @@ export default function StrategyEditPage() {
       <CustomBuilder
         {...commonProps}
         initialParams={v1ToCustomBuilderParams(strategy.params)}
+        initialParamsV1={strategy.params}
       />
     );
   }

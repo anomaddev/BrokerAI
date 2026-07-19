@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from brokerai.db.client import get_db
+from sqlalchemy import func, or_, select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import CostLedgerRow
 
 
 def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
@@ -32,6 +35,13 @@ def _normalize_when(when: datetime) -> datetime:
     return when.astimezone(timezone.utc)
 
 
+def _billable_clause(billable_only: bool):
+    if not billable_only:
+        return None
+    billable = CostLedgerRow.doc["metadata"]["billable"].as_string()
+    return or_(billable.is_(None), billable != "false")
+
+
 class CostLedgerRepository:
     COLLECTION = "cost_ledger"
 
@@ -53,10 +63,19 @@ class CostLedgerRepository:
             "description": description.strip(),
             "source": source,
             "metadata": metadata or {},
-            "occurred_at": when,
+            # JSONB cannot store datetime objects — keep ISO string in doc.
+            "occurred_at": when.isoformat(),
         }
-        handle = await get_db()
-        await handle.db[self.COLLECTION].insert_one(doc)
+        async with session_scope() as session:
+            session.add(
+                CostLedgerRow(
+                    id=doc["id"],
+                    category=category,
+                    amount_usd=float(amount_usd or 0),
+                    occurred_at=when,
+                    doc=doc,
+                )
+            )
         return _serialize(doc)
 
     async def list_recent(
@@ -66,23 +85,16 @@ class CostLedgerRepository:
         limit: int = 50,
         before: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        handle = await get_db()
-        query: dict[str, Any] = {}
-        if category:
-            query["category"] = category
-        if before is not None:
-            when = _normalize_when(before)
-            query["occurred_at"] = {"$lt": when}
-
-        safe_limit = max(1, min(limit, 200))
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find(query, {"_id": 0})
-            .sort("occurred_at", -1)
-            .limit(safe_limit)
-        )
-        rows = await cursor.to_list(length=safe_limit)
-        return [_serialize(row) for row in rows]
+        async with session_scope() as session:
+            stmt = select(CostLedgerRow)
+            if category:
+                stmt = stmt.where(CostLedgerRow.category == category)
+            if before is not None:
+                stmt = stmt.where(CostLedgerRow.occurred_at < _normalize_when(before))
+            safe_limit = max(1, min(limit, 200))
+            stmt = stmt.order_by(CostLedgerRow.occurred_at.desc()).limit(safe_limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_serialize(dict(row.doc)) for row in rows]
 
     async def summarize(
         self,
@@ -93,43 +105,29 @@ class CostLedgerRepository:
         billable_only: bool = True,
     ) -> dict[str, Any]:
         """Aggregate cost totals by category within an optional time window."""
-        handle = await get_db()
-        match: dict[str, Any] = {}
-        if category:
-            match["category"] = category
-        if billable_only:
-            match["metadata.billable"] = {"$ne": False}
+        async with session_scope() as session:
+            stmt = select(
+                CostLedgerRow.category,
+                func.coalesce(func.sum(CostLedgerRow.amount_usd), 0).label("amount_usd"),
+                func.count().label("count"),
+            )
+            if category:
+                stmt = stmt.where(CostLedgerRow.category == category)
+            if since is not None:
+                stmt = stmt.where(CostLedgerRow.occurred_at >= _normalize_when(since))
+            if until is not None:
+                stmt = stmt.where(CostLedgerRow.occurred_at <= _normalize_when(until))
+            billable = _billable_clause(billable_only)
+            if billable is not None:
+                stmt = stmt.where(billable)
+            stmt = stmt.group_by(CostLedgerRow.category).order_by(CostLedgerRow.category)
+            rows = (await session.execute(stmt)).all()
 
-        occurred_at: dict[str, Any] = {}
-        if since is not None:
-            occurred_at["$gte"] = _normalize_when(since)
-        if until is not None:
-            occurred_at["$lte"] = _normalize_when(until)
-        if occurred_at:
-            match["occurred_at"] = occurred_at
-
-        pipeline: list[dict[str, Any]] = []
-        if match:
-            pipeline.append({"$match": match})
-        pipeline.extend(
-            [
-                {
-                    "$group": {
-                        "_id": "$category",
-                        "amount_usd": {"$sum": {"$ifNull": ["$amount_usd", 0]}},
-                        "count": {"$sum": 1},
-                    }
-                },
-                {"$sort": {"_id": 1}},
-            ]
-        )
-
-        rows = await handle.db[self.COLLECTION].aggregate(pipeline).to_list(length=100)
         totals = [
             {
-                "category": row["_id"],
-                "amount_usd": round(float(row.get("amount_usd") or 0), 6),
-                "count": int(row.get("count") or 0),
+                "category": row.category,
+                "amount_usd": round(float(row.amount_usd or 0), 6),
+                "count": int(row.count or 0),
             }
             for row in rows
         ]

@@ -144,7 +144,7 @@ async def preview_next_candle_watch(
 ) -> dict[str, Any]:
     """Return symbols the secretary will analyze on the next candle close.
 
-    Results are cached for ~60s to avoid repeated MongoDB reads on dashboard polls.
+    Results are cached for ~60s to avoid repeated Postgres reads on dashboard polls.
 
     Edge cases:
     - No runnable strategies → ``symbols`` is empty with ``skip_reason`` when known.

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import NumberInput from "./NumberInput";
 
 type LiveSliderProps = {
@@ -12,6 +13,8 @@ type LiveSliderProps = {
   formatValue?: (value: number) => string;
   invalid?: boolean;
   readOnly?: boolean;
+  /** Optional helper control shown next to the label. */
+  labelHelp?: ReactNode;
   onChange: (value: number) => void;
 };
 
@@ -27,17 +30,37 @@ export default function LiveSlider({
   formatValue,
   invalid,
   readOnly,
+  labelHelp,
   onChange,
 }: LiveSliderProps) {
   const display = formatValue
     ? `${formatValue(value)}${suffix ?? ""}`
     : `${value}${unit ? ` ${unit}` : ""}${suffix ?? ""}`;
 
+  const labelNode = labelHelp ? (
+    <div className="param-control-label-with-help">
+      {readOnly ? (
+        <span className="param-control-label">{label}</span>
+      ) : (
+        <label htmlFor={id} className="param-control-label">
+          {label}
+        </label>
+      )}
+      {labelHelp}
+    </div>
+  ) : readOnly ? (
+    <span className="param-control-label">{label}</span>
+  ) : (
+    <label htmlFor={id} className="param-control-label">
+      {label}
+    </label>
+  );
+
   if (readOnly) {
     return (
       <div className="param-control param-control--readonly">
         <div className="param-control-label-row">
-          <span className="param-control-label">{label}</span>
+          {labelNode}
           <span className="param-control-value">{display}</span>
         </div>
       </div>
@@ -47,9 +70,7 @@ export default function LiveSlider({
   return (
     <div className="param-control">
       <div className="param-control-label-row">
-        <label htmlFor={id} className="param-control-label">
-          {label}
-        </label>
+        {labelNode}
         <div className="param-control-value-row">
           <NumberInput
             id={id}

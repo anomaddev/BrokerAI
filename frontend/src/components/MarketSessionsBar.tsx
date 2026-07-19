@@ -86,9 +86,10 @@ function useHoverTooltipCoords<T extends HTMLElement>() {
 
 type InactiveIndicatorsTriggerProps = {
   entries: InactiveIndicatorEntry[];
+  allClosed?: boolean;
 };
 
-function InactiveIndicatorsTrigger({ entries }: InactiveIndicatorsTriggerProps) {
+function InactiveIndicatorsTrigger({ entries, allClosed = false }: InactiveIndicatorsTriggerProps) {
   const { ref, hovered, setHovered, coords } = useHoverTooltipCoords<HTMLButtonElement>();
 
   const tooltipNode =
@@ -125,13 +126,18 @@ function InactiveIndicatorsTrigger({ entries }: InactiveIndicatorsTriggerProps) 
         type="button"
         className="market-sessions-inactive-trigger"
         ref={ref}
-        aria-label={`${entries.length} inactive market indicators`}
+        aria-label={allClosed ? "All Markets Closed" : `${entries.length} inactive market indicators`}
         aria-describedby={hovered ? "market-sessions-inactive-tip" : undefined}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onFocus={() => setHovered(true)}
         onBlur={() => setHovered(false)}
-      />
+      >
+        <span className="market-sessions-inactive-dot" aria-hidden="true" />
+        {allClosed ? (
+          <span className="market-sessions-inactive-label">All Markets Closed</span>
+        ) : null}
+      </button>
       {tooltipNode}
     </>
   );
@@ -442,10 +448,13 @@ export default function MarketSessionsBar() {
     return null;
   }
 
+  const allMarketsClosed =
+    activeSessions.length === 0 && activeAssetClasses.length === 0 && inactiveEntries.length > 0;
+
   return (
     <div className="market-sessions-bar" aria-label="Trading session status">
       {inactiveEntries.length > 0 ? (
-        <InactiveIndicatorsTrigger entries={inactiveEntries} />
+        <InactiveIndicatorsTrigger entries={inactiveEntries} allClosed={allMarketsClosed} />
       ) : null}
       {activeSessions.map((session) => (
         <SessionPill

@@ -3,8 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from brokerai.db.client import get_db
+from sqlalchemy import delete, select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import ExchangeConnectionRow
 from brokerai.db.repositories.ai_models import mask_api_key
+from brokerai.integrations.oanda_client import normalize_access_token
 
 OANDA_ID = "oanda"
 
@@ -18,12 +22,10 @@ class ExchangeConnectionsRepository:
 
     async def get_connection(self, exchange_id: str) -> dict[str, Any]:
         """Return stored credentials for *exchange_id* (empty defaults when missing)."""
-        handle = await get_db()
-        doc = await handle.db[self.COLLECTION].find_one(
-            {"exchange_id": exchange_id}, {"_id": 0}
-        )
-        if doc:
-            return doc
+        async with session_scope() as session:
+            row = await session.get(ExchangeConnectionRow, exchange_id)
+            if row:
+                return dict(row.doc)
         if exchange_id == OANDA_ID:
             return {
                 "exchange_id": OANDA_ID,
@@ -36,18 +38,25 @@ class ExchangeConnectionsRepository:
     async def save_connection(self, exchange_id: str, **fields: Any) -> dict[str, Any]:
         """Upsert connection fields for *exchange_id*."""
         doc = {"exchange_id": exchange_id, "updated_at": _now_iso(), **fields}
-        handle = await get_db()
-        await handle.db[self.COLLECTION].update_one(
-            {"exchange_id": exchange_id},
-            {"$set": doc},
-            upsert=True,
-        )
+        async with session_scope() as session:
+            row = await session.get(ExchangeConnectionRow, exchange_id)
+            if row is None:
+                session.add(ExchangeConnectionRow(exchange_id=exchange_id, doc=doc))
+            else:
+                merged = dict(row.doc)
+                merged.update(doc)
+                row.doc = merged
+                doc = merged
         return doc
 
     async def delete_connection(self, exchange_id: str) -> bool:
-        handle = await get_db()
-        result = await handle.db[self.COLLECTION].delete_one({"exchange_id": exchange_id})
-        return result.deleted_count > 0
+        async with session_scope() as session:
+            result = await session.execute(
+                delete(ExchangeConnectionRow).where(
+                    ExchangeConnectionRow.exchange_id == exchange_id
+                )
+            )
+            return bool(result.rowcount)
 
     async def get_oanda(self) -> dict[str, Any]:
         return await self.get_connection(OANDA_ID)
@@ -61,7 +70,7 @@ class ExchangeConnectionsRepository:
     ) -> dict[str, Any]:
         return await self.save_connection(
             OANDA_ID,
-            access_token=access_token.strip(),
+            access_token=normalize_access_token(access_token),
             environment=environment,
             account_id=account_id or None,
         )

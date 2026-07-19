@@ -198,7 +198,7 @@ async def test_secretary_run_startup_pass_dispatches_jobs():
 
 @pytest.mark.asyncio
 async def test_pipeline_runs_analysis_when_cache_stale_at_close():
-    """Do not skip analysis when MongoDB is behind the expected latest closed bar."""
+    """Do not skip analysis when the candle cache is behind the expected latest closed bar."""
     strategy = _sample_strategy()
     trigger = datetime(2026, 7, 6, 18, 45, 4, tzinfo=timezone.utc)
     job = CandleJob(

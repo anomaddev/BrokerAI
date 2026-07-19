@@ -6,6 +6,7 @@ type ParameterCardProps = {
   required?: boolean;
   expanded: boolean;
   onToggle: () => void;
+  className?: string;
   children: React.ReactNode;
 };
 
@@ -15,10 +16,19 @@ export default function ParameterCard({
   required = false,
   expanded,
   onToggle,
+  className,
   children,
 }: ParameterCardProps) {
+  const classes = [
+    "parameter-card",
+    expanded ? "parameter-card--expanded" : "",
+    className ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <section className={`parameter-card${expanded ? " parameter-card--expanded" : ""}`}>
+    <section className={classes}>
       <button
         type="button"
         className="parameter-card-header"

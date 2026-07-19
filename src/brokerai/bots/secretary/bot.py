@@ -135,7 +135,7 @@ class SecretaryBot(Bot):
                 today = now.date().isoformat()
                 daily_done = (
                     settings.get("last_daily_run_date") == today
-                    or daily_report_exists(today)
+                    or await daily_report_exists(today)
                 )
                 if not daily_done:
                     await pool.run(

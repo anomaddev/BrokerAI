@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import {
   api,
+  type DomainSettingsConfig,
   type UpdateSettingsConfig,
   type UpdateStatusResponse,
 } from "../api/client";
@@ -933,6 +934,144 @@ function PowerCard() {
   );
 }
 
+function DomainCard() {
+  const [config, setConfig] = useState<DomainSettingsConfig | null>(null);
+  const [domain, setDomain] = useState("");
+  const [supabaseDomain, setSupabaseDomain] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getDomainSettings()
+      .then((data) => {
+        if (cancelled) return;
+        setConfig(data);
+        setDomain(data.domain || "");
+        setSupabaseDomain(data.supabase_domain || "");
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load domain settings");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleApply() {
+    setApplying(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const saved = await api.applyDomainSettings({
+        domain: domain.trim(),
+        supabase_domain: supabaseDomain.trim(),
+      });
+      setConfig(saved);
+      setDomain(saved.domain || "");
+      setSupabaseDomain(saved.supabase_domain || "");
+      setMessage(saved.message || "Domain settings applied.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to apply domain settings");
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  const canApply = Boolean(domain.trim()) && !applying && !loading;
+
+  return (
+    <div className="card">
+      <h3>Public domains (HTTPS)</h3>
+      <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: "0.75rem" }}>
+        Set hostnames after DNS A/AAAA records point at this host and ports 80/443 are open.
+        Apply installs host Caddy (Let&apos;s Encrypt) for BrokerAI and optionally public
+        Supabase (Kong + Studio with basic auth).
+      </p>
+      {loading ? (
+        <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>Loading…</p>
+      ) : (
+        <>
+          {config?.dev_mode ? (
+            <p className="update-dev-note">
+              Local/dev saves the hostnames to {config.config_path} only — Caddy TLS is applied
+              on Proxmox/LXC installs.
+            </p>
+          ) : null}
+          {!config?.apply_available && !config?.dev_mode ? (
+            <p className="update-readonly-note">
+              Domain apply is unavailable on this host (missing apply script or sudo). Edit{" "}
+              {config?.config_path ?? "/etc/brokerai/config.env"} and run the Caddy install helper
+              instead.
+            </p>
+          ) : null}
+          <div className="update-config-form">
+            <div className="field">
+              <label htmlFor="brokerai-domain">BrokerAI hostname</label>
+              <input
+                id="brokerai-domain"
+                type="text"
+                value={domain}
+                placeholder="broker.example.com"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={applying || (!config?.apply_available && !config?.dev_mode)}
+                onChange={(e) => setDomain(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="supabase-domain">Supabase hostname (optional)</label>
+              <input
+                id="supabase-domain"
+                type="text"
+                value={supabaseDomain}
+                placeholder="supabase.example.com"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={applying || (!config?.apply_available && !config?.dev_mode)}
+                onChange={(e) => setSupabaseDomain(e.target.value)}
+              />
+            </div>
+            {config?.supabase_url ? (
+              <p className="update-readonly-note" style={{ marginBottom: 0 }}>
+                Current Kong URL: <code>{config.supabase_url}</code>
+              </p>
+            ) : null}
+          </div>
+          {error ? (
+            <div className="update-alert update-alert--error" role="alert">
+              {error}
+            </div>
+          ) : null}
+          {message ? (
+            <div className="update-alert update-alert--success" role="status">
+              {message}
+            </div>
+          ) : null}
+          <div className="update-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!canApply || (!config?.apply_available && !config?.dev_mode)}
+              onClick={() => void handleApply()}
+            >
+              {applying ? "Applying…" : "Apply HTTPS domains"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SystemTab() {
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [bots, setBots] = useState<BotStatus[]>([]);
@@ -944,22 +1083,22 @@ function SystemTab() {
     api.dbStats().then(setDb).catch(() => setDb(null));
   }, []);
 
-  const mongo = health?.mongodb as { status?: string } | undefined;
+  const postgres = health?.postgres as { status?: string } | undefined;
   const sortedBots = sortBots(bots);
 
   return (
     <div className="settings-panel">
       <SettingsPanelHeader
         title="System"
-        description="Health, database status, software updates, and power controls."
+        description="Health, database status, public domains, software updates, and power controls."
       />
       <div className="settings-panel-body settings-panel-body--stack">
       <div className="card">
         <h3>System Status</h3>
         <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
           Version: {String(health?.version ?? "—")} · Orchestrator:{" "}
-          {health?.orchestrator_running ? "running" : "offline"} · MongoDB:{" "}
-          {mongo?.status ?? "unknown"}
+          {health?.orchestrator_running ? "running" : "offline"} · Postgres:{" "}
+          {postgres?.status ?? "unknown"}
         </p>
         <div className="system-status-bots">
           {sortedBots.length === 0 ? (
@@ -975,23 +1114,26 @@ function SystemTab() {
         </div>
       </div>
       <div className="card">
-        <h3>MongoDB</h3>
+        <h3>Postgres</h3>
         <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
           Database: {String(db?.database ?? "—")}
+          {typeof db?.uri === "string" && db.uri ? ` · ${db.uri}` : ""}
         </p>
-        {db?.collections && (
+        {db?.tables && (
           <ul style={{ marginTop: "0.5rem", paddingLeft: "1.25rem", color: "var(--muted)" }}>
-            {Object.entries(db.collections as Record<string, number>).map(([k, v]) => (
+            {Object.entries(db.tables as Record<string, number>).map(([k, v]) => (
               <li key={k}>
-                {k}: {v} documents
+                {k}: {v} rows
               </li>
             ))}
           </ul>
         )}
         <p style={{ marginTop: "0.75rem", fontSize: "0.8rem", color: "var(--muted)" }}>
-          Browse via MongoDB Compass: SSH tunnel port 27017 to the container.
+          Self-hosted Supabase Postgres (schema <code>brokerai</code>). Studio:{" "}
+          <code>http://127.0.0.1:3000</code> (or your public Supabase hostname when configured).
         </p>
       </div>
+      <DomainCard />
       <UpdatesCard />
       <PowerCard />
       </div>

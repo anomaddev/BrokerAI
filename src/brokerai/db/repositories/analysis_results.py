@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from brokerai.db.client import get_db
+from sqlalchemy import select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import AnalysisResultRow
 
 
 class AnalysisResultsRepository:
@@ -17,23 +20,26 @@ class AnalysisResultsRepository:
         *,
         score: float | None = None,
     ) -> None:
-        handle = await get_db()
-        await handle.db[self.COLLECTION].insert_one(
-            {
-                "symbol": symbol,
-                "analysis_type": analysis_type,
-                "score": score,
-                "payload": payload,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
+        created_at = datetime.now(timezone.utc)
+        doc = {
+            "symbol": symbol,
+            "analysis_type": analysis_type,
+            "score": score,
+            "payload": payload,
+            "created_at": created_at,
+        }
+        async with session_scope() as session:
+            session.add(
+                AnalysisResultRow(symbol=symbol, created_at=created_at, doc=doc)
+            )
 
     async def find_recent(self, symbol: str, limit: int = 10) -> list[dict[str, Any]]:
-        handle = await get_db()
-        cursor = (
-            handle.db[self.COLLECTION]
-            .find({"symbol": symbol}, {"_id": 0})
-            .sort("created_at", -1)
-            .limit(limit)
-        )
-        return await cursor.to_list(length=limit)
+        async with session_scope() as session:
+            stmt = (
+                select(AnalysisResultRow)
+                .where(AnalysisResultRow.symbol == symbol)
+                .order_by(AnalysisResultRow.created_at.desc())
+                .limit(limit)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [dict(row.doc) for row in rows]

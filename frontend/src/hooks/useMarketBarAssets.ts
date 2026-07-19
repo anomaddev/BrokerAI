@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { ASSET_CLASS_STATUSES_UPDATED } from "../lib/assetClassStatus";
 import { CONFIG_RESTORED } from "../lib/configBackup";
 import {
   EMPTY_MARKET_BAR_ASSET_CONTEXT,
@@ -40,11 +41,13 @@ export function useMarketBarAssets(): MarketBarAssetContext {
     }
 
     void load();
+    window.addEventListener(ASSET_CLASS_STATUSES_UPDATED, load);
     window.addEventListener(FOREX_TRADING_SESSIONS_UPDATED, load);
     window.addEventListener(CONFIG_RESTORED, load);
 
     return () => {
       cancelled = true;
+      window.removeEventListener(ASSET_CLASS_STATUSES_UPDATED, load);
       window.removeEventListener(FOREX_TRADING_SESSIONS_UPDATED, load);
       window.removeEventListener(CONFIG_RESTORED, load);
     };

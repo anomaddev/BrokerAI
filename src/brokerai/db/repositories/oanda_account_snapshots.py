@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from brokerai.db.client import get_db
+from sqlalchemy import select
+
+from brokerai.db.pg.client import session_scope
+from brokerai.db.pg.models import OandaAccountSummaryRow, OandaAccountsSnapshotRow
 from brokerai.db.repositories.exchange_connections import OANDA_ID
 
 SUMMARY_FIELDS = (
@@ -37,7 +40,6 @@ class OandaAccountSnapshotsRepository:
         synced_at: datetime | None = None,
     ) -> None:
         """Store the latest accessible OANDA account list for *exchange_id*."""
-        handle = await get_db()
         now = synced_at or datetime.now(timezone.utc)
         doc = {
             "exchange_id": exchange_id,
@@ -46,19 +48,21 @@ class OandaAccountSnapshotsRepository:
             "synced_at": now,
             "updated_at": now,
         }
-        await handle.db[self.ACCOUNTS_COLLECTION].update_one(
-            {"exchange_id": exchange_id},
-            {"$set": doc, "$setOnInsert": {"created_at": now}},
-            upsert=True,
-        )
+        async with session_scope() as session:
+            row = await session.get(OandaAccountsSnapshotRow, exchange_id)
+            if row is None:
+                doc["created_at"] = now
+                session.add(OandaAccountsSnapshotRow(exchange_id=exchange_id, doc=doc))
+            else:
+                existing = dict(row.doc)
+                doc["created_at"] = existing.get("created_at", now)
+                row.doc = doc
 
     async def get_latest_accounts(self, *, exchange_id: str = OANDA_ID) -> dict[str, Any] | None:
         """Return the most recently synced OANDA account list document."""
-        handle = await get_db()
-        return await handle.db[self.ACCOUNTS_COLLECTION].find_one(
-            {"exchange_id": exchange_id},
-            {"_id": 0},
-        )
+        async with session_scope() as session:
+            row = await session.get(OandaAccountsSnapshotRow, exchange_id)
+            return dict(row.doc) if row else None
 
     async def insert_summary_snapshot(
         self,
@@ -70,7 +74,6 @@ class OandaAccountSnapshotsRepository:
         synced_at: datetime | None = None,
     ) -> None:
         """Append one account summary snapshot for charting over time."""
-        handle = await get_db()
         now = synced_at or datetime.now(timezone.utc)
         doc: dict[str, Any] = {
             "exchange_id": exchange_id,
@@ -81,7 +84,15 @@ class OandaAccountSnapshotsRepository:
         for field in SUMMARY_FIELDS:
             if field in summary:
                 doc[field] = summary[field]
-        await handle.db[self.SUMMARIES_COLLECTION].insert_one(doc)
+        async with session_scope() as session:
+            session.add(
+                OandaAccountSummaryRow(
+                    exchange_id=exchange_id,
+                    account_id=account_id,
+                    synced_at=now,
+                    doc=doc,
+                )
+            )
 
     async def get_latest_summary(
         self,
@@ -90,12 +101,18 @@ class OandaAccountSnapshotsRepository:
         account_id: str,
     ) -> dict[str, Any] | None:
         """Return the newest summary snapshot for *account_id*."""
-        handle = await get_db()
-        return await handle.db[self.SUMMARIES_COLLECTION].find_one(
-            {"exchange_id": exchange_id, "account_id": account_id},
-            {"_id": 0},
-            sort=[("synced_at", -1)],
-        )
+        async with session_scope() as session:
+            stmt = (
+                select(OandaAccountSummaryRow)
+                .where(
+                    OandaAccountSummaryRow.exchange_id == exchange_id,
+                    OandaAccountSummaryRow.account_id == account_id,
+                )
+                .order_by(OandaAccountSummaryRow.synced_at.desc())
+                .limit(1)
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return dict(row.doc) if row else None
 
     async def list_summary_history(
         self,
@@ -107,26 +124,20 @@ class OandaAccountSnapshotsRepository:
         limit: int = 2000,
     ) -> list[dict[str, Any]]:
         """Return summary snapshots oldest-first for charting."""
-        handle = await get_db()
-        query: dict[str, Any] = {
-            "exchange_id": exchange_id,
-            "account_id": account_id,
-        }
-        synced_at: dict[str, Any] = {}
-        if since is not None:
-            synced_at["$gte"] = since
-        if until is not None:
-            synced_at["$lte"] = until
-        if synced_at:
-            query["synced_at"] = synced_at
-
-        cursor = (
-            handle.db[self.SUMMARIES_COLLECTION]
-            .find(query, {"_id": 0})
-            .sort("synced_at", 1)
-            .limit(max(1, min(limit, 10_000)))
-        )
-        return await cursor.to_list(length=limit)
+        async with session_scope() as session:
+            stmt = select(OandaAccountSummaryRow).where(
+                OandaAccountSummaryRow.exchange_id == exchange_id,
+                OandaAccountSummaryRow.account_id == account_id,
+            )
+            if since is not None:
+                stmt = stmt.where(OandaAccountSummaryRow.synced_at >= since)
+            if until is not None:
+                stmt = stmt.where(OandaAccountSummaryRow.synced_at <= until)
+            stmt = stmt.order_by(OandaAccountSummaryRow.synced_at.asc()).limit(
+                max(1, min(limit, 10_000))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [dict(row.doc) for row in rows]
 
     @staticmethod
     def public_summary(doc: dict[str, Any]) -> dict[str, Any]:
