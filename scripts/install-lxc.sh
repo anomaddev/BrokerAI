@@ -167,9 +167,10 @@ if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
 fi
 msg_ok "Configured BrokerAI"
 
-msg_info "Starting self-hosted Supabase"
+msg_info "Starting self-hosted Supabase (docker pull can take 10–30+ minutes; progress below)"
 # setup-supabase.sh appends BROKERAI_DATABASE_URL to repo .env; also merge into production config.
 # Pass public domains so GoTrue SITE_URL / SUPABASE_PUBLIC_URL match host Caddy when set.
+# Keep this unsilenced — a quiet pull looks like a hang.
 ENV_FILE="${BROKERAI_INSTALL_DIR}/.env" \
   BROKERAI_DOMAIN="${BROKERAI_DOMAIN:-}" \
   BROKERAI_SUPABASE_DOMAIN="${BROKERAI_SUPABASE_DOMAIN:-}" \

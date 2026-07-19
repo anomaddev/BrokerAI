@@ -1,0 +1,24 @@
+# BrokerAI override: expose Kong, Studio, and Postgres on loopback only.
+# Upstream supavisor (pooler) publishes ${POSTGRES_PORT}:5432, which collides
+# with db:5432 below. Keep only the transaction port on the host — BrokerAI
+# talks to Postgres on 5432 directly.
+# Usage is wired via COMPOSE_FILE in .env (see scripts/setup-supabase.sh).
+
+services:
+  kong:
+    ports:
+      - "127.0.0.1:${KONG_HTTP_PORT:-8000}:8000"
+      - "127.0.0.1:${KONG_HTTPS_PORT:-8443}:8443"
+
+  studio:
+    ports:
+      - "127.0.0.1:${STUDIO_PORT:-3000}:3000"
+
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # Service key in docker-compose.yml is "supavisor" (container supabase-pooler).
+  supavisor:
+    ports: !override
+      - "127.0.0.1:${POOLER_PROXY_PORT_TRANSACTION:-6543}:6543"

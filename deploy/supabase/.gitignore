@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+volumes/db/data/
+volumes/storage/
+volumes/functions/
+!volumes/functions/.gitkeep
+volumes/logs/
+volumes/db/data/**
+*.log

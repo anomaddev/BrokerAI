@@ -65,6 +65,10 @@ _brokerai_valid_password() {
   return 0
 }
 
+_brokerai_can_prompt() {
+  command -v whiptail >/dev/null 2>&1 && [[ -t 0 ]] && [[ "${TERM:-}" != "dumb" ]]
+}
+
 prompt_brokerai_admin() {
   if [[ -n "${BROKERAI_ADMIN_USER}" && -n "${BROKERAI_ADMIN_PASSWORD}" ]]; then
     if ! _brokerai_valid_username "${BROKERAI_ADMIN_USER}"; then
@@ -78,7 +82,7 @@ prompt_brokerai_admin() {
     return 0
   fi
 
-  if ! command -v whiptail >/dev/null 2>&1; then
+  if ! _brokerai_can_prompt; then
     return 0
   fi
 
@@ -132,7 +136,7 @@ prompt_brokerai_domain() {
     return 0
   fi
 
-  if ! command -v whiptail >/dev/null 2>&1; then
+  if ! _brokerai_can_prompt; then
     return 0
   fi
 
@@ -166,7 +170,7 @@ prompt_brokerai_supabase_domain() {
     return 0
   fi
 
-  if [[ -z "${BROKERAI_DOMAIN:-}" ]] || ! command -v whiptail >/dev/null 2>&1; then
+  if [[ -z "${BROKERAI_DOMAIN:-}" ]] || ! _brokerai_can_prompt; then
     return 0
   fi
 
@@ -245,13 +249,19 @@ ensure_brokerai_domain() {
   if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
     supabase_export="export BROKERAI_SUPABASE_DOMAIN=$(printf '%q' "${BROKERAI_SUPABASE_DOMAIN}")"
   fi
+  # Timeout so a stuck ACME handshake cannot hang the Proxmox installer.
   pct exec "$CTID" -- bash -c "
     set -euo pipefail
-    # shellcheck source=/dev/null
-    source /opt/brokerai/scripts/lib/install-common.sh
     export BROKERAI_DOMAIN=$(printf '%q' "${BROKERAI_DOMAIN}")
     ${supabase_export}
-    _brokerai_maybe_install_caddy_tls /opt/brokerai /etc/brokerai/config.env
+    if ! timeout 120 bash -c '
+      set -euo pipefail
+      # shellcheck source=/dev/null
+      source /opt/brokerai/scripts/lib/install-common.sh
+      _brokerai_maybe_install_caddy_tls /opt/brokerai /etc/brokerai/config.env
+    '; then
+      echo 'Caddy TLS timed out — finish later via Settings → System → Public domains' >&2
+    fi
     systemctl restart brokerai-web || true
   "
   if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then

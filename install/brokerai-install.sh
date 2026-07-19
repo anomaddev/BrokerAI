@@ -33,9 +33,34 @@ $STD apt-get install -y \
   openssh-server \
   gnupg \
   ca-certificates \
-  docker.io \
-  docker-compose-v2
+  docker.io
 $STD systemctl enable -q --now docker
+
+# Debian 13 has no docker-compose-v2 package (Ubuntu name). Prefer apt plugin
+# packages, then fall back to the official Compose CLI plugin binary.
+msg_info "Installing Docker Compose plugin"
+if docker compose version >/dev/null 2>&1; then
+  msg_ok "Docker Compose already available"
+elif $STD apt-get install -y docker-compose-plugin 2>/dev/null \
+  || $STD apt-get install -y docker-compose-v2 2>/dev/null \
+  || $STD apt-get install -y docker-compose 2>/dev/null; then
+  msg_ok "Docker Compose installed from apt"
+else
+  mkdir -p /usr/local/lib/docker/cli-plugins
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64 | amd64) arch="x86_64" ;;
+    aarch64 | arm64) arch="aarch64" ;;
+    *) msg_error "Unsupported architecture for Docker Compose: ${arch}" ;;
+  esac
+  curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
+    -o /usr/local/lib/docker/cli-plugins/docker-compose
+  chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+  msg_ok "Docker Compose plugin installed from GitHub"
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  msg_error "docker compose is required but not available after install"
+fi
 msg_ok "Installed Dependencies"
 
 msg_info "Installing Node.js"
@@ -73,7 +98,7 @@ $STD "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install -r requirements.txt
 $STD "${BROKERAI_INSTALL_DIR}/venv/bin/pip" install -e .
 msg_ok "Python environment ready"
 
-msg_info "Building frontend"
+msg_info "Building frontend (npm install + Vite — often 2–5 minutes)"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/build-frontend.sh"
 $STD "${BROKERAI_INSTALL_DIR}/scripts/build-frontend.sh"
 msg_ok "Frontend built"
@@ -93,11 +118,12 @@ if [[ -n "${BROKERAI_SUPABASE_DOMAIN:-}" ]]; then
 fi
 msg_ok "Configured BrokerAI"
 
-msg_info "Starting self-hosted Supabase"
+# Do NOT wrap Supabase in $STD — docker compose pull downloads multi-GB images and
+# looks like a hang when silenced. Keep pull/start progress visible in the console.
+msg_info "Starting self-hosted Supabase (docker pull can take 10–30+ minutes)"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/lib/install-supabase.sh"
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/setup-supabase.sh"
-# setup-supabase.sh appends BROKERAI_* keys to install-dir .env; merge into production config.
-$STD env ENV_FILE="${BROKERAI_INSTALL_DIR}/.env" \
+ENV_FILE="${BROKERAI_INSTALL_DIR}/.env" \
   BROKERAI_DOMAIN="${BROKERAI_DOMAIN:-}" \
   BROKERAI_SUPABASE_DOMAIN="${BROKERAI_SUPABASE_DOMAIN:-}" \
   bash "${BROKERAI_INSTALL_DIR}/scripts/lib/install-supabase.sh" "${BROKERAI_INSTALL_DIR}"
@@ -112,19 +138,42 @@ if [[ -f "${BROKERAI_INSTALL_DIR}/.env" ]]; then
     esac
   done <"${BROKERAI_INSTALL_DIR}/.env"
 fi
+msg_info "Waiting for Postgres then applying schema"
 (
   cd "${BROKERAI_INSTALL_DIR}"
   set -a
   # shellcheck disable=SC1091
   source "${BROKERAI_CONFIG_DIR}/config.env"
   set +a
-  $STD "${BROKERAI_INSTALL_DIR}/venv/bin/python" -c \
+  ready=0
+  for _i in $(seq 1 90); do
+    if docker exec supabase-db pg_isready -U postgres >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "${ready}" -ne 1 ]]; then
+    echo "Postgres did not become ready within 180s" >&2
+    docker ps -a --filter name=supabase || true
+    exit 1
+  fi
+  "${BROKERAI_INSTALL_DIR}/venv/bin/python" -c \
     "import asyncio; from brokerai.db.indexes import ensure_indexes; asyncio.run(ensure_indexes())"
 )
 msg_ok "Supabase + schema ready"
 
 msg_info "Configuring TLS (Caddy)"
-_brokerai_maybe_install_caddy_tls "${BROKERAI_INSTALL_DIR}" "${BROKERAI_CONFIG_DIR}/config.env"
+# ACME can retry when DNS is not ready; do not block the whole install forever.
+if ! timeout 120 bash -c "
+  # shellcheck disable=SC1091
+  source '${BROKERAI_INSTALL_DIR}/scripts/lib/install-common.sh'
+  export BROKERAI_DOMAIN='${BROKERAI_DOMAIN:-}'
+  export BROKERAI_SUPABASE_DOMAIN='${BROKERAI_SUPABASE_DOMAIN:-}'
+  _brokerai_maybe_install_caddy_tls '${BROKERAI_INSTALL_DIR}' '${BROKERAI_CONFIG_DIR}/config.env'
+"; then
+  echo "Caddy TLS step timed out or failed — finish later via Settings → System → Public domains" >&2
+fi
 msg_ok "TLS configuration done"
 
 BROKERAI_INSTALLED_COMMIT="$(git -C "${BROKERAI_INSTALL_DIR}" rev-parse HEAD)"

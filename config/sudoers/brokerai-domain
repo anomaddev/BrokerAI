@@ -1,0 +1,2 @@
+# Allow the web UI (brokerai user) to apply HTTPS domain / Caddy TLS without a password.
+brokerai ALL=(root) NOPASSWD: /opt/brokerai/scripts/apply-domain-tls.sh

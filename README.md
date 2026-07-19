@@ -262,6 +262,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/anomaddev/BrokerAI/main/
 
 Creates an unprivileged Debian LXC with Docker nesting, installs self-hosted Supabase (Postgres), optional Caddy TLS when you set a hostname, and enables daily Postgres backups.
 
+**Expect a long install:** the first Supabase `docker compose pull` often takes **10–30+ minutes** with little UI feedback on older builds (current installer shows pull progress). Prefer an interactive SSH/TTY session on the Proxmox host so you can see output.
+
 Optional env before running:
 
 ```bash

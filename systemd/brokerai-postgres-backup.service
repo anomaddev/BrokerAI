@@ -1,0 +1,13 @@
+[Unit]
+Description=BrokerAI Postgres backup (pg_dump)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/brokerai/config.env
+ExecStart=/opt/brokerai/scripts/backup-postgres.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
