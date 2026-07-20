@@ -48,6 +48,7 @@ from brokerai.web.routes.research_settings_route import router as research_setti
 from brokerai.web.routes.rss_feeds_settings import router as rss_feeds_router
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.backtest_runs import router as backtest_runs_router
+from brokerai.web.routes.backtest_settings import router as backtest_settings_router
 from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.strategy_analysis_runs import router as strategy_analysis_runs_router
 from brokerai.web.routes.trades import router as trades_router
@@ -137,6 +138,10 @@ async def _app_lifespan(_app: FastAPI):
         logger.warning("Postgres unavailable — startup DB init failed", exc_info=True)
     try:
         from brokerai.auth.supabase_auth import supabase_configured
+        from brokerai.auth.profile_photo import (
+            get_profile_photo_backend,
+            migrate_local_profile_photo_to_storage,
+        )
         from brokerai.bots.researcher.report_store import (
             get_report_store,
             migrate_local_reports_to_storage,
@@ -145,8 +150,10 @@ async def _app_lifespan(_app: FastAPI):
         if supabase_configured():
             await get_report_store().ensure()
             await migrate_local_reports_to_storage()
+            await get_profile_photo_backend().ensure()
+            await migrate_local_profile_photo_to_storage()
     except Exception:
-        logger.warning("Research reports Storage ensure/migrate failed", exc_info=True)
+        logger.warning("Supabase Storage ensure/migrate failed", exc_info=True)
     try:
         from brokerai.tasks.runner import reconcile_stale_active_task
 
@@ -155,9 +162,22 @@ async def _app_lifespan(_app: FastAPI):
         logger.warning("Background task reconciliation failed", exc_info=True)
     trade_sync_task = asyncio.create_task(_trade_sync_loop())
     backup_schedule_task = asyncio.create_task(_backup_schedule_loop())
+    backtest_coordinator = None
+    try:
+        from brokerai.backtesting.coordinator import get_backtest_coordinator
+
+        backtest_coordinator = get_backtest_coordinator()
+        await backtest_coordinator.start()
+    except Exception:
+        logger.warning("Backtest coordinator failed to start", exc_info=True)
     yield
     trade_sync_task.cancel()
     backup_schedule_task.cancel()
+    if backtest_coordinator is not None:
+        try:
+            await backtest_coordinator.stop()
+        except Exception:
+            logger.warning("Backtest coordinator stop failed", exc_info=True)
     await asyncio.gather(trade_sync_task, backup_schedule_task, return_exceptions=True)
     from brokerai.integrations.oanda_client import close_oanda_client
 
@@ -186,6 +206,7 @@ app.include_router(backups_settings_router)
 app.include_router(research_router)
 app.include_router(strategies_router)
 app.include_router(backtest_runs_router)
+app.include_router(backtest_settings_router)
 app.include_router(strategy_analysis_runs_router)
 app.include_router(trades_router)
 app.include_router(system_router)

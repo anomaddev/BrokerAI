@@ -1,8 +1,13 @@
 import type { BacktestRun } from "../../api/client";
 import { TIMEFRAME_LABELS, type Timeframe } from "../strategyParams";
-import { backtestRunStatusLabel, normalizeBacktestRunStatus } from "./backtestRunStatus";
+import {
+  backtestRunStatusLabel,
+  backtestRunStatusPriority,
+  normalizeBacktestRunStatus,
+} from "./backtestRunStatus";
 
 export type BacktestRunSortKey =
+  | "name"
   | "strategy"
   | "timeframe"
   | "assetClass"
@@ -12,6 +17,13 @@ export type BacktestRunSortKey =
   | "trades"
   | "winRate"
   | "pnl";
+
+/** Display label for the Name column (run name, falling back to strategy). */
+export function backtestRunNameLabel(run: BacktestRun): string {
+  const name = (run.name || "").trim();
+  if (name) return name;
+  return (run.strategy_name || "").trim() || "—";
+}
 
 export type SortDirection = "asc" | "desc";
 
@@ -43,6 +55,11 @@ export function compareBacktestRuns(
 ): number {
   let result = 0;
   switch (key) {
+    case "name":
+      result = backtestRunNameLabel(a).localeCompare(backtestRunNameLabel(b), undefined, {
+        sensitivity: "base",
+      });
+      break;
     case "strategy":
       result = a.strategy_name.localeCompare(b.strategy_name, undefined, { sensitivity: "base" });
       break;
@@ -89,5 +106,9 @@ export function sortBacktestRuns(
   key: BacktestRunSortKey,
   direction: SortDirection,
 ): BacktestRun[] {
-  return [...runs].sort((a, b) => compareBacktestRuns(a, b, key, direction));
+  return [...runs].sort((a, b) => {
+    const priority = backtestRunStatusPriority(a.status) - backtestRunStatusPriority(b.status);
+    if (priority !== 0) return priority;
+    return compareBacktestRuns(a, b, key, direction);
+  });
 }

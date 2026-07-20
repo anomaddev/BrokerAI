@@ -45,6 +45,7 @@ def test_auth_config_builtin(auth_client: TestClient):
         "mode": "builtin",
         "setup_complete": False,
         "mfa_available": False,
+        "supabase_configured": False,
     }
 
 

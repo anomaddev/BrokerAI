@@ -19,6 +19,15 @@ from brokerai.bots.secretary.activity import (
 )
 from brokerai.bots.secretary.candle_timeline import CandleTimeline
 from brokerai.bots.secretary.pipeline import PipelineRunner
+from brokerai.bots.secretary.scheduled_research import (
+    after_launch_deferral,
+    next_brief_probe_at,
+    next_brief_schedule_probe_at,
+    next_daily_probe_at,
+    next_debrief_probe_at,
+    next_debrief_schedule_probe_at,
+    research_settings_fingerprint,
+)
 from brokerai.config.settings import get_settings
 from brokerai.core.worker_pool import get_worker_pool
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
@@ -46,6 +55,8 @@ class SecretaryBot(Bot):
         self._max_backlog_seen = 0
         self._durations_ms: list[int] = []
         self._last_account_fetch_at: datetime | None = None
+        self._research_settings_fp: str | None = None
+        self._research_next_check: dict[str, datetime] = {}
 
     @property
     def service(self) -> DataManagerService:
@@ -118,20 +129,35 @@ class SecretaryBot(Bot):
                 monitor.set_account_snapshot("forex", snapshot)
             await log_account_summary_updated("forex")
 
+    def _research_probe_due(self, kind: str, now: datetime) -> bool:
+        next_at = self._research_next_check.get(kind)
+        return next_at is None or now >= next_at
+
+    def _defer_research_probe(self, kind: str, until: datetime) -> None:
+        self._research_next_check[kind] = until
+        logger.debug("Secretary — defer %s research probe until %s", kind, until.isoformat())
+
     async def _maybe_run_scheduled_research(self) -> None:
         if is_research_running():
             return
 
         now = datetime.now(timezone.utc)
         settings = await ResearchSettingsRepository().get()
+        fingerprint = research_settings_fingerprint(settings)
+        if fingerprint != self._research_settings_fp:
+            self._research_settings_fp = fingerprint
+            self._research_next_check.clear()
+
         pool = get_worker_pool()
 
-        if settings.get("daily_report_enabled", False):
-            if is_past_scheduled_run(
-                now,
-                settings.get("daily_report_market_id", "london"),
-                settings.get("daily_report_market_offset_hours", -2),
-            ):
+        if settings.get("daily_report_enabled", False) and self._research_probe_due("daily", now):
+            market_id = settings.get("daily_report_market_id", "london")
+            offset = settings.get("daily_report_market_offset_hours", -2)
+            if not is_past_scheduled_run(now, market_id, offset):
+                self._defer_research_probe(
+                    "daily", next_daily_probe_at(now, settings, done_today=False)
+                )
+            else:
                 today = now.date().isoformat()
                 daily_done = (
                     settings.get("last_daily_run_date") == today
@@ -142,34 +168,55 @@ class SecretaryBot(Bot):
                         ResearcherWorker,
                         ResearchRequest(scheduled_kind="daily"),
                     )
+                    self._defer_research_probe("daily", after_launch_deferral(now))
+                else:
+                    self._defer_research_probe(
+                        "daily", next_daily_probe_at(now, settings, done_today=True)
+                    )
 
         if is_research_running():
             return
 
-        if settings.get("weekly_brief_enabled", False):
-            if is_past_weekly_brief_run(
-                now,
-                settings.get("weekly_brief_market_id", "london"),
-                settings.get("weekly_brief_market_offset_hours", -1),
-            ):
+        if settings.get("weekly_brief_enabled", False) and self._research_probe_due(
+            "weekly_brief", now
+        ):
+            market_id = settings.get("weekly_brief_market_id", "london")
+            offset = settings.get("weekly_brief_market_offset_hours", -1)
+            if not is_past_weekly_brief_run(now, market_id, offset):
+                self._defer_research_probe(
+                    "weekly_brief", next_brief_schedule_probe_at(now, settings)
+                )
+            else:
                 skip = await preview_weekly_brief_skip_reason(settings, now)
                 if not skip:
                     await pool.run(
                         ResearcherWorker,
                         ResearchRequest(scheduled_kind="weekly_brief"),
                     )
+                self._defer_research_probe(
+                    "weekly_brief", next_brief_probe_at(now, settings, skip)
+                )
 
         if is_research_running():
             return
 
-        if settings.get("weekly_debrief_enabled", False):
-            if completed_debrief_week(now, settings) is not None:
+        if settings.get("weekly_debrief_enabled", False) and self._research_probe_due(
+            "weekly_debrief", now
+        ):
+            if completed_debrief_week(now, settings) is None:
+                self._defer_research_probe(
+                    "weekly_debrief", next_debrief_schedule_probe_at(now, settings)
+                )
+            else:
                 skip = await preview_weekly_debrief_skip_reason(settings, now)
                 if not skip:
                     await pool.run(
                         ResearcherWorker,
                         ResearchRequest(scheduled_kind="weekly_debrief"),
                     )
+                self._defer_research_probe(
+                    "weekly_debrief", next_debrief_probe_at(now, settings, skip)
+                )
 
     async def run_startup_pass(self) -> None:
         """Bootstrap candle cache and run initial strategy analysis once at startup."""

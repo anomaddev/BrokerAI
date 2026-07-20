@@ -161,7 +161,24 @@ export function findCrossovers(
   return signals;
 }
 
-const PIP_SIZE = 0.0001;
+/** One pip in price units (0.01 for JPY quotes, 0.0001 otherwise). */
+export function pipSizeForPair(symbol: string): number {
+  const normalized = symbol.replaceAll("_", "/").toUpperCase();
+  const quote = normalized.includes("/")
+    ? (normalized.split("/").pop() ?? "")
+    : normalized.slice(-3);
+  return quote === "JPY" ? 0.01 : 0.0001;
+}
+
+export function isJpyQuotePair(symbol: string): boolean {
+  return pipSizeForPair(symbol) === 0.01;
+}
+
+/** First selected instrument for chart preview, else a non-JPY default. */
+export function previewPairFromSelection(selectedInstruments: string[]): string {
+  const first = selectedInstruments.find((s) => Boolean(s) && s !== "*");
+  return first ?? "EUR/USD";
+}
 
 function recentSwingLow(candles: Candle[], lookback: number): number {
   const slice = candles.slice(-Math.max(lookback, 2));
@@ -173,12 +190,16 @@ export function computeSlTpDistances(
   candles: Candle[],
   atr: number,
   entry: number,
+  previewPair = "EUR/USD",
 ): { slDistance: number; tpDistance: number } {
+  const pip = pipSizeForPair(previewPair);
   let slDistance: number;
   switch (params.stopLossType) {
-    case "fixed_pips":
-      slDistance = params.slFixedPips * PIP_SIZE;
+    case "fixed_pips": {
+      const pips = isJpyQuotePair(previewPair) ? params.slFixedPipsJpy : params.slFixedPips;
+      slDistance = pips * pip;
       break;
+    }
     case "structure": {
       const swingLow = recentSwingLow(candles, params.slStructureLookback);
       slDistance = Math.max(entry - swingLow, atr * 0.5);
@@ -191,7 +212,7 @@ export function computeSlTpDistances(
   let tpDistance: number;
   switch (params.takeProfitType) {
     case "fixed_pips":
-      tpDistance = params.tpFixedPips * PIP_SIZE;
+      tpDistance = params.tpFixedPips * pip;
       break;
     case "atr_based":
       tpDistance = atr * params.tpAtrMultiplier;

@@ -4,11 +4,16 @@ import logging
 from dataclasses import asdict
 
 from brokerai.bots.associate.assets.base import AssetAssociate
-from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+from brokerai.bots.data_manager.candle_requirements import strategy_params
+from brokerai.db.repositories.asset_settings import AssetSettingsRepository, enabled_forex_pairs
 from brokerai.db.repositories.exchange_connections import ExchangeConnectionsRepository
+from brokerai.db.repositories.strategies import StrategiesRepository
 from brokerai.trading.broker.state import BrokerStateService
 from brokerai.trading.schedule import utc_now
-from brokerai.trading.session_gate import is_asset_trading_session_active
+from brokerai.trading.session_hold import (
+    effective_session_ids,
+    is_effective_session_coverage,
+)
 from brokerai.trading.types import TradeIntent
 
 logger = logging.getLogger(__name__)
@@ -42,9 +47,28 @@ class ForexAssociate(AssetAssociate):
             logger.warning("Forex trading disabled — skipping order for %s", intent.pair)
             return
 
-        if not is_asset_trading_session_active(settings.get("enabled_sessions"), when=utc_now()):
+        allowed_pairs = set(enabled_forex_pairs(list(settings.get("enabled_pairs") or [])))
+        if intent.pair not in allowed_pairs:
             logger.warning(
-                "Forex trading outside enabled market sessions — skipping order for %s",
+                "Forex pair %s not enabled globally — skipping order",
+                intent.pair,
+            )
+            return
+
+        now = utc_now()
+        strategy = await StrategiesRepository().get_by_id(intent.strategy_id)
+        if strategy is None:
+            logger.warning(
+                "Strategy %s not found — skipping order for %s",
+                intent.strategy_id,
+                intent.pair,
+            )
+            return
+        params = strategy_params(strategy)
+        effective = effective_session_ids(settings.get("enabled_sessions"), params)
+        if not effective or not is_effective_session_coverage(now, effective):
+            logger.warning(
+                "Forex trading outside effective sessions (global∩strategy) — skipping %s",
                 intent.pair,
             )
             return

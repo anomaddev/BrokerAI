@@ -95,3 +95,16 @@ async def close_pg() -> None:
         await _engine.dispose()
     _engine = None
     _session_factory = None
+
+
+def reset_pg_runtime_for_new_loop() -> None:
+    """Forget the process-global engine after an ``asyncio.run()`` loop closed.
+
+    Used by process-pool backtest workers so the next job creates a fresh
+    engine bound to the new event loop (without awaiting dispose on a dead loop).
+    After ``asyncio.run()`` the previous loop is closed; disposing from outside
+    that loop is unsafe.
+    """
+    global _engine, _session_factory
+    _engine = None
+    _session_factory = None

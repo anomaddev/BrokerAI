@@ -9,6 +9,7 @@ import ResearchReportView from "./pages/ResearchReportView";
 import Strategies from "./pages/Strategies";
 import Explore from "./pages/Explore";
 import Backtesting from "./pages/Backtesting";
+import BacktestRunView from "./pages/BacktestRunView";
 import StrategyBuilderPage from "./pages/strategies/StrategyBuilderPage";
 import StrategyEditPage from "./pages/strategies/StrategyEditPage";
 import Activity from "./pages/Activity";
@@ -150,6 +151,7 @@ export default function App() {
             element={<LegacyAnalysisRunFlatRedirect />}
           />
           <Route path="/research/backtest" element={<Backtesting />} />
+          <Route path="/research/backtest/:runId" element={<BacktestRunView />} />
           <Route path="/trading/forex" element={<Trades />} />
           <Route path="/trading/explore" element={<Explore />} />
           <Route path="/activity" element={<Activity />} />

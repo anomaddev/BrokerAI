@@ -40,6 +40,8 @@ export type EmaCrossoverParams = {
   stopLossType: StopLossType;
   slAtrMultiplier: number;
   slFixedPips: number;
+  /** Fixed-pip SL distance used when the traded pair quotes in JPY. */
+  slFixedPipsJpy: number;
   slStructureLookback: number;
   takeProfitEnabled: boolean;
   takeProfitType: TakeProfitMode;
@@ -54,6 +56,11 @@ export type EmaCrossoverParams = {
   overrideAllStrategies: boolean;
   priority: number;
   sessions: string[];
+  dontHoldBetweenSessions: boolean;
+  dontHoldBetweenMarkets: boolean;
+  closeBeforeMarketHours: number;
+  noLateMarketTrading: boolean;
+  lateMarketHours: number;
   overlayMode: OverlayMode;
   overlays: ChartOverlays;
 };
@@ -75,9 +82,10 @@ const BASE_DEFAULTS = {
   direction: "both" as EmaCrossoverDirection,
   confirmation: "close" as EmaCrossoverConfirmation,
   stopLossEnabled: true,
-  stopLossType: "fixed_pips" as StopLossType,
+  stopLossType: "atr_based" as StopLossType,
   slAtrMultiplier: 1.5,
   slFixedPips: 15,
+  slFixedPipsJpy: 50,
   slStructureLookback: 10,
   takeProfitEnabled: true,
   takeProfitType: "reverse_crossover" as TakeProfitMode,
@@ -92,6 +100,11 @@ const BASE_DEFAULTS = {
   overrideAllStrategies: false,
   priority: 50,
   sessions: ["London", "NY"],
+  dontHoldBetweenSessions: true,
+  dontHoldBetweenMarkets: true,
+  closeBeforeMarketHours: 2,
+  noLateMarketTrading: true,
+  lateMarketHours: 2,
   overlayMode: "detailed" as OverlayMode,
   overlays: {
     ema: true,

@@ -13,9 +13,19 @@ type ExecutionSectionProps = {
   minConfidence: number;
   maxTradesPerDay: number;
   overrideAllStrategies: boolean;
+  dontHoldBetweenSessions: boolean;
+  dontHoldBetweenMarkets: boolean;
+  closeBeforeMarketHours: number;
+  noLateMarketTrading: boolean;
+  lateMarketHours: number;
   onMinConfidenceChange: (value: number) => void;
   onMaxTradesChange: (value: number) => void;
   onOverrideChange: (value: boolean) => void;
+  onDontHoldBetweenSessionsChange: (value: boolean) => void;
+  onDontHoldBetweenMarketsChange: (value: boolean) => void;
+  onCloseBeforeMarketHoursChange: (value: number) => void;
+  onNoLateMarketTradingChange: (value: boolean) => void;
+  onLateMarketHoursChange: (value: number) => void;
 };
 
 const EXECUTION_HELP = {
@@ -39,6 +49,31 @@ const EXECUTION_HELP = {
     title: "Override all other strategies",
     body: "When enabled, this strategy’s signals take precedence over conflicting signals from other strategies on the same instrument.",
   },
+  dontHoldBetweenSessions: {
+    label: "Don't hold between sessions",
+    title: "Don't hold between sessions",
+    body: "When on, close open trades one candle before leaving an enabled session island (Sydney, Asia, London, NY). Overlaps keep the trade if another enabled session is still open. Uses sessions enabled both globally and on this strategy.",
+  },
+  dontHoldBetweenMarkets: {
+    label: "Don't hold between markets",
+    title: "Don't hold between markets",
+    body: "When on, close open trades before major market closes (weekends and holidays), not the daily FX break. Close time respects enabled sessions (for example, London-only ends earlier Friday than NY).",
+  },
+  closeBeforeMarketHours: {
+    label: "Close hours before market close",
+    title: "Close hours before market close",
+    body: "How many hours before that major market close to flatten open trades (1–24). Only applies when Don't Hold Between Markets is on.",
+  },
+  noLateMarketTrading: {
+    label: "No late market trading",
+    title: "No late market trading",
+    body: "When on, block new entries near major market close (weekends and holidays), using the same session-aware close as Don't Hold Between Markets.",
+  },
+  lateMarketHours: {
+    label: "Late market hours",
+    title: "No new trades within hours of market close",
+    body: "How many hours before major market close to stop opening new trades (1–24). Only applies when No Late Market Trading is on.",
+  },
 } as const;
 
 export default function ExecutionSection({
@@ -49,9 +84,19 @@ export default function ExecutionSection({
   minConfidence,
   maxTradesPerDay,
   overrideAllStrategies,
+  dontHoldBetweenSessions,
+  dontHoldBetweenMarkets,
+  closeBeforeMarketHours,
+  noLateMarketTrading,
+  lateMarketHours,
   onMinConfidenceChange,
   onMaxTradesChange,
   onOverrideChange,
+  onDontHoldBetweenSessionsChange,
+  onDontHoldBetweenMarketsChange,
+  onCloseBeforeMarketHoursChange,
+  onNoLateMarketTradingChange,
+  onLateMarketHoursChange,
 }: ExecutionSectionProps) {
   return (
     <ParameterCard
@@ -152,6 +197,76 @@ export default function ExecutionSection({
         }
         onChange={onOverrideChange}
       />
+      <ParamToggleRow
+        label="Don't Hold Between Sessions"
+        checked={dontHoldBetweenSessions}
+        labelHelp={
+          <ParamHelpTip
+            label={EXECUTION_HELP.dontHoldBetweenSessions.label}
+            title={EXECUTION_HELP.dontHoldBetweenSessions.title}
+            body={EXECUTION_HELP.dontHoldBetweenSessions.body}
+          />
+        }
+        onChange={onDontHoldBetweenSessionsChange}
+      />
+      <ParamToggleRow
+        label="Don't Hold Between Markets"
+        checked={dontHoldBetweenMarkets}
+        labelHelp={
+          <ParamHelpTip
+            label={EXECUTION_HELP.dontHoldBetweenMarkets.label}
+            title={EXECUTION_HELP.dontHoldBetweenMarkets.title}
+            body={EXECUTION_HELP.dontHoldBetweenMarkets.body}
+          />
+        }
+        onChange={onDontHoldBetweenMarketsChange}
+      >
+        <LiveSlider
+          id="close-before-market-hours"
+          label="Close trades hours before market close"
+          labelHelp={
+            <ParamHelpTip
+              label={EXECUTION_HELP.closeBeforeMarketHours.label}
+              title={EXECUTION_HELP.closeBeforeMarketHours.title}
+              body={EXECUTION_HELP.closeBeforeMarketHours.body}
+            />
+          }
+          value={closeBeforeMarketHours}
+          min={1}
+          max={24}
+          unit="h"
+          onChange={onCloseBeforeMarketHoursChange}
+        />
+      </ParamToggleRow>
+      <ParamToggleRow
+        label="No Late Market Trading"
+        checked={noLateMarketTrading}
+        labelHelp={
+          <ParamHelpTip
+            label={EXECUTION_HELP.noLateMarketTrading.label}
+            title={EXECUTION_HELP.noLateMarketTrading.title}
+            body={EXECUTION_HELP.noLateMarketTrading.body}
+          />
+        }
+        onChange={onNoLateMarketTradingChange}
+      >
+        <LiveSlider
+          id="late-market-hours"
+          label="No new trades within hours of market close"
+          labelHelp={
+            <ParamHelpTip
+              label={EXECUTION_HELP.lateMarketHours.label}
+              title={EXECUTION_HELP.lateMarketHours.title}
+              body={EXECUTION_HELP.lateMarketHours.body}
+            />
+          }
+          value={lateMarketHours}
+          min={1}
+          max={24}
+          unit="h"
+          onChange={onLateMarketHoursChange}
+        />
+      </ParamToggleRow>
     </ParameterCard>
   );
 }

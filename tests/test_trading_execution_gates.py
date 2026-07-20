@@ -152,6 +152,43 @@ def test_passes_execution_gates_blocks_low_confidence():
     assert details["confidence_below_threshold"]["confidence_pct"] == 50.0
 
 
+def test_passes_execution_gates_blocks_late_market_trading():
+    from zoneinfo import ZoneInfo
+
+    result = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.9,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+        metadata={"signal": "bullish_cross", "filters_passed": True},
+    )
+    params = {
+        "execution": {
+            "min_confidence": 0,
+            "sessions": ["London", "NY"],
+            "no_late_market_trading": True,
+            "late_market_hours": 2,
+        },
+        "risk": {"max_trades_per_day": 3},
+    }
+    when = datetime(2026, 7, 17, 15, 30, tzinfo=ZoneInfo("America/New_York"))
+    asset = {"sydney": True, "asia": True, "london": True, "ny": True}
+    passed, reasons, details = passes_execution_gates(
+        result,
+        params,
+        {},
+        when=when,
+        asset_enabled_sessions=asset,
+    )
+    assert passed is False
+    assert "late_market_trading" in reasons
+    assert details["late_market_trading"]["late_market_hours"] == 2
+
+
 def test_resolve_priority_conflicts_picks_lower_priority_value():
     high = AnalysisResult(
         strategy_id="high",

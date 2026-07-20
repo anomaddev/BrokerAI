@@ -49,6 +49,37 @@ $$
 )
 
 
+async def _ensure_realtime_publication(engine) -> None:
+    """Best-effort Realtime publication; never rolls back table DDL."""
+    try:
+        async with engine.begin() as conn:
+            for table in ("backtest_runs", "backtest_logs", "backtest_actions"):
+                await conn.execute(
+                    text(
+                        f"""
+                        DO $$
+                        BEGIN
+                          IF EXISTS (
+                            SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
+                          ) THEN
+                            BEGIN
+                              EXECUTE 'ALTER PUBLICATION supabase_realtime ADD TABLE {SCHEMA}.{table}';
+                            EXCEPTION WHEN duplicate_object THEN
+                              NULL;
+                            END;
+                          END IF;
+                        END
+                        $$
+                        """
+                    )
+                )
+    except Exception:
+        logger.warning(
+            "Could not add brokerai backtest tables to supabase_realtime publication",
+            exc_info=True,
+        )
+
+
 async def ensure_schema() -> None:
     """Create ``brokerai`` schema + tables if missing (idempotent)."""
     # Register ORM tables on Base.metadata.
@@ -85,11 +116,30 @@ async def ensure_schema() -> None:
                     """
                 )
             )
+            # create_all does not add columns to existing backtest_runs rows.
+            for column_sql in (
+                f"ALTER TABLE {SCHEMA}.backtest_runs ADD COLUMN IF NOT EXISTS progress_pct DOUBLE PRECISION NOT NULL DEFAULT 0",
+                f"ALTER TABLE {SCHEMA}.backtest_runs ADD COLUMN IF NOT EXISTS current_bar TIMESTAMPTZ",
+                f"ALTER TABLE {SCHEMA}.backtest_runs ADD COLUMN IF NOT EXISTS status_message TEXT",
+                f"ALTER TABLE {SCHEMA}.backtest_runs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT false",
+            ):
+                await conn.execute(text(column_sql))
+            await conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE {SCHEMA}.user_profiles
+                    ADD COLUMN IF NOT EXISTS profile_photo_url TEXT
+                    """
+                )
+            )
             for statement in _PRIVACY_STATEMENTS:
                 await conn.execute(text(statement))
             for table in _RLS_TABLES:
                 await conn.execute(
                     text(f"ALTER TABLE {SCHEMA}.{table} ENABLE ROW LEVEL SECURITY")
                 )
+
+    if engine.dialect.name == "postgresql":
+        await _ensure_realtime_publication(engine)
 
     logger.debug("Postgres schema ensure complete")

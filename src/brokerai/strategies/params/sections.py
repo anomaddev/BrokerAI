@@ -4,11 +4,15 @@ from typing import Any
 
 from brokerai.strategies.params.constants import (
     CONFIRMATIONS,
+    DEFAULT_CLOSE_BEFORE_MARKET_HOURS,
+    DEFAULT_LATE_MARKET_HOURS,
     DEFAULT_PRIORITY,
     DIRECTIONS,
     FILTER_COMPARE,
     FILTER_TYPES,
     INDICATOR_TYPES,
+    MARKET_HOURS_MAX,
+    MARKET_HOURS_MIN,
     MIN_CANDLES_MAX,
     PRICE_SOURCES,
     PRIORITY_MAX,
@@ -235,6 +239,10 @@ def validate_exits(
         )
     if "fixed_pips" in stop_loss:
         sl_normalized["fixed_pips"] = _require_int(stop_loss["fixed_pips"], f"{field}.stop_loss.fixed_pips")
+    if "fixed_pips_jpy" in stop_loss:
+        sl_normalized["fixed_pips_jpy"] = _require_int(
+            stop_loss["fixed_pips_jpy"], f"{field}.stop_loss.fixed_pips_jpy"
+        )
     if "structure_lookback" in stop_loss:
         sl_normalized["structure_lookback"] = _require_int(
             stop_loss["structure_lookback"], f"{field}.stop_loss.structure_lookback"
@@ -344,12 +352,57 @@ def validate_execution(spec: Any, *, schema: dict[str, Any] | None = None) -> di
     priority = _require_int(priority, f"{field}.priority")
     _check_bounds(float(priority), f"{field}.priority", PRIORITY_MIN, PRIORITY_MAX)
 
+    dont_hold_between_sessions = _require_bool(
+        data.get("dont_hold_between_sessions", True),
+        f"{field}.dont_hold_between_sessions",
+    )
+    dont_hold_between_markets = _require_bool(
+        data.get("dont_hold_between_markets", True),
+        f"{field}.dont_hold_between_markets",
+    )
+    close_before_market_hours = data.get(
+        "close_before_market_hours",
+        DEFAULT_CLOSE_BEFORE_MARKET_HOURS,
+    )
+    close_before_market_hours = _require_int(
+        close_before_market_hours,
+        f"{field}.close_before_market_hours",
+    )
+    close_bounds = _bounds_from_schema(schema.get("close_before_market_hours"))
+    if close_bounds == (None, None):
+        close_bounds = (float(MARKET_HOURS_MIN), float(MARKET_HOURS_MAX))
+    _check_bounds(
+        float(close_before_market_hours),
+        f"{field}.close_before_market_hours",
+        *close_bounds,
+    )
+
+    no_late_market_trading = _require_bool(
+        data.get("no_late_market_trading", True),
+        f"{field}.no_late_market_trading",
+    )
+    late_market_hours = data.get("late_market_hours", DEFAULT_LATE_MARKET_HOURS)
+    late_market_hours = _require_int(late_market_hours, f"{field}.late_market_hours")
+    late_bounds = _bounds_from_schema(schema.get("late_market_hours"))
+    if late_bounds == (None, None):
+        late_bounds = (float(MARKET_HOURS_MIN), float(MARKET_HOURS_MAX))
+    _check_bounds(
+        float(late_market_hours),
+        f"{field}.late_market_hours",
+        *late_bounds,
+    )
+
     _ = schema
     return {
         "sessions": sessions,
         "min_confidence": min_confidence,
         "override_all_strategies": override_all_strategies,
         "priority": priority,
+        "dont_hold_between_sessions": dont_hold_between_sessions,
+        "dont_hold_between_markets": dont_hold_between_markets,
+        "close_before_market_hours": close_before_market_hours,
+        "no_late_market_trading": no_late_market_trading,
+        "late_market_hours": late_market_hours,
     }
 
 

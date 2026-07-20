@@ -326,6 +326,7 @@ export default function CustomBuilder({
       stopLossType: params.stopLossType,
       slAtrMultiplier: params.slAtrMultiplier,
       slFixedPips: params.slFixedPips,
+      slFixedPipsJpy: params.slFixedPipsJpy,
       slStructureLookback: params.slStructureLookback,
       takeProfitEnabled: params.takeProfitEnabled,
       takeProfitType: params.takeProfitType,
@@ -524,9 +525,19 @@ export default function CustomBuilder({
                 minConfidence={params.minConfidence}
                 maxTradesPerDay={params.maxTradesPerDay}
                 overrideAllStrategies={params.overrideAllStrategies}
+                dontHoldBetweenSessions={params.dontHoldBetweenSessions}
+                dontHoldBetweenMarkets={params.dontHoldBetweenMarkets}
+                closeBeforeMarketHours={params.closeBeforeMarketHours}
+                noLateMarketTrading={params.noLateMarketTrading}
+                lateMarketHours={params.lateMarketHours}
                 onMinConfidenceChange={(v) => update("minConfidence", v)}
                 onMaxTradesChange={(v) => update("maxTradesPerDay", v)}
                 onOverrideChange={(v) => update("overrideAllStrategies", v)}
+                onDontHoldBetweenSessionsChange={(v) => update("dontHoldBetweenSessions", v)}
+                onDontHoldBetweenMarketsChange={(v) => update("dontHoldBetweenMarkets", v)}
+                onCloseBeforeMarketHoursChange={(v) => update("closeBeforeMarketHours", v)}
+                onNoLateMarketTradingChange={(v) => update("noLateMarketTrading", v)}
+                onLateMarketHoursChange={(v) => update("lateMarketHours", v)}
               />
             </div>
           </aside>

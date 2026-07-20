@@ -113,6 +113,7 @@ def _operation_label(operation: str) -> str:
         "x_search": "X search",
         "weekly_brief": "Weekly brief",
         "weekly_debrief": "Weekly debrief",
+        "backtest_ai_feedback": "Backtest AI feedback",
         "connection_test": "Connection test",
         "llm_call": "LLM call",
     }

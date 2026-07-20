@@ -301,11 +301,18 @@ class AuthStore:
         OnboardingStore(self.settings).init_after_admin()
         return record
 
-    def set_profile_photo(self, filename: str | None) -> UserRecord:
+    def set_profile_photo(self, profile_photo: str | None) -> UserRecord:
+        """Persist profile photo reference (Supabase download URL or local filename)."""
         user = self.get_user()
         if user is None:
             raise ValueError("No user")
-        return self._save_user(user.replace(profile_photo=filename))
+        return self._save_user(user.replace(profile_photo=profile_photo))
+
+    def profile_id(self) -> str | None:
+        user = self.get_user()
+        if user is None:
+            return None
+        return self._profile_id_for(user)
 
     def update_username(self, new_username: str) -> UserRecord:
         user = self.get_user()

@@ -19,6 +19,7 @@ def test_normalize_backtest_status_accepts_known_values():
     assert normalize_backtest_status("running") == "running"
     assert normalize_backtest_status("completed") == "completed"
     assert normalize_backtest_status("failed") == "failed"
+    assert normalize_backtest_status("cancelled") == "cancelled"
 
 
 def test_serialize_strategy_includes_backtest_status():

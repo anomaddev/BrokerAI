@@ -45,6 +45,17 @@ def reset_pg_profile_engine() -> None:
     _SessionLocal = None
 
 
+def _profile_photo_url_from_doc(doc: dict[str, Any]) -> str | None:
+    """Return a remote download URL from the profile doc, if present."""
+    value = doc.get("profile_photo")
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if trimmed.lower().startswith("http://") or trimmed.lower().startswith("https://"):
+        return trimmed
+    return None
+
+
 def load_user_profile() -> dict[str, Any] | None:
     factory = _get_factory()
     with factory() as session:
@@ -55,6 +66,9 @@ def load_user_profile() -> dict[str, Any] | None:
         doc["username"] = row.username
         doc["_profile_id"] = row.id
         doc["_setup_complete"] = row.setup_complete
+        # Prefer the first-class column when set (Supabase Storage download URL).
+        if row.profile_photo_url:
+            doc["profile_photo"] = row.profile_photo_url
         return doc
 
 
@@ -69,6 +83,7 @@ def save_user_profile(
     with factory() as session:
         row = session.get(UserProfileRow, profile_id)
         payload = {k: v for k, v in doc.items() if not str(k).startswith("_")}
+        photo_url = _profile_photo_url_from_doc(payload)
         if row is None:
             # Single-tenant: replace any existing profile row.
             for existing in session.scalars(select(UserProfileRow)).all():
@@ -79,6 +94,7 @@ def save_user_profile(
                     username=username,
                     setup_complete=setup_complete,
                     doc=payload,
+                    profile_photo_url=photo_url,
                     updated_at=datetime.now(timezone.utc),
                 )
             )
@@ -86,6 +102,7 @@ def save_user_profile(
             row.username = username
             row.setup_complete = setup_complete
             row.doc = payload
+            row.profile_photo_url = photo_url
             row.updated_at = datetime.now(timezone.utc)
         session.commit()
 

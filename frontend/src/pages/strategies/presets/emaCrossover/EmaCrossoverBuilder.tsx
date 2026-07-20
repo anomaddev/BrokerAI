@@ -59,6 +59,7 @@ import type { StrategyParamsV1 } from "../../../../lib/strategyParams";
 import {
   computeAtr,
   computeSlTpDistances,
+  previewPairFromSelection,
   generateMockCandles,
   mockRiskAmount,
 } from "./mockData";
@@ -340,6 +341,7 @@ export default function EmaCrossoverBuilder({
       stopLossType: params.stopLossType,
       slAtrMultiplier: params.slAtrMultiplier,
       slFixedPips: params.slFixedPips,
+      slFixedPipsJpy: params.slFixedPipsJpy,
       slStructureLookback: params.slStructureLookback,
       takeProfitEnabled: params.takeProfitEnabled,
       takeProfitType: params.takeProfitType,
@@ -363,7 +365,8 @@ export default function EmaCrossoverBuilder({
     const candles = generateMockCandles(120);
     const atr = computeAtr(candles, params.atrPeriod);
     const entry = candles[candles.length - 1].close;
-    const { slDistance } = computeSlTpDistances(params, candles, atr, entry);
+    const previewPair = previewPairFromSelection(params.selectedInstruments);
+    const { slDistance } = computeSlTpDistances(params, candles, atr, entry, previewPair);
     return mockRiskAmount(params.riskPerTrade, slDistance, entry);
   }, [params]);
 
@@ -518,9 +521,19 @@ export default function EmaCrossoverBuilder({
                 minConfidence={params.minConfidence}
                 maxTradesPerDay={params.maxTradesPerDay}
                 overrideAllStrategies={params.overrideAllStrategies}
+                dontHoldBetweenSessions={params.dontHoldBetweenSessions}
+                dontHoldBetweenMarkets={params.dontHoldBetweenMarkets}
+                closeBeforeMarketHours={params.closeBeforeMarketHours}
+                noLateMarketTrading={params.noLateMarketTrading}
+                lateMarketHours={params.lateMarketHours}
                 onMinConfidenceChange={(v) => update("minConfidence", v)}
                 onMaxTradesChange={(v) => update("maxTradesPerDay", v)}
                 onOverrideChange={(v) => update("overrideAllStrategies", v)}
+                onDontHoldBetweenSessionsChange={(v) => update("dontHoldBetweenSessions", v)}
+                onDontHoldBetweenMarketsChange={(v) => update("dontHoldBetweenMarkets", v)}
+                onCloseBeforeMarketHoursChange={(v) => update("closeBeforeMarketHours", v)}
+                onNoLateMarketTradingChange={(v) => update("noLateMarketTrading", v)}
+                onLateMarketHoursChange={(v) => update("lateMarketHours", v)}
               />
             </div>
           </aside>

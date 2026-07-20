@@ -9,6 +9,7 @@ from typing import Any
 from brokerai.bots.data_manager.candle_requirements import strategy_params
 from brokerai.bots.data_manager.service import DataManagerService
 from brokerai.config.settings import get_settings
+from brokerai.db.repositories.asset_settings import AssetSettingsRepository
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository
 from brokerai.trading.broker.state import BrokerStateService
 from brokerai.trading.candle_context import load_candles_for_unit
@@ -17,6 +18,10 @@ from brokerai.trading.exit_analysis import persist_exit_analysis_run, trade_requ
 from brokerai.trading.indicator_cache import IndicatorCache
 from brokerai.trading.registries.exits import create_exit_monitor
 from brokerai.trading.schedule import utc_now
+from brokerai.trading.session_hold import (
+    should_force_close_market,
+    should_force_close_session_boundary,
+)
 from brokerai.trading.types import ExitIntent, WorkUnit
 
 logger = logging.getLogger(__name__)
@@ -156,6 +161,75 @@ class BrokerMonitor:
     def get_account_snapshot(self, asset_class: str) -> dict[str, Any] | None:
         return self._account_snapshots.get(asset_class)
 
+    async def _apply_session_market_holds(
+        self,
+        open_trades: list[dict[str, Any]],
+        units_by_pair: dict[str, WorkUnit],
+    ) -> set[str]:
+        """Force-close lots at session islands or major market close windows.
+
+        Returns trade ids closed by this pass so exit monitors can skip them.
+        """
+        if not open_trades:
+            return set()
+
+        from brokerai.market_sessions import normalize_enabled_sessions
+
+        try:
+            asset_settings = await AssetSettingsRepository().get("forex")
+            enabled_sessions = (
+                asset_settings.get("enabled_sessions") if isinstance(asset_settings, dict) else None
+            )
+        except Exception:
+            enabled_sessions = normalize_enabled_sessions(None)
+        now = utc_now()
+        closed_ids: set[str] = set()
+
+        for trade in open_trades:
+            trade_id = str(trade.get("id", ""))
+            if not trade_id or trade_id in closed_ids:
+                continue
+            pair = str(trade.get("pair", ""))
+            unit = units_by_pair.get(pair)
+            if unit is None:
+                continue
+            strategy = next(
+                (
+                    item
+                    for item in unit.strategies
+                    if str(item.get("id")) == str(trade.get("strategy_id"))
+                ),
+                None,
+            )
+            if strategy is None:
+                continue
+            params = strategy_params(strategy)
+            reason: str | None = None
+            if should_force_close_session_boundary(
+                params,
+                when=now,
+                timeframe=unit.timeframe,
+                asset_enabled_sessions=enabled_sessions,
+            ):
+                reason = "session_boundary"
+            elif should_force_close_market(
+                params,
+                when=now,
+                asset_enabled_sessions=enabled_sessions,
+            ):
+                reason = "market_close"
+            if reason is None:
+                continue
+            logger.info(
+                "Hold rule close trade=%s pair=%s reason=%s",
+                trade_id,
+                pair,
+                reason,
+            )
+            await _close_lot(self._lots_repo, trade_id, reason=reason, metadata={"signal": reason})
+            closed_ids.add(trade_id)
+        return closed_ids
+
     async def sync_exit_monitors(
         self,
         work_units: list[WorkUnit],
@@ -165,6 +239,9 @@ class BrokerMonitor:
     ) -> None:
         open_trades = await self._lots_repo.list_open_lots()
         units_by_pair: dict[str, WorkUnit] = {unit.pair: unit for unit in work_units}
+        hold_closed = await self._apply_session_market_holds(open_trades, units_by_pair)
+        if hold_closed:
+            open_trades = [t for t in open_trades if str(t.get("id", "")) not in hold_closed]
         active_ids: set[str] = set()
 
         for trade in open_trades:

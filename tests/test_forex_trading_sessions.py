@@ -77,7 +77,7 @@ def test_is_asset_trading_session_active_blocks_weekend():
     )
 
 
-def test_passes_execution_gates_blocks_asset_session():
+def test_passes_execution_gates_blocks_when_no_effective_sessions():
     result = AnalysisResult(
         strategy_id="s1",
         strategy_name="S1",
@@ -93,7 +93,7 @@ def test_passes_execution_gates_blocks_asset_session():
         "risk": {"max_trades_per_day": 3},
     }
     when = datetime(2026, 3, 4, 14, 0, tzinfo=timezone.utc)
-    passed, reasons, _details = passes_execution_gates(
+    passed, reasons, details = passes_execution_gates(
         result,
         params,
         {},
@@ -106,4 +106,79 @@ def test_passes_execution_gates_blocks_asset_session():
         },
     )
     assert passed is False
-    assert "asset_session_inactive" in reasons
+    assert "session_inactive" in reasons
+    assert details["session_inactive"]["effective_sessions"] == []
+
+
+def test_passes_execution_gates_requires_session_intersection():
+    """Asset=London only, strategy=NY only → deny even during London∩NY overlap."""
+    from zoneinfo import ZoneInfo
+
+    result = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.9,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+        metadata={"signal": "bullish_cross", "filters_passed": True},
+    )
+    params = {
+        "execution": {"min_confidence": 0, "sessions": ["NY"]},
+        "risk": {"max_trades_per_day": 3},
+    }
+    # 10:00 ET — London and NY both open in wall-clock, but ∩ is empty.
+    when = datetime(2026, 7, 15, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    passed, reasons, details = passes_execution_gates(
+        result,
+        params,
+        {},
+        when=when,
+        asset_enabled_sessions={
+            "sydney": False,
+            "asia": False,
+            "london": True,
+            "ny": False,
+        },
+    )
+    assert passed is False
+    assert "session_inactive" in reasons
+    assert details["session_inactive"]["effective_sessions"] == []
+
+
+def test_passes_execution_gates_blocks_disabled_asset_and_pair():
+    result = AnalysisResult(
+        strategy_id="s1",
+        strategy_name="S1",
+        pair="EUR/USD",
+        timeframe="M15",
+        confidence=0.9,
+        direction="long",
+        min_candles=50,
+        signal_type="ema_crossover",
+        metadata={"signal": "bullish_cross", "filters_passed": True},
+    )
+    params = {
+        "execution": {"min_confidence": 0, "sessions": ["London", "NY"]},
+        "risk": {"max_trades_per_day": 3},
+    }
+    when = datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc)
+    passed, reasons, _ = passes_execution_gates(
+        result,
+        params,
+        {},
+        when=when,
+        asset_enabled=False,
+        asset_enabled_pairs=["GBP/USD"],
+        asset_enabled_sessions={
+            "sydney": True,
+            "asia": True,
+            "london": True,
+            "ny": True,
+        },
+    )
+    assert passed is False
+    assert "asset_disabled" in reasons
+    assert "pair_not_enabled" in reasons

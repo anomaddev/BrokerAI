@@ -59,7 +59,31 @@ def auth_headers(access_token: str) -> dict[str, str]:
     }
 
 _CLIENTS: dict[tuple[str, str], "OandaHttpClient"] = {}
-_CLIENTS_LOCK = asyncio.Lock()
+_CLIENTS_LOCK: asyncio.Lock | None = None
+
+
+def _clients_lock() -> asyncio.Lock:
+    """Return a lock bound to the current event loop (recreated after loop resets)."""
+    global _CLIENTS_LOCK, _REQUEST_LIMITER, _CONNECTION_GATE
+    lock = _CLIENTS_LOCK
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+
+    bound = getattr(lock, "_loop", None) if lock is not None else None
+    stale = (
+        lock is None
+        or (bound is not None and bound.is_closed())
+        or (bound is not None and running is not None and bound is not running)
+    )
+    if stale:
+        _CLIENTS.clear()
+        _REQUEST_LIMITER = None
+        _CONNECTION_GATE = None
+        _CLIENTS_LOCK = asyncio.Lock()
+        return _CLIENTS_LOCK
+    return lock
 
 
 def _token_hash(access_token: str) -> str:
@@ -251,7 +275,7 @@ def _shared_connection_gate() -> _ConnectionGate:
 async def get_oanda_client(access_token: str, environment: str) -> OandaHttpClient:
     """Return a process-scoped persistent client for OANDA REST calls."""
     key = (environment, _token_hash(access_token))
-    async with _CLIENTS_LOCK:
+    async with _clients_lock():
         client = _CLIENTS.get(key)
         if client is not None:
             return client
@@ -267,11 +291,26 @@ async def get_oanda_client(access_token: str, environment: str) -> OandaHttpClie
 
 async def close_oanda_client() -> None:
     """Close all persistent OANDA HTTP clients (app/bot shutdown)."""
-    global _REQUEST_LIMITER, _CONNECTION_GATE
-    async with _CLIENTS_LOCK:
-        for client in _CLIENTS.values():
+    global _REQUEST_LIMITER, _CONNECTION_GATE, _CLIENTS_LOCK
+    async with _clients_lock():
+        for client in list(_CLIENTS.values()):
             await client.close()
         _CLIENTS.clear()
+    _REQUEST_LIMITER = None
+    _CONNECTION_GATE = None
+    _CLIENTS_LOCK = None
+
+
+def reset_oanda_runtime_for_new_loop() -> None:
+    """Drop cached OANDA clients/locks after an ``asyncio.run()`` loop has closed.
+
+    Process-pool workers reuse the interpreter across jobs. Locks and httpx
+    clients bound to the previous loop raise ``Event loop is closed`` on the
+    next job unless process-global runtime state is cleared first.
+    """
+    global _CLIENTS, _CLIENTS_LOCK, _REQUEST_LIMITER, _CONNECTION_GATE
+    _CLIENTS = {}
+    _CLIENTS_LOCK = None
     _REQUEST_LIMITER = None
     _CONNECTION_GATE = None
 
@@ -279,7 +318,7 @@ async def close_oanda_client() -> None:
 async def close_oanda_client_for_credentials(access_token: str, environment: str) -> None:
     """Close the client for a specific credential pair (token rotation)."""
     key = (environment, _token_hash(access_token))
-    async with _CLIENTS_LOCK:
+    async with _clients_lock():
         client = _CLIENTS.pop(key, None)
     if client is not None:
         await client.close()

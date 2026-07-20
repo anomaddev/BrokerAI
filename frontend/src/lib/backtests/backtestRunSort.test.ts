@@ -37,6 +37,16 @@ describe("sortBacktestRuns", () => {
     expect(sorted.map((run) => run.strategy_name)).toEqual(["Alpha", "Zulu"]);
   });
 
+  it("sorts by run name ascending, falling back to strategy name", () => {
+    const runs = [
+      makeRun({ id: "2", strategy_name: "Beta", name: "Zebra run" }),
+      makeRun({ id: "1", strategy_name: "Alpha", name: "Apple run" }),
+      makeRun({ id: "3", strategy_name: "Mango" }),
+    ];
+    const sorted = sortBacktestRuns(runs, "name", "asc");
+    expect(sorted.map((run) => run.id)).toEqual(["1", "3", "2"]);
+  });
+
   it("sorts by created descending", () => {
     const runs = [
       makeRun({
@@ -54,14 +64,20 @@ describe("sortBacktestRuns", () => {
     expect(sorted.map((run) => run.strategy_name)).toEqual(["Newer", "Older"]);
   });
 
-  it("sorts by status label", () => {
+  it("pins active statuses before terminal ones", () => {
     const runs = [
       makeRun({ id: "1", strategy_name: "A", status: "queued" }),
       makeRun({ id: "2", strategy_name: "B", status: "completed" }),
       makeRun({ id: "3", strategy_name: "C", status: "failed" }),
+      makeRun({ id: "4", strategy_name: "D", status: "running" }),
     ];
     const sorted = sortBacktestRuns(runs, "status", "asc");
-    expect(sorted.map((run) => run.status)).toEqual(["completed", "failed", "queued"]);
+    expect(sorted.map((run) => run.status)).toEqual([
+      "running",
+      "queued",
+      "completed",
+      "failed",
+    ]);
   });
 
   it("pushes null pnl values after numeric ones when ascending", () => {

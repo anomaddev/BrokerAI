@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, profilePhotoUrl, type MfaFactor } from "../../api/client";
+import { api, PROFILE_PHOTO_PATH, profilePhotoUrl, type MfaFactor } from "../../api/client";
 import MfaEnrollPanel from "../../components/MfaEnrollPanel";
 import ProfilePhotoField from "../../components/ProfilePhotoField";
 import SettingsPanelHeader from "../../components/SettingsPanelHeader";
@@ -89,6 +89,7 @@ export default function AccountTab() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [initialHasPhoto, setInitialHasPhoto] = useState(false);
+  const [savedPhotoUrl, setSavedPhotoUrl] = useState<string | null>(null);
   const [photoVersion, setPhotoVersion] = useState(0);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [removeRequested, setRemoveRequested] = useState(false);
@@ -132,15 +133,21 @@ export default function AccountTab() {
         setFirstName(user.first_name?.trim() ?? "");
         setLastName(user.last_name?.trim() ?? "");
         setSavedEmail(user.email?.trim() ?? "");
-        setInitialHasPhoto(user.has_profile_photo);
-        if (user.has_profile_photo) {
+        const url =
+          user.profile_photo_url ?? (user.has_profile_photo ? PROFILE_PHOTO_PATH : null);
+        setInitialHasPhoto(Boolean(url));
+        setSavedPhotoUrl(url);
+        if (url || user.has_profile_photo) {
           setPhotoVersion(Date.now());
         }
         if (config.mode === "builtin" && config.mfa_available) {
           void refreshMfaStatus();
         }
       })
-      .catch(() => setInitialHasPhoto(false))
+      .catch(() => {
+        setInitialHasPhoto(false);
+        setSavedPhotoUrl(null);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -152,7 +159,9 @@ export default function AccountTab() {
   }
 
   const photoUrl =
-    initialHasPhoto && !removeRequested && !pendingFile ? profilePhotoUrl(photoVersion) : null;
+    initialHasPhoto && !removeRequested && !pendingFile
+      ? profilePhotoUrl(savedPhotoUrl, photoVersion)
+      : null;
   const photoDirty = Boolean(pendingFile) || removeRequested;
   const namesDirty =
     authMode === "builtin" &&
@@ -189,12 +198,17 @@ export default function AccountTab() {
         if (pendingFile) {
           const result = await api.uploadProfilePhoto(pendingFile);
           setInitialHasPhoto(result.has_profile_photo);
+          setSavedPhotoUrl(
+            result.profile_photo_url ??
+              (result.has_profile_photo ? PROFILE_PHOTO_PATH : null),
+          );
           setPhotoVersion(Date.now());
           setPendingFile(null);
           setRemoveRequested(false);
         } else if (removeRequested) {
           await api.deleteProfilePhoto();
           setInitialHasPhoto(false);
+          setSavedPhotoUrl(null);
           setPhotoVersion(0);
           setRemoveRequested(false);
         }

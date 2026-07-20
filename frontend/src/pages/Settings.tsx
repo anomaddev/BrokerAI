@@ -18,6 +18,7 @@ import DataConnectionsTabComponent from "./settings/DataConnectionsTab";
 import ModelsTab from "./settings/ModelsTab";
 import ReportsTab from "./settings/ReportsTab";
 import ResearchDataTab from "./settings/ResearchDataTab";
+import BacktestingTab from "./settings/BacktestingTab";
 import SettingsPanelHeader from "../components/SettingsPanelHeader";
 
 type SettingsNavItem = {
@@ -51,6 +52,7 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
     items: [
       { path: "reports", label: "Reports" },
       { path: "data", label: "Data" },
+      { path: "backtesting", label: "Backtesting" },
     ],
   },
   {
@@ -1181,6 +1183,7 @@ export default function Settings() {
             <Route path="models" element={<ModelsTab />} />
             <Route path="reports" element={<ReportsTab />} />
             <Route path="data" element={<ResearchDataTab />} />
+            <Route path="backtesting" element={<BacktestingTab />} />
             <Route path="connections" element={<DataConnectionsTabComponent />} />
             <Route path="broker/general" element={<BrokerGeneralTab />} />
             <Route path="broker/forex" element={<AssetClassTab assetClass="forex" label="Forex" />} />

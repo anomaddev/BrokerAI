@@ -37,6 +37,11 @@ class UpdateStrategyBody(BaseModel):
 
 class QueueBacktestBody(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=200)
+    name: str | None = Field(default=None, max_length=120)
+    instrument: str | None = Field(default=None, max_length=32)
+    period: str = Field(default="6m", max_length=8)
+    verbose: bool = False
+    account_margin: float | None = None
 
 
 @router.get("/presets")
@@ -56,17 +61,40 @@ async def queue_strategy_backtests(
     body: QueueBacktestBody,
     _username: str = Depends(require_auth),
 ) -> JSONResponse:
+    from brokerai.backtesting.periods import resolve_period_window
+    from brokerai.db.repositories.backtest_runs import (
+        BACKTEST_PERIODS,
+        normalize_account_margin,
+        normalize_backtest_period,
+    )
+
     ids = [strategy_id.strip() for strategy_id in body.ids if strategy_id and strategy_id.strip()]
     if not ids:
         raise HTTPException(status_code=400, detail="Select at least one strategy")
+
+    period_raw = (body.period or "6m").strip()
+    if period_raw not in BACKTEST_PERIODS:
+        raise HTTPException(status_code=400, detail="Invalid period")
+    period = normalize_backtest_period(period_raw)
+    account_margin = normalize_account_margin(body.account_margin)
 
     repo = StrategiesRepository()
     strategies = await repo.queue_backtests(ids)
     if not strategies:
         raise HTTPException(status_code=404, detail="No matching strategies found")
 
+    start, end = resolve_period_window(period)
     runs_repo = BacktestRunsRepository()
-    runs = await runs_repo.create_queued_runs(strategies)
+    runs = await runs_repo.create_queued_runs(
+        strategies,
+        name=body.name,
+        instrument=body.instrument,
+        period=period,
+        verbose=body.verbose,
+        period_start=start.isoformat(),
+        period_end=end.isoformat(),
+        account_margin=account_margin,
+    )
     return JSONResponse({"strategies": strategies, "queued": len(strategies), "runs": runs})
 
 

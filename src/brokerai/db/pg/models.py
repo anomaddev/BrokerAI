@@ -254,6 +254,59 @@ class BacktestRunRow(Base):
     strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    progress_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
+    current_bar: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class BacktestLogRow(Base):
+    """Buffered log lines emitted while a backtest worker runs."""
+
+    __tablename__ = "backtest_logs"
+    __table_args__ = (
+        Index("ix_backtest_logs_run_created", "run_id", "created_at"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(Text, nullable=False)
+    level: Mapped[str] = mapped_column(Text, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BacktestActionRow(Base):
+    """Meaningful backtest events for step-through review (not every bar)."""
+
+    __tablename__ = "backtest_actions"
+    __table_args__ = (
+        Index("ix_backtest_actions_run_sequence", "run_id", "sequence"),
+        Index("ix_backtest_actions_run_bar", "run_id", "bar_time"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(Text, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    bar_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JsonType, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BacktestSettingsRow(Base):
+    """Singleton backtest processor settings (max concurrent, auto-start)."""
+
+    __tablename__ = "backtest_settings"
+    __table_args__ = {"schema": "brokerai"}
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default="default")
     doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
 
 
@@ -424,6 +477,8 @@ class UserProfileRow(Base):
     username: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     setup_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+    # Public Supabase Storage download URL when avatars are stored remotely.
+    profile_photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

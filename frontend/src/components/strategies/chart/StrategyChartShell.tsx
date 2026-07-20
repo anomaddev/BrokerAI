@@ -23,6 +23,8 @@ import {
   computeSlTpDistances,
   findCrossovers,
   generateMockCandles,
+  isJpyQuotePair,
+  previewPairFromSelection,
 } from "../../../pages/strategies/presets/emaCrossover/mockData";
 import { useGeneralSettings } from "../../../hooks/useGeneralSettings";
 import { applyChartTimeLocalization } from "../../../lib/chart/chartTimeLocalization";
@@ -81,6 +83,10 @@ export default function StrategyChartShell({
   }, [emaOverlays, params.fastEma, params.slowEma, fastEmaColor, slowEmaColor]);
 
   const candles = useMemo(() => generateMockCandles(120), []);
+  const previewPair = useMemo(
+    () => previewPairFromSelection(params.selectedInstruments),
+    [params.selectedInstruments],
+  );
   const chartData = useMemo(() => {
     const overlaySeries = resolvedOverlays.map((overlay) => ({
       ...overlay,
@@ -99,7 +105,13 @@ export default function StrategyChartShell({
     const signals = findCrossovers(fastPoints, slowPoints, adx);
     const lastBullish = [...signals].reverse().find((s) => s.type === "bullish");
     const entry = lastBullish?.price ?? candles[candles.length - 1].close;
-    const { slDistance, tpDistance } = computeSlTpDistances(params, candles, atr, entry);
+    const { slDistance, tpDistance } = computeSlTpDistances(
+      params,
+      candles,
+      atr,
+      entry,
+      previewPair,
+    );
     return {
       overlaySeries,
       fast: fastPoints,
@@ -112,7 +124,7 @@ export default function StrategyChartShell({
       tpDistance,
       lastBullish,
     };
-  }, [candles, params, resolvedOverlays]);
+  }, [candles, params, previewPair, resolvedOverlays]);
 
   const showDetailed = params.overlayMode === "detailed";
   const showSignals = params.overlays.signals;
@@ -327,7 +339,7 @@ export default function StrategyChartShell({
             axisLabelVisible: true,
             title:
               params.stopLossType === "fixed_pips"
-                ? `SL ${params.slFixedPips}p`
+                ? `SL ${isJpyQuotePair(previewPair) ? params.slFixedPipsJpy : params.slFixedPips}p`
                 : params.stopLossType === "structure"
                   ? "SL swing"
                   : "SL",
@@ -417,7 +429,7 @@ export default function StrategyChartShell({
       }
       setChartLayoutRevision((revision) => revision + 1);
     });
-  }, [candles, chartData, params, locked, showDetailed, resolvedOverlays]);
+  }, [candles, chartData, params, previewPair, locked, showDetailed, resolvedOverlays]);
 
   const showAdxPane = params.overlays.adx && params.adxFilter && params.overlayMode === "detailed";
   const adxBadge =

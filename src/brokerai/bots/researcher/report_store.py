@@ -220,11 +220,32 @@ class SupabaseStorageReportStore:
 
     async def exists(self, key: str) -> bool:
         await self.ensure()
+        return await asyncio.to_thread(self._exists_sync, key)
+
+    def _exists_sync(self, key: str) -> bool:
+        """Return True if ``key`` is present without downloading the object.
+
+        Supabase Storage answers missing-object downloads with HTTP 400
+        (body ``not_found``), which httpx logs at INFO every secretary tick.
+        Listing the parent prefix avoids that noise for expected misses.
+        """
+        client = self._get_client()
+        bucket = client.storage.from_(RESEARCH_REPORTS_BUCKET)
+        normalized = key.lstrip("/")
+        if "/" in normalized:
+            prefix, name = normalized.rsplit("/", 1)
+        else:
+            prefix, name = "", normalized
         try:
-            await self.read_text(key)
-            return True
-        except FileNotFoundError:
+            items = bucket.list(prefix, {"limit": 1000, "search": name})
+        except Exception:
+            logger.debug("Storage exists list failed for %s", key, exc_info=True)
             return False
+        for item in items or []:
+            item_name = item.get("name") if isinstance(item, dict) else None
+            if item_name == name:
+                return True
+        return False
 
     async def create_signed_url(
         self, key: str, *, expires_in: int = SIGNED_URL_EXPIRES_IN

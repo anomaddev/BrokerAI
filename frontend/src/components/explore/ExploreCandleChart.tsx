@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 import type { CandleBar } from "../../api/client";
 import ChartOhlcLegend from "../chart/ChartOhlcLegend";
 import MarketClosureOverlay from "../chart/MarketClosureOverlay";
+import BacktestActionFlagOverlay from "../backtests/BacktestActionFlagOverlay";
 import SignalFlagOverlay from "../strategies/chart/SignalFlagOverlay";
 import { useGeneralSettings } from "../../hooks/useGeneralSettings";
 import type { ChartOverlayItem } from "../../lib/chart/chartOverlayState";
@@ -22,8 +23,13 @@ import {
 import { chartPriceFormat } from "../../lib/chart/formatChartPrice";
 import { computeExploreOverlays } from "../../lib/chart/computeExploreOverlays";
 import {
-  chartFocusVisibleTimeRange,
+  FOCUS_SERIES_EDGE_BARS,
+  FOCUS_VISIBLE_BARS,
+  MAX_FOCUS_SERIES_BARS,
+  chartFocusVisibleLogicalRange,
   clipExploreOverlayDataToFocus,
+  extendCandlesForWarmup,
+  sliceCandlesAroundUnix,
   sliceCandlesToFocusWindow,
   type ChartFocusWindow,
 } from "../../lib/chart/chartFocusWindow";
@@ -32,7 +38,8 @@ import {
   mergeCrossoverSignals,
   type SignalLookback,
 } from "../../lib/analysis/analysisRunChartSignals";
-import { dedupeCandleBars } from "../../lib/chart/candleBars";
+import type { BacktestChartMarker } from "../../lib/backtests/backtestChartMarkers";
+import { candleBarsToChartCandles, dedupeCandleBars } from "../../lib/chart/candleBars";
 import { timeframeToMs } from "../../lib/candleSchedule";
 import { findMarketBoundariesForCandles } from "../../lib/chart/forexMarketClosures";
 import { useCandleCrosshairOhlc } from "../../lib/chart/useCandleCrosshairOhlc";
@@ -58,6 +65,13 @@ type ExploreCandleChartProps = {
   pinnedSignals?: CrossoverSignal[];
   /** When set, only crossover flags on the last N candles ending at the anchor are shown. */
   signalLookback?: SignalLookback | null;
+  /**
+   * Backtest action markers (entries/exits/skips). When provided, computed BUY/SELL
+   * crossover flags are hidden so fills are not confused with skipped signals.
+   */
+  actionMarkers?: BacktestChartMarker[];
+  /** Highlights the marker matching the selected action sequence. */
+  selectedActionSequence?: number | null;
 };
 
 function toChartTime(isoTime: string): UTCTimestamp | null {
@@ -125,6 +139,8 @@ export default function ExploreCandleChart({
   focusWindow = null,
   pinnedSignals = [],
   signalLookback = null,
+  actionMarkers = [],
+  selectedActionSequence = null,
 }: ExploreCandleChartProps) {
   const { timeOptions } = useGeneralSettings();
   const priceContainerRef = useRef<HTMLDivElement>(null);
@@ -139,24 +155,57 @@ export default function ExploreCandleChart({
   const rsiLineSeriesRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const adxPriceLinesRef = useRef<Map<string, IPriceLine[]>>(new Map());
   const hasFittedRef = useRef(false);
+  /** Last focus window key we centered the viewport on (re-apply when it changes). */
+  const appliedFocusKeyRef = useRef("");
   const prevCandlesRef = useRef<CandleBar[]>([]);
   const barCountRef = useRef(0);
+  const pendingVisibleRangeRef = useRef<{ from: number; to: number } | null>(null);
+  const shiftingWindowRef = useRef(false);
   const [layoutRevision, setLayoutRevision] = useState(0);
 
-  const warmupCandles = useMemo(
-    () => (focusWindow ? dedupeCandleBars(candles) : candles),
-    [candles, focusWindow],
-  );
-
-  const displayCandles = useMemo(() => {
-    if (!focusWindow) return warmupCandles;
+  const availableCandles = useMemo(() => {
+    if (!focusWindow) return candles;
+    const deduped = dedupeCandleBars(candles);
     return sliceCandlesToFocusWindow(
-      warmupCandles,
+      deduped,
       focusWindow.displaySince,
       focusWindow.displayUntil,
       timeframe,
     );
-  }, [warmupCandles, focusWindow, timeframe]);
+  }, [candles, focusWindow, timeframe]);
+
+  const focusVisibleKey = focusWindow
+    ? `${focusWindow.visibleFromTime}:${focusWindow.visibleToTime}`
+    : "";
+
+  // Focus anchor (action / step). Derived synchronously so the first focused paint
+  // slices and centers correctly.
+  const focusCenterUnix = focusWindow
+    ? Math.floor((focusWindow.visibleFromTime + focusWindow.visibleToTime) / 2)
+    : null;
+  // Override while the user pans near the edge of a capped mounted series.
+  const [panCenterUnix, setPanCenterUnix] = useState<number | null>(null);
+  const renderCenterUnix = panCenterUnix ?? focusCenterUnix;
+
+  useEffect(() => {
+    setPanCenterUnix(null);
+  }, [focusVisibleKey]);
+
+  const displayCandles = useMemo(() => {
+    if (!focusWindow) return availableCandles;
+    if (renderCenterUnix == null) return availableCandles;
+    if (availableCandles.length <= MAX_FOCUS_SERIES_BARS) return availableCandles;
+    return sliceCandlesAroundUnix(
+      availableCandles,
+      renderCenterUnix,
+      MAX_FOCUS_SERIES_BARS,
+    );
+  }, [availableCandles, focusWindow, renderCenterUnix]);
+
+  const overlaySourceCandles = useMemo(() => {
+    if (!focusWindow) return availableCandles;
+    return extendCandlesForWarmup(availableCandles, displayCandles);
+  }, [availableCandles, displayCandles, focusWindow]);
 
   const chartReady = Boolean(symbol && !loading && !error && displayCandles.length > 0);
   const ohlcSnapshot = useCandleCrosshairOhlc(
@@ -164,6 +213,7 @@ export default function ExploreCandleChart({
     candleSeriesRef,
     displayCandles,
     chartReady,
+    focusCenterUnix,
   );
   const marketBoundaries = useMemo(
     () => findMarketBoundariesForCandles(displayCandles, timeframe),
@@ -171,8 +221,8 @@ export default function ExploreCandleChart({
   );
 
   const overlayData = useMemo(() => {
-    if (overlayItems.length === 0 || warmupCandles.length === 0) return null;
-    const computed = computeExploreOverlays(overlayItems, warmupCandles);
+    if (overlayItems.length === 0 || overlaySourceCandles.length === 0) return null;
+    const computed = computeExploreOverlays(overlayItems, overlaySourceCandles);
     const candleTimes = computed.candles.map((candle) => candle.time);
     const withPinned = {
       ...computed,
@@ -182,19 +232,36 @@ export default function ExploreCandleChart({
         signalLookback,
       ),
     };
-    if (!focusWindow) return withPinned;
-    return clipExploreOverlayDataToFocus(
-      withPinned,
-      focusWindow.visibleFromTime,
-      focusWindow.visibleToTime + Math.floor(timeframeToMs(timeframe) / 1000),
-    );
-  }, [overlayItems, warmupCandles, focusWindow, timeframe, pinnedSignals, signalLookback]);
+    if (!focusWindow || displayCandles.length === 0) return withPinned;
+    // Clip overlays to the mounted series so pan stays cheap; sliding window
+    // reloads indicators for neighboring history as the user scrolls.
+    const first = parseAppInstant(displayCandles[0]?.time);
+    const last = parseAppInstant(displayCandles[displayCandles.length - 1]?.time);
+    if (!first || !last) return withPinned;
+    const displayFrom = Math.floor(first.getTime() / 1000);
+    const displayTo =
+      Math.floor(last.getTime() / 1000) + Math.floor(timeframeToMs(timeframe) / 1000);
+    return clipExploreOverlayDataToFocus(withPinned, displayFrom, displayTo);
+  }, [
+    overlayItems,
+    overlaySourceCandles,
+    displayCandles,
+    focusWindow,
+    timeframe,
+    pinnedSignals,
+    signalLookback,
+  ]);
 
   const showAdxPane = Boolean(overlayData?.adxLines.some((line) => line.visible));
   const showRsiPane = Boolean(overlayData?.rsiLines.some((line) => line.visible));
   const hasOverlays = Boolean(overlayData);
   const signalCandles = overlayData?.candles ?? [];
-  const showSignals = Boolean(overlayData?.signals.length);
+  const useActionMarkers = actionMarkers.length > 0;
+  const showSignals = Boolean(overlayData?.signals.length) && !useActionMarkers;
+  const markerCandles = useMemo(
+    () => candleBarsToChartCandles(displayCandles),
+    [displayCandles],
+  );
 
   useEffect(() => {
     if (!priceContainerRef.current || !symbol) return;
@@ -242,16 +309,8 @@ export default function ExploreCandleChart({
     };
     priceChart.timeScale().subscribeVisibleLogicalRangeChange(syncCharts);
 
-    const refitTimeScales = () => {
-      const count = barCountRef.current;
-      if (count < 1) return;
-      requestAnimationFrame(() => {
-        fitTimeScaleToBounds(priceChart, count, { fixEdges: true });
-        if (adxChart) fitTimeScaleToBounds(adxChart, count, { fixEdges: true });
-        if (rsiChart) fitTimeScaleToBounds(rsiChart, count, { fixEdges: true });
-      });
-    };
-
+    // Resize only updates pixel size — do not refit the time scale. Refitting
+    // via fitTimeScaleToBounds was overwriting action/step-through focus zoom.
     const resizeObserver = new ResizeObserver(() => {
       if (priceContainerRef.current && priceChartRef.current) {
         priceChartRef.current.applyOptions({
@@ -271,7 +330,7 @@ export default function ExploreCandleChart({
           height: Math.max(rsiContainerRef.current.clientHeight, 72),
         });
       }
-      refitTimeScales();
+      setLayoutRevision((revision) => revision + 1);
     });
 
     resizeObserver.observe(priceContainerRef.current);
@@ -297,7 +356,10 @@ export default function ExploreCandleChart({
       rsiLineSeriesRef.current = new Map();
       adxPriceLinesRef.current = new Map();
       hasFittedRef.current = false;
+      appliedFocusKeyRef.current = "";
       prevCandlesRef.current = [];
+      pendingVisibleRangeRef.current = null;
+      shiftingWindowRef.current = false;
     };
   }, [symbol]);
 
@@ -400,19 +462,59 @@ export default function ExploreCandleChart({
       syncLineSeriesMap(rsiChart, rsiLineSeriesRef.current, overlayData?.rsiLines ?? []);
     }
 
-    if (!hasFittedRef.current && data.length > 0 && !tailOnly) {
+    if (data.length > 0 && !tailOnly) {
       requestAnimationFrame(() => {
         const charts = [priceChart, adxChartRef.current, rsiChartRef.current].filter(
           Boolean,
         ) as IChartApi[];
-
-        if (focusWindow) {
-          const { from, to } = chartFocusVisibleTimeRange(focusWindow);
-          const range = { from: toSeriesTime(from), to: toSeriesTime(to) };
+        const pending = pendingVisibleRangeRef.current;
+        if (pending) {
+          pendingVisibleRangeRef.current = null;
+          const range = {
+            from: toSeriesTime(pending.from),
+            to: toSeriesTime(pending.to),
+          };
           for (const chart of charts) {
-            chart.timeScale().setVisibleRange(range);
+            try {
+              chart.timeScale().setVisibleRange(range);
+            } catch {
+              /* range may briefly fall outside a shifted series */
+            }
           }
-        } else {
+          hasFittedRef.current = true;
+          shiftingWindowRef.current = false;
+        } else if (focusWindow) {
+          // Re-center whenever the focus anchor changes (action click / step).
+          // Do not gate on hasFittedRef — that ran before the focus-key reset
+          // effect and left the viewport right-aligned on the series tip.
+          if (appliedFocusKeyRef.current !== focusVisibleKey) {
+            // Prior unfocused fits may have pinned the right edge; that clamps
+            // the logical range so the anchor sits on the right instead of center.
+            for (const chart of charts) {
+              chart.timeScale().applyOptions({
+                rightOffset: 0,
+                fixLeftEdge: false,
+                fixRightEdge: false,
+              });
+            }
+            const logical = chartFocusVisibleLogicalRange(
+              displayCandles,
+              focusWindow,
+              FOCUS_VISIBLE_BARS,
+            );
+            if (logical) {
+              for (const chart of charts) {
+                try {
+                  chart.timeScale().setVisibleLogicalRange(logical);
+                } catch {
+                  /* series may briefly be empty while shifting */
+                }
+              }
+              appliedFocusKeyRef.current = focusVisibleKey;
+              hasFittedRef.current = true;
+            }
+          }
+        } else if (!hasFittedRef.current) {
           fitTimeScaleToBounds(priceChart, data.length, { fixEdges: true });
           if (adxChartRef.current) {
             fitTimeScaleToBounds(adxChartRef.current, data.length, { fixEdges: true });
@@ -420,20 +522,58 @@ export default function ExploreCandleChart({
           if (rsiChartRef.current) {
             fitTimeScaleToBounds(rsiChartRef.current, data.length, { fixEdges: true });
           }
+          hasFittedRef.current = true;
         }
 
-        hasFittedRef.current = true;
         setLayoutRevision((revision) => revision + 1);
       });
     } else {
       setLayoutRevision((revision) => revision + 1);
     }
-  }, [displayCandles, overlayData, focusWindow]);
+  }, [displayCandles, overlayData, focusWindow, focusVisibleKey]);
 
   useEffect(() => {
     hasFittedRef.current = false;
+    appliedFocusKeyRef.current = "";
     prevCandlesRef.current = [];
-  }, [focusWindow, symbol, timeframe]);
+    pendingVisibleRangeRef.current = null;
+  }, [symbol, timeframe]);
+
+  // Sliding window: when the user pans near either edge of the mounted series,
+  // recenter on the visible midpoint so the rest of the period stays reachable.
+  useEffect(() => {
+    const priceChart = priceChartRef.current;
+    if (!priceChart || !focusWindow) return;
+    if (availableCandles.length <= MAX_FOCUS_SERIES_BARS) return;
+
+    const onRangeChange = () => {
+      if (shiftingWindowRef.current) return;
+      const logical = priceChart.timeScale().getVisibleLogicalRange();
+      if (!logical) return;
+      const count = barCountRef.current;
+      if (count < 1) return;
+      const nearLeft = logical.from < FOCUS_SERIES_EDGE_BARS;
+      const nearRight = logical.to > count - FOCUS_SERIES_EDGE_BARS;
+      if (!nearLeft && !nearRight) return;
+
+      const visible = priceChart.timeScale().getVisibleRange();
+      if (!visible) return;
+      const from = Number(visible.from);
+      const to = Number(visible.to);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
+      const mid = Math.floor((from + to) / 2);
+      if (renderCenterUnix != null && Math.abs(mid - renderCenterUnix) < 30) return;
+
+      shiftingWindowRef.current = true;
+      pendingVisibleRangeRef.current = { from, to };
+      setPanCenterUnix(mid);
+    };
+
+    priceChart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange);
+    return () => {
+      priceChart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
+    };
+  }, [focusWindow, availableCandles.length, renderCenterUnix, symbol]);
 
   if (!symbol) {
     return <div className="explore-chart explore-chart--idle" aria-hidden />;
@@ -481,6 +621,18 @@ export default function ExploreCandleChart({
               visible
               locked={false}
               showDetailed
+              layoutRevision={layoutRevision}
+            />
+          ) : null}
+          {useActionMarkers ? (
+            <BacktestActionFlagOverlay
+              chartRef={priceChartRef}
+              seriesRef={candleSeriesRef}
+              paneRef={priceContainerRef}
+              candles={markerCandles}
+              markers={actionMarkers}
+              selectedSequence={selectedActionSequence}
+              chartReady={chartReady}
               layoutRevision={layoutRevision}
             />
           ) : null}

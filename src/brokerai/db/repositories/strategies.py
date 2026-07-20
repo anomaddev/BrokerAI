@@ -31,6 +31,7 @@ BACKTEST_STATUS_QUEUED = "queued"
 BACKTEST_STATUS_RUNNING = "running"
 BACKTEST_STATUS_COMPLETED = "completed"
 BACKTEST_STATUS_FAILED = "failed"
+BACKTEST_STATUS_CANCELLED = "cancelled"
 
 BACKTEST_STATUSES = frozenset(
     {
@@ -39,6 +40,7 @@ BACKTEST_STATUSES = frozenset(
         BACKTEST_STATUS_RUNNING,
         BACKTEST_STATUS_COMPLETED,
         BACKTEST_STATUS_FAILED,
+        BACKTEST_STATUS_CANCELLED,
     }
 )
 
@@ -347,7 +349,7 @@ class StrategiesRepository:
             return bool(result.rowcount)
 
     async def queue_backtests(self, strategy_ids: list[str]) -> list[dict[str, Any]]:
-        """Mark strategies as queued for backtest (engine not implemented yet)."""
+        """Mark strategies as queued for backtest processing."""
         unique_ids = list(dict.fromkeys(strategy_id for strategy_id in strategy_ids if strategy_id))
         if not unique_ids:
             return []
@@ -364,3 +366,18 @@ class StrategiesRepository:
                 _sync_row_columns(row, existing)
                 updated.append(serialize_strategy(existing))
         return updated
+
+    async def set_backtest_status(
+        self, strategy_id: str, status: str
+    ) -> dict[str, Any] | None:
+        """Update only the strategy-level backtest status badge."""
+        normalized = normalize_backtest_status(status)
+        async with session_scope() as session:
+            row = await session.get(StrategyRow, strategy_id)
+            if not row:
+                return None
+            existing = dict(row.doc)
+            existing["backtest_status"] = normalized
+            existing["updated_at"] = _now_iso()
+            _sync_row_columns(row, existing)
+            return serialize_strategy(existing)

@@ -202,12 +202,14 @@ async def preview_weekly_debrief_skip_reason(
     week_start, week_key = target
     if not force and settings.get("last_weekly_debrief_run_week") == week_key:
         return f"Weekly debrief already ran for {week_key}"
-    if not force and await get_report_store().exists(weekly_debrief_key(week_start)):
-        return f"Weekly debrief already exists for {week_key}"
 
+    # Prefer cheap settings checks before Storage — secretary ticks every few seconds.
     model, model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
     if model_skip:
         return model_skip
+
+    if not force and await get_report_store().exists(weekly_debrief_key(week_start)):
+        return f"Weekly debrief already exists for {week_key}"
 
     weekday_dailies = await load_daily_reports_for_week(week_start)
     if len(weekday_dailies) < MIN_WEEKDAY_DAILIES_FOR_DEBRIEF:

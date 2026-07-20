@@ -13,5 +13,6 @@ describe("backtestStatus", () => {
     expect(backtestStatusLabel("running")).toBe("Running");
     expect(backtestStatusLabel("completed")).toBe("Completed");
     expect(backtestStatusLabel("failed")).toBe("Failed");
+    expect(backtestStatusLabel("cancelled")).toBe("Cancelled");
   });
 });

@@ -24,9 +24,82 @@ def test_validate_params_accepts_default_ema_crossover():
     assert result["timeframe"] == "M15"
     assert result["min_candles"] == 63
     assert result["execution"]["priority"] == 50
+    assert result["execution"]["dont_hold_between_sessions"] is True
+    assert result["execution"]["dont_hold_between_markets"] is True
+    assert result["execution"]["close_before_market_hours"] == 2
+    assert result["execution"]["no_late_market_trading"] is True
+    assert result["execution"]["late_market_hours"] == 2
     assert "trailing" not in result["exits"]
     assert result["signal"]["approaching"]["enabled"] is True
     assert result["signal"]["approaching"]["max_gap_atr"] == 0.5
+    assert result["exits"]["stop_loss"]["mode"] == "atr_based"
+    assert result["exits"]["stop_loss"]["fixed_pips_jpy"] == 50
+
+
+def test_validate_params_accepts_fixed_pips_jpy():
+    preset = get_preset("ema_crossover")
+    assert preset is not None
+    result = validate_params(
+        preset,
+        {
+            **DEFAULT_PARAMS,
+            "exits": {
+                **DEFAULT_PARAMS["exits"],
+                "stop_loss": {
+                    **DEFAULT_PARAMS["exits"]["stop_loss"],
+                    "mode": "fixed_pips",
+                    "fixed_pips": 20,
+                    "fixed_pips_jpy": 80,
+                },
+            },
+        },
+    )
+    assert result["exits"]["stop_loss"]["fixed_pips"] == 20
+    assert result["exits"]["stop_loss"]["fixed_pips_jpy"] == 80
+
+
+def test_validate_execution_market_hold_bounds():
+    preset = get_preset("ema_crossover")
+    assert preset is not None
+    with pytest.raises(ParamsValidationError):
+        validate_params(
+            preset,
+            {
+                **DEFAULT_PARAMS,
+                "execution": {
+                    **DEFAULT_PARAMS["execution"],
+                    "close_before_market_hours": 0,
+                },
+            },
+        )
+    with pytest.raises(ParamsValidationError):
+        validate_params(
+            preset,
+            {
+                **DEFAULT_PARAMS,
+                "execution": {
+                    **DEFAULT_PARAMS["execution"],
+                    "late_market_hours": 25,
+                },
+            },
+        )
+    result = validate_params(
+        preset,
+        {
+            **DEFAULT_PARAMS,
+            "execution": {
+                **DEFAULT_PARAMS["execution"],
+                "dont_hold_between_sessions": True,
+                "dont_hold_between_markets": True,
+                "close_before_market_hours": 24,
+                "no_late_market_trading": True,
+                "late_market_hours": 1,
+            },
+        },
+    )
+    assert result["execution"]["dont_hold_between_sessions"] is True
+    assert result["execution"]["close_before_market_hours"] == 24
+    assert result["execution"]["late_market_hours"] == 1
 
 
 def test_validate_params_accepts_reverse_crossover_with_ema_signal():

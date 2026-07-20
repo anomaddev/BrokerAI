@@ -44,6 +44,8 @@ async function requestForm<T>(path: string, form: FormData, method = "POST"): Pr
 export type MeResponse = {
   username: string;
   has_profile_photo: boolean;
+  /** Browser-usable photo URL (Supabase Storage public URL or local API path). */
+  profile_photo_url?: string | null;
   display_name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
@@ -82,8 +84,15 @@ export type AnalysisRunCandlesResponse = TradeCandlesResponse & {
 
 export const PROFILE_PHOTO_PATH = "/api/auth/profile-photo";
 
-export function profilePhotoUrl(cacheBust?: number): string {
-  return cacheBust ? `${PROFILE_PHOTO_PATH}?t=${cacheBust}` : PROFILE_PHOTO_PATH;
+/** Build a display URL for a profile photo, with optional cache-busting. */
+export function profilePhotoUrl(
+  photoUrl?: string | null,
+  cacheBust?: number,
+): string | null {
+  if (!photoUrl) return null;
+  if (!cacheBust) return photoUrl;
+  const sep = photoUrl.includes("?") ? "&" : "?";
+  return `${photoUrl}${sep}t=${cacheBust}`;
 }
 
 export type UpdateVersionRef = {
@@ -216,10 +225,12 @@ export const api = {
     if (data.profile_photo) {
       form.append("profile_photo", data.profile_photo);
     }
-    return requestForm<{ username: string; status: string; has_profile_photo: boolean }>(
-      "/api/auth/setup",
-      form,
-    );
+    return requestForm<{
+      username: string;
+      status: string;
+      has_profile_photo: boolean;
+      profile_photo_url?: string | null;
+    }>("/api/auth/setup", form);
   },
   login: (data: { username: string; password: string }) =>
     request<LoginResponse>("/api/auth/login", { method: "POST", body: JSON.stringify(data) }),
@@ -253,14 +264,18 @@ export const api = {
   uploadProfilePhoto: (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return requestForm<{ status: string; has_profile_photo: boolean }>(
-      "/api/auth/profile-photo",
-      form,
-      "PUT",
-    );
+    return requestForm<{
+      status: string;
+      has_profile_photo: boolean;
+      profile_photo_url?: string | null;
+    }>("/api/auth/profile-photo", form, "PUT");
   },
   deleteProfilePhoto: () =>
-    request<{ status: string; has_profile_photo: boolean }>("/api/auth/profile-photo", {
+    request<{
+      status: string;
+      has_profile_photo: boolean;
+      profile_photo_url?: string | null;
+    }>("/api/auth/profile-photo", {
       method: "DELETE",
     }),
   changeUsername: (data: { username: string; current_password: string }) =>
@@ -661,12 +676,28 @@ export const api = {
     request<StrategyVersionDetail>(
       `/api/strategies/${encodeURIComponent(strategyId)}/versions/${encodeURIComponent(versionId)}`,
     ),
-  queueStrategyBacktests: (ids: string[]) =>
+  queueStrategyBacktests: (
+    ids: string[],
+    options?: {
+      name?: string;
+      instrument?: string;
+      period?: BacktestPeriod;
+      verbose?: boolean;
+      account_margin?: number;
+    },
+  ) =>
     request<{ strategies: Strategy[]; queued: number; runs: BacktestRun[] }>(
       "/api/strategies/backtest",
       {
         method: "POST",
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({
+          ids,
+          name: options?.name,
+          instrument: options?.instrument,
+          period: options?.period ?? "6m",
+          verbose: options?.verbose ?? false,
+          account_margin: options?.account_margin ?? 10_000,
+        }),
       },
     ),
   listStrategyPresets: () =>
@@ -689,6 +720,65 @@ export const api = {
 
   getBacktestRun: (runId: string) =>
     request<BacktestRun>(`/api/backtest-runs/${encodeURIComponent(runId)}`),
+
+  getBacktestRunCandles: (runId: string) =>
+    request<CandlesResponse>(
+      `/api/backtest-runs/${encodeURIComponent(runId)}/candles`,
+    ),
+
+  startBacktestRun: (runId: string) =>
+    request<BacktestRun>(`/api/backtest-runs/${encodeURIComponent(runId)}/start`, {
+      method: "POST",
+    }),
+
+  cancelBacktestRun: (runId: string) =>
+    request<BacktestRun>(`/api/backtest-runs/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
+    }),
+
+  listBacktestLogs: (
+    runId: string,
+    params?: { after_id?: number; limit?: number; level?: string },
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.after_id != null) search.set("after_id", String(params.after_id));
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.level) search.set("level", params.level);
+    const query = search.toString();
+    return request<{ logs: BacktestLog[] }>(
+      `/api/backtest-runs/${encodeURIComponent(runId)}/logs${query ? `?${query}` : ""}`,
+    );
+  },
+
+  listBacktestActions: (
+    runId: string,
+    params?: { after_sequence?: number; kind?: string; limit?: number },
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.after_sequence != null) {
+      search.set("after_sequence", String(params.after_sequence));
+    }
+    if (params?.kind) search.set("kind", params.kind);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return request<{ actions: BacktestAction[] }>(
+      `/api/backtest-runs/${encodeURIComponent(runId)}/actions${query ? `?${query}` : ""}`,
+    );
+  },
+
+  getBacktestSettings: () => request<BacktestSettings>("/api/backtest/settings"),
+
+  updateBacktestSettings: (data: Partial<BacktestSettings>) =>
+    request<BacktestSettings>("/api/backtest/settings", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  requestBacktestAiFeedback: (runId: string) =>
+    request<BacktestRun>(
+      `/api/backtest-runs/${encodeURIComponent(runId)}/ai-feedback`,
+      { method: "POST" },
+    ),
 
   deleteBacktestRun: (runId: string) =>
     request<{ id: string; status: string }>(
@@ -1510,9 +1600,22 @@ export type ResearchRunWeeklyResult = {
 
 export type StrategyType = "preset" | "custom";
 
-export type BacktestStatus = "not_run" | "queued" | "running" | "completed" | "failed";
+export type BacktestStatus =
+  | "not_run"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
-export type BacktestRunStatus = "queued" | "running" | "completed" | "failed";
+export type BacktestRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type BacktestPeriod = "1m" | "3m" | "6m" | "1y" | "2y" | "5y";
 
 export type BacktestRunStats = {
   total_trades: number | null;
@@ -1521,21 +1624,87 @@ export type BacktestRunStats = {
   max_drawdown: number | null;
 };
 
+export type BacktestEquityPoint = {
+  time: string;
+  equity: number;
+};
+
+export type BacktestAiFeedbackStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type BacktestAiFeedback = {
+  status: BacktestAiFeedbackStatus;
+  model_id: string | null;
+  model_name: string | null;
+  reasoning_effort: ReasoningEffort | null;
+  markdown: string | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  usage?: Record<string, unknown> | null;
+};
+
 export type BacktestRun = {
   id: string;
+  name?: string;
   strategy_id: string;
   strategy_name: string;
   asset_class: AssetClass | string;
   asset_class_label: string;
   timeframe?: string | null;
   instruments: string[];
+  instrument?: string | null;
+  period?: BacktestPeriod | string;
+  period_start?: string | null;
+  period_end?: string | null;
+  account_margin?: number;
+  verbose?: boolean;
   status: BacktestRunStatus;
+  progress_pct?: number;
+  current_bar?: string | null;
+  status_message?: string | null;
+  cancel_requested?: boolean;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
   stats: BacktestRunStats;
+  equity_curve?: BacktestEquityPoint[];
   params_snapshot?: Record<string, unknown> | null;
+  ai_feedback?: BacktestAiFeedback | null;
+};
+
+export type BacktestLog = {
+  id: number;
+  run_id: string;
+  level: string;
+  message: string;
+  meta?: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export type BacktestAction = {
+  id: number;
+  run_id: string;
+  sequence: number;
+  kind: string;
+  message: string;
+  bar_time?: string | null;
+  meta?: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export type BacktestSettings = {
+  max_concurrent: number;
+  auto_start: boolean;
+  ai_feedback_enabled: boolean;
+  ai_feedback_auto_on_complete: boolean;
+  ai_feedback_model_id: string | null;
+  ai_feedback_model_name: string | null;
+  ai_feedback_reasoning_effort: ReasoningEffort;
 };
 
 export type BacktestRunsResponse = {

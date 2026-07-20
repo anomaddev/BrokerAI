@@ -10,6 +10,7 @@ import {
 import AssetClassFilterSelect from "../components/AssetClassFilterSelect";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import {
+  backtestRunNameLabel,
   backtestRunTimeframeLabel,
   sortBacktestRuns,
   type BacktestRunSortKey,
@@ -56,6 +57,8 @@ function normalizeRuns(runs: BacktestRun[]): BacktestRun[] {
     ...run,
     status: normalizeBacktestRunStatus(run.status),
     instruments: run.instruments ?? [],
+    progress_pct: run.progress_pct ?? 0,
+    status_message: run.status_message ?? null,
     stats: {
       total_trades: run.stats?.total_trades ?? null,
       win_rate: run.stats?.win_rate ?? null,
@@ -103,6 +106,7 @@ export default function Backtesting() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [strategyFilter, setStrategyFilter] = useState<string>("all");
   const [assetClassFilter, setAssetClassFilter] = useState<Set<AssetClass>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkPending, setBulkPending] = useState(false);
@@ -114,21 +118,67 @@ export default function Backtesting() {
   const selectAllRef = useRef<HTMLInputElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
+  const strategyOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const run of runs) {
+      const id = (run.strategy_id || "").trim();
+      const name = (run.strategy_name || "").trim();
+      if (!id || !name || byId.has(id)) continue;
+      byId.set(id, name);
+    }
+    return [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }, [runs]);
+
+  const hasActiveRuns = useMemo(
+    () =>
+      runs.some((run) => {
+        const status = normalizeBacktestRunStatus(run.status);
+        return status === "running" || status === "queued";
+      }),
+    [runs],
+  );
+
   useEffect(() => {
-    api
-      .listBacktestRuns({ limit: 200 })
-      .then((data) => setRuns(normalizeRuns(data.runs)))
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : "Failed to load backtest runs");
-        setRuns([]);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+    let cancelled = false;
+    const load = () =>
+      api
+        .listBacktestRuns({ limit: 200 })
+        .then((data) => {
+          if (!cancelled) setRuns(normalizeRuns(data.runs));
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : "Failed to load backtest runs");
+            setRuns([]);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+
+    void load();
+    // Poll faster while a run is queued/running so Trades / Win Rate / P/L stay live.
+    const intervalMs = hasActiveRuns ? 1500 : 5000;
+    const interval = window.setInterval(() => {
+      void api.listBacktestRuns({ limit: 200 }).then((data) => {
+        if (!cancelled) setRuns(normalizeRuns(data.runs));
+      });
+    }, intervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [hasActiveRuns]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matched = runs.filter((run) => {
       if (statusFilter !== "all" && normalizeBacktestRunStatus(run.status) !== statusFilter) {
+        return false;
+      }
+      if (strategyFilter !== "all" && run.strategy_id !== strategyFilter) {
         return false;
       }
       if (
@@ -139,6 +189,7 @@ export default function Backtesting() {
       }
       if (!q) return true;
       const haystack = [
+        run.name,
         run.strategy_name,
         run.asset_class_label,
         backtestRunTimeframeLabel(run),
@@ -150,7 +201,7 @@ export default function Backtesting() {
       return haystack.includes(q);
     });
     return sortBacktestRuns(matched, sortKey, sortDirection);
-  }, [runs, query, statusFilter, assetClassFilter, sortKey, sortDirection]);
+  }, [runs, query, statusFilter, strategyFilter, assetClassFilter, sortKey, sortDirection]);
 
   const filteredIds = useMemo(() => filtered.map((run) => run.id), [filtered]);
   const selectedFilteredCount = useMemo(
@@ -318,7 +369,7 @@ export default function Backtesting() {
   }
 
   function openRun(run: BacktestRun) {
-    navigate(ROUTES.research.strategyEdit(run.strategy_id));
+    navigate(ROUTES.research.backtestRun(run.id));
   }
 
   const hasFilteredResults = filtered.length > 0;
@@ -345,10 +396,25 @@ export default function Backtesting() {
           <input
             type="search"
             className="research-search"
-            placeholder="Search by strategy, timeframe, or instrument…"
+            placeholder="Search by name, strategy, timeframe, or instrument…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+          <div className="research-select-wrap">
+            <select
+              className="research-select"
+              value={strategyFilter}
+              onChange={(event) => setStrategyFilter(event.target.value)}
+              aria-label="Filter by strategy"
+            >
+              <option value="all">All strategies</option>
+              {strategyOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="research-select-wrap">
             <select
               className="research-select"
@@ -361,6 +427,7 @@ export default function Backtesting() {
               <option value="running">Running</option>
               <option value="completed">Completed</option>
               <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
             </select>
           </div>
           <AssetClassFilterSelect value={assetClassFilter} onChange={setAssetClassFilter} />
@@ -456,6 +523,13 @@ export default function Backtesting() {
                   </label>
                 </th>
                 <SortableHeader
+                  label="Name"
+                  sortKey="name"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHeader
                   label="Strategy"
                   sortKey="strategy"
                   activeKey={sortKey}
@@ -523,7 +597,7 @@ export default function Backtesting() {
             <tbody>
               {!hasFilteredResults ? (
                 <tr className="strategy-table-empty-row">
-                  <td colSpan={10}>
+                  <td colSpan={11}>
                     <div className="strategy-table-empty">
                       <p className={error && !loading ? "settings-error" : "settings-muted"}>
                         {emptyMessage}
@@ -566,21 +640,37 @@ export default function Backtesting() {
                             className="ui-checkbox-input"
                             checked={isSelected}
                             onChange={() => toggleSelected(run.id)}
-                            aria-label={`Select backtest for ${run.strategy_name}`}
+                            aria-label={`Select backtest for ${backtestRunNameLabel(run)}`}
                           />
                         </label>
                       </td>
                       <td>
                         <div className="strategy-name-cell">
-                          <span className="strategy-name">{run.strategy_name}</span>
+                          <span className="strategy-name">{backtestRunNameLabel(run)}</span>
                         </div>
                       </td>
+                      <td>{run.strategy_name || "—"}</td>
                       <td>{backtestRunTimeframeLabel(run)}</td>
                       <td>{run.asset_class_label || "—"}</td>
                       <td>
                         <span className={`research-tag strategy-backtest--${status}`}>
                           {backtestRunStatusLabel(status)}
                         </span>
+                        {status === "running" ? (
+                          <div className="backtest-progress backtest-progress--inline">
+                            <div className="backtest-progress-bar" aria-hidden>
+                              <div
+                                className="backtest-progress-bar-fill"
+                                style={{
+                                  width: `${Math.max(0, Math.min(100, run.progress_pct ?? 0))}%`,
+                                }}
+                              />
+                            </div>
+                            <span className="settings-muted">
+                              {Math.round(run.progress_pct ?? 0)}%
+                            </span>
+                          </div>
+                        ) : null}
                       </td>
                       <td className="settings-muted">
                         {formatInstant(run.created_at, "short")}

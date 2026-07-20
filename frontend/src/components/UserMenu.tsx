@@ -1,21 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, LogOut, User } from "lucide-react";
-import { api, profilePhotoUrl } from "../api/client";
+import { api, PROFILE_PHOTO_PATH, profilePhotoUrl } from "../api/client";
 import ProfileAvatar from "./ProfileAvatar";
 import { PROFILE_PHOTO_UPDATED } from "../lib/profilePhoto";
 import { ACCOUNT_UPDATED, accountMenuLabel } from "../lib/account";
 
 type UserMenuProps = {
   displayName: string;
-  hasProfilePhoto?: boolean;
+  profilePhotoUrlValue?: string | null;
   photoVersion?: number;
   authMode?: "builtin" | "oidc";
 };
 
 export default function UserMenu({
   displayName,
-  hasProfilePhoto = false,
+  profilePhotoUrlValue = null,
   photoVersion = 0,
   authMode = "builtin",
 }: UserMenuProps) {
@@ -54,7 +54,7 @@ export default function UserMenu({
   }
 
   const menuLabel = displayName || "Account";
-  const avatarSrc = hasProfilePhoto ? profilePhotoUrl(photoVersion) : null;
+  const avatarSrc = profilePhotoUrl(profilePhotoUrlValue, photoVersion);
 
   return (
     <div className="user-menu" ref={menuRef}>
@@ -105,7 +105,7 @@ export default function UserMenu({
 
 export function UserMenuContainer() {
   const [displayName, setDisplayName] = useState("");
-  const [hasProfilePhoto, setHasProfilePhoto] = useState(false);
+  const [profilePhotoUrlValue, setProfilePhotoUrlValue] = useState<string | null>(null);
   const [photoVersion, setPhotoVersion] = useState(0);
   const [authMode, setAuthMode] = useState<"builtin" | "oidc">("builtin");
 
@@ -120,14 +120,16 @@ export function UserMenuContainer() {
         .me()
         .then((user) => {
           setDisplayName(accountMenuLabel(user));
-          setHasProfilePhoto(user.has_profile_photo);
-          if (user.has_profile_photo) {
+          const url =
+            user.profile_photo_url ?? (user.has_profile_photo ? PROFILE_PHOTO_PATH : null);
+          setProfilePhotoUrlValue(url);
+          if (url) {
             setPhotoVersion(Date.now());
           }
         })
         .catch(() => {
           setDisplayName("");
-          setHasProfilePhoto(false);
+          setProfilePhotoUrlValue(null);
         });
     }
 
@@ -143,7 +145,7 @@ export function UserMenuContainer() {
   return (
     <UserMenu
       displayName={displayName}
-      hasProfilePhoto={hasProfilePhoto}
+      profilePhotoUrlValue={profilePhotoUrlValue}
       photoVersion={photoVersion}
       authMode={authMode}
     />

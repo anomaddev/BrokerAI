@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from brokerai.config_backup.change_labels import (
@@ -33,8 +33,10 @@ from brokerai.auth.general_settings import normalize_general_settings
 from brokerai.auth.mode import auth_mode, is_builtin_mode, is_oidc_mode
 from brokerai.auth.oidc_client import OidcClient
 from brokerai.auth.profile_photo import (
-    clear_profile_photos,
+    delete_profile_photo as remove_stored_profile_photo,
+    is_remote_photo_url,
     resolve_profile_photo_path,
+    resolve_profile_photo_url,
     save_profile_photo,
 )
 from brokerai.config.settings import get_settings
@@ -198,7 +200,7 @@ async def setup(
     email: str = Form(...),
     username: str | None = Form(None),
     profile_photo: UploadFile | None = File(None),
-) -> dict[str, str | bool]:
+) -> dict[str, str | bool | None]:
     _reject_when_oidc_enabled()
     store = AuthStore()
     if store.is_setup_complete():
@@ -225,15 +227,14 @@ async def setup(
     except PasswordValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    profile_photo_name: str | None = None
+    photo_data: bytes | None = None
     if profile_photo and profile_photo.filename:
         try:
-            photo_data = await profile_photo.read()
-            if photo_data:
-                store.ensure_dir()
-                profile_photo_name = save_profile_photo(store.auth_dir, photo_data)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raw = await profile_photo.read()
+            if raw:
+                photo_data = raw
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Failed to read profile photo") from exc
 
     from brokerai.auth.supabase_auth import (
         SupabaseAuthError,
@@ -264,10 +265,23 @@ async def setup(
                 detail=str(exc),
             ) from exc
 
+    profile_photo_ref: str | None = None
+    if photo_data:
+        try:
+            store.ensure_dir()
+            profile_id = auth_sub or f"local:{resolved_username}"
+            profile_photo_ref = await save_profile_photo(
+                store.auth_dir,
+                photo_data,
+                profile_id=profile_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     record = store.create_user(
         resolved_username,
         password_hash,
-        profile_photo_name,
+        profile_photo_ref,
         auth_sub=auth_sub,
         email=auth_email,
         first_name=resolved_first,
@@ -279,10 +293,12 @@ async def setup(
         record.username, oidc_sub=record.oidc_sub if record.oidc_sub else None
     )
     set_session_cookie(response, token, request)
+    photo_url = resolve_profile_photo_url(stored=record.profile_photo, auth_dir=store.auth_dir)
     return {
         "username": record.username,
         "status": "created",
-        "has_profile_photo": bool(profile_photo_name),
+        "has_profile_photo": bool(photo_url),
+        "profile_photo_url": photo_url,
     }
 
 
@@ -721,17 +737,18 @@ async def oidc_logout(request: Request, response: Response) -> dict[str, str | N
 async def me(username: str = Depends(require_auth)) -> dict[str, str | bool | None]:
     store = AuthStore()
     user = store.get_user()
-    has_photo = bool(
-        user
-        and user.profile_photo
-        and resolve_profile_photo_path(store.auth_dir, user.profile_photo)
+    photo_url = (
+        resolve_profile_photo_url(stored=user.profile_photo, auth_dir=store.auth_dir)
+        if user
+        else None
     )
     mode = auth_mode()
     first_name = user.first_name if user else None
     last_name = user.last_name if user else None
     return {
         "username": username,
-        "has_profile_photo": has_photo,
+        "has_profile_photo": bool(photo_url),
+        "profile_photo_url": photo_url,
         "display_name": first_name,
         "first_name": first_name,
         "last_name": last_name,
@@ -741,12 +758,16 @@ async def me(username: str = Depends(require_auth)) -> dict[str, str | bool | No
     }
 
 
-@router.get("/profile-photo")
-async def get_profile_photo(_username: str = Depends(require_auth)) -> FileResponse:
+@router.get("/profile-photo", response_model=None)
+async def get_profile_photo(
+    _username: str = Depends(require_auth),
+) -> FileResponse | RedirectResponse:
     store = AuthStore()
     user = store.get_user()
-    if user is None:
+    if user is None or not user.profile_photo:
         raise HTTPException(status_code=404, detail="Profile photo not found")
+    if is_remote_photo_url(user.profile_photo):
+        return RedirectResponse(url=user.profile_photo, status_code=302)
     path = resolve_profile_photo_path(store.auth_dir, user.profile_photo)
     if path is None:
         raise HTTPException(status_code=404, detail="Profile photo not found")
@@ -757,27 +778,35 @@ async def get_profile_photo(_username: str = Depends(require_auth)) -> FileRespo
 async def upload_profile_photo(
     file: UploadFile = File(...),
     _username: str = Depends(require_auth),
-) -> dict[str, str | bool]:
+) -> dict[str, str | bool | None]:
     store = AuthStore()
-    if store.get_user() is None:
+    user = store.get_user()
+    if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     try:
         photo_data = await file.read()
-        filename = save_profile_photo(store.auth_dir, photo_data)
+        stored = await save_profile_photo(
+            store.auth_dir,
+            photo_data,
+            profile_id=store.profile_id() or store._profile_id_for(user),
+            previous=user.profile_photo,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    store.set_profile_photo(filename)
-    return {"status": "ok", "has_profile_photo": True}
+    record = store.set_profile_photo(stored)
+    photo_url = resolve_profile_photo_url(stored=record.profile_photo, auth_dir=store.auth_dir)
+    return {"status": "ok", "has_profile_photo": bool(photo_url), "profile_photo_url": photo_url}
 
 
 @router.delete("/profile-photo")
-async def delete_profile_photo(_username: str = Depends(require_auth)) -> dict[str, str | bool]:
+async def delete_profile_photo(_username: str = Depends(require_auth)) -> dict[str, str | bool | None]:
     store = AuthStore()
-    if store.get_user() is None:
+    user = store.get_user()
+    if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    clear_profile_photos(store.auth_dir)
+    await remove_stored_profile_photo(store.auth_dir, stored=user.profile_photo)
     store.set_profile_photo(None)
-    return {"status": "ok", "has_profile_photo": False}
+    return {"status": "ok", "has_profile_photo": False, "profile_photo_url": None}
 
 
 @router.put("/account/username")

@@ -7,6 +7,7 @@ import type {
   UTCTimestamp,
 } from "lightweight-charts";
 import type { CandleBar } from "../../api/client";
+import { findCandleIndexNearUnix } from "./chartFocusWindow";
 import { parseAppInstant } from "../formatTime";
 
 export type OhlcSnapshot = {
@@ -29,9 +30,18 @@ function candleBarToSnapshot(candle: CandleBar): OhlcSnapshot | null {
   };
 }
 
-function lastSnapshot(candles: CandleBar[]): OhlcSnapshot | null {
-  const last = candles[candles.length - 1];
-  return last ? candleBarToSnapshot(last) : null;
+/** Prefer the focus/selection center; fall back to the last mounted candle. */
+export function defaultOhlcSnapshot(
+  candles: CandleBar[],
+  focusCenterUnix?: number | null,
+): OhlcSnapshot | null {
+  if (candles.length === 0) return null;
+  if (focusCenterUnix != null && Number.isFinite(focusCenterUnix)) {
+    const idx = findCandleIndexNearUnix(candles, focusCenterUnix);
+    const focused = candleBarToSnapshot(candles[idx]!);
+    if (focused) return focused;
+  }
+  return candleBarToSnapshot(candles[candles.length - 1]!);
 }
 
 export function useCandleCrosshairOhlc(
@@ -39,12 +49,16 @@ export function useCandleCrosshairOhlc(
   seriesRef: RefObject<ISeriesApi<"Candlestick"> | null>,
   candles: CandleBar[],
   enabled: boolean,
+  /** When set (focused backtest/analysis), idle OHLC follows this unix second. */
+  focusCenterUnix?: number | null,
 ): OhlcSnapshot | null {
-  const [snapshot, setSnapshot] = useState<OhlcSnapshot | null>(() => lastSnapshot(candles));
+  const [snapshot, setSnapshot] = useState<OhlcSnapshot | null>(() =>
+    defaultOhlcSnapshot(candles, focusCenterUnix),
+  );
 
   useEffect(() => {
-    setSnapshot(lastSnapshot(candles));
-  }, [candles]);
+    setSnapshot(defaultOhlcSnapshot(candles, focusCenterUnix));
+  }, [candles, focusCenterUnix]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -53,13 +67,13 @@ export function useCandleCrosshairOhlc(
 
     const handler = (param: MouseEventParams) => {
       if (!param.time) {
-        setSnapshot(lastSnapshot(candles));
+        setSnapshot(defaultOhlcSnapshot(candles, focusCenterUnix));
         return;
       }
 
       const data = param.seriesData.get(series);
       if (!data || typeof data !== "object" || !("open" in data)) {
-        setSnapshot(lastSnapshot(candles));
+        setSnapshot(defaultOhlcSnapshot(candles, focusCenterUnix));
         return;
       }
 
@@ -75,7 +89,7 @@ export function useCandleCrosshairOhlc(
 
     chart.subscribeCrosshairMove(handler);
     return () => chart.unsubscribeCrosshairMove(handler);
-  }, [chartRef, seriesRef, candles, enabled]);
+  }, [chartRef, seriesRef, candles, enabled, focusCenterUnix]);
 
   return snapshot;
 }

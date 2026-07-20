@@ -10,7 +10,7 @@ from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_stra
 from brokerai.bots.data_manager.service import DataManagerService, require_data_manager_service
 from brokerai.bots.secretary.types import PipelineContext
 from brokerai.core.worker_pool import get_worker_pool
-from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+from brokerai.db.repositories.asset_settings import AssetSettingsRepository, enabled_forex_pairs
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository
 from brokerai.trading.execution_gates import is_executor_eligible
 from brokerai.trading.pipeline import ensure_trading_registries
@@ -51,6 +51,12 @@ async def run_broker_execution(
     trade_counts = await BrokerLotsRepository().daily_lot_counts()
     asset_settings = await AssetSettingsRepository().get(context.asset_class)
     only_one_position_per_pair = bool(asset_settings.get("only_one_position_per_pair", True))
+    asset_enabled = bool(asset_settings.get("enabled"))
+    asset_pairs = (
+        enabled_forex_pairs(list(asset_settings.get("enabled_pairs") or []))
+        if context.asset_class == "forex"
+        else None
+    )
     now = utc_now()
 
     ineligible = [analysis for analysis in results if not is_executor_eligible(analysis)]
@@ -58,6 +64,8 @@ async def run_broker_execution(
         ineligible,
         strategies_by_id,
         trade_counts=trade_counts,
+        asset_enabled=asset_enabled,
+        asset_enabled_pairs=asset_pairs,
         asset_enabled_sessions=asset_settings.get("enabled_sessions"),
         when=now,
         only_one_position_per_pair=only_one_position_per_pair,
@@ -98,6 +106,8 @@ async def run_broker_execution(
         actionable,
         strategies_by_id,
         trade_counts=trade_counts,
+        asset_enabled=asset_enabled,
+        asset_enabled_pairs=asset_pairs,
         asset_enabled_sessions=asset_settings.get("enabled_sessions"),
         when=now,
         data_manager=dm,

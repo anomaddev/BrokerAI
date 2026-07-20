@@ -6,6 +6,7 @@ const BACKTEST_STATUS_LABELS: Record<BacktestStatus, string> = {
   running: "Running",
   completed: "Completed",
   failed: "Failed",
+  cancelled: "Cancelled",
 };
 
 export function normalizeBacktestStatus(status: BacktestStatus | undefined | null): BacktestStatus {
@@ -13,7 +14,8 @@ export function normalizeBacktestStatus(status: BacktestStatus | undefined | nul
     status === "queued" ||
     status === "running" ||
     status === "completed" ||
-    status === "failed"
+    status === "failed" ||
+    status === "cancelled"
   ) {
     return status;
   }

@@ -5,6 +5,9 @@ import { api, type AssetClass, type Strategy } from "../api/client";
 import { ROUTES } from "../lib/routes";
 import AssetClassFilterSelect from "../components/AssetClassFilterSelect";
 import CreateStrategyOverlay from "../components/strategies/CreateStrategyOverlay";
+import QueueBacktestOverlay, {
+  type QueueBacktestParams,
+} from "../components/strategies/QueueBacktestOverlay";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import {
   backtestStatusLabel,
@@ -117,6 +120,8 @@ export default function Strategies() {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [backtestOverlayOpen, setBacktestOverlayOpen] = useState(false);
+  const [backtestOverlayError, setBacktestOverlayError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<StrategySortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -323,29 +328,48 @@ export default function Strategies() {
     }
   }
 
-  async function applyBulkBacktest() {
-    const ids = filteredIds.filter((id) => selectedIds.has(id));
+  const selectedStrategiesForBacktest = useMemo(
+    () => filtered.filter((strategy) => selectedIds.has(strategy.id)),
+    [filtered, selectedIds],
+  );
+
+  function openBacktestOverlay() {
+    setActionsOpen(false);
+    setBacktestOverlayError(null);
+    setBulkError(null);
+    setBacktestOverlayOpen(true);
+  }
+
+  async function applyBulkBacktest(params: QueueBacktestParams) {
+    const ids = selectedStrategiesForBacktest.map((strategy) => strategy.id);
     if (ids.length === 0) return;
 
     setBulkPending(true);
+    setBacktestOverlayError(null);
     setBulkError(null);
-    setActionsOpen(false);
 
     try {
-      const result = await api.queueStrategyBacktests(ids);
+      const result = await api.queueStrategyBacktests(ids, {
+        name: params.name,
+        instrument: params.instrument,
+        period: params.period,
+        verbose: params.verbose,
+        account_margin: params.account_margin,
+      });
       const updatedById = new Map(
         normalizeStrategies(result.strategies).map((strategy) => [strategy.id, strategy]),
       );
       setStrategies((current) =>
         current.map((strategy) => updatedById.get(strategy.id) ?? strategy),
       );
+      setBacktestOverlayOpen(false);
       if (result.queued < ids.length) {
         setBulkError(
           `${result.queued} of ${ids.length} strategies were queued for backtest.`,
         );
       }
     } catch (err) {
-      setBulkError(err instanceof Error ? err.message : "Could not queue backtests");
+      setBacktestOverlayError(err instanceof Error ? err.message : "Could not queue backtests");
     } finally {
       setBulkPending(false);
     }
@@ -453,9 +477,7 @@ export default function Strategies() {
                   className="strategy-bulk-action-item strategy-bulk-action-item--backtest"
                   role="menuitem"
                   disabled={bulkPending}
-                  onClick={() => {
-                    void applyBulkBacktest();
-                  }}
+                  onClick={openBacktestOverlay}
                 >
                   <span className="strategy-bulk-action-icon" aria-hidden>
                     <History size={15} strokeWidth={2.25} />
@@ -698,6 +720,21 @@ export default function Strategies() {
       </div>
 
       {createOpen ? <CreateStrategyOverlay onClose={() => setCreateOpen(false)} /> : null}
+
+      {backtestOverlayOpen ? (
+        <QueueBacktestOverlay
+          strategies={selectedStrategiesForBacktest}
+          submitting={bulkPending}
+          error={backtestOverlayError}
+          onClose={() => {
+            if (!bulkPending) {
+              setBacktestOverlayOpen(false);
+              setBacktestOverlayError(null);
+            }
+          }}
+          onConfirm={applyBulkBacktest}
+        />
+      ) : null}
 
       {deleteConfirmOpen && (
         <div

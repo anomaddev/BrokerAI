@@ -17,6 +17,10 @@ from brokerai.db.market_data_timeseries import (
 from brokerai.db.pg.client import session_scope
 from brokerai.db.pg.models import MarketCandle
 
+# asyncpg rejects statements with more than 32767 bind parameters. Each candle
+# row maps to 14 columns, so keep batches under floor(32767 / 14) ≈ 2340.
+_UPSERT_BATCH_SIZE = 2000
+
 
 def _dedupe_candle_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop duplicate open times while preserving ascending ``ts`` order (last row wins)."""
@@ -120,35 +124,37 @@ class MarketDataRepository:
             bind = session.get_bind()
             dialect = bind.dialect.name if bind is not None else "postgresql"
 
-            if dialect == "postgresql":
-                stmt = pg_insert(MarketCandle).values(row_values)
-                stmt = stmt.on_conflict_do_update(
-                    constraint="uq_market_candles_series_ts",
-                    set_={
-                        "time": stmt.excluded.time,
-                        "open": stmt.excluded.open,
-                        "high": stmt.excluded.high,
-                        "low": stmt.excluded.low,
-                        "close": stmt.excluded.close,
-                        "volume": stmt.excluded.volume,
-                        "sessions": stmt.excluded.sessions,
-                        "trading_day_et": stmt.excluded.trading_day_et,
-                        "fetched_at": stmt.excluded.fetched_at,
-                        "expires_at": stmt.excluded.expires_at,
-                    },
-                )
-                await session.execute(stmt)
-            else:
-                timestamps = [values["ts"] for values in row_values]
-                await session.execute(
-                    delete(MarketCandle).where(
-                        MarketCandle.symbol == symbol,
-                        MarketCandle.timeframe == timeframe,
-                        MarketCandle.source == source,
-                        MarketCandle.ts.in_(timestamps),
+            for offset in range(0, len(row_values), _UPSERT_BATCH_SIZE):
+                batch = row_values[offset : offset + _UPSERT_BATCH_SIZE]
+                if dialect == "postgresql":
+                    stmt = pg_insert(MarketCandle).values(batch)
+                    stmt = stmt.on_conflict_do_update(
+                        constraint="uq_market_candles_series_ts",
+                        set_={
+                            "time": stmt.excluded.time,
+                            "open": stmt.excluded.open,
+                            "high": stmt.excluded.high,
+                            "low": stmt.excluded.low,
+                            "close": stmt.excluded.close,
+                            "volume": stmt.excluded.volume,
+                            "sessions": stmt.excluded.sessions,
+                            "trading_day_et": stmt.excluded.trading_day_et,
+                            "fetched_at": stmt.excluded.fetched_at,
+                            "expires_at": stmt.excluded.expires_at,
+                        },
                     )
-                )
-                await session.execute(insert(MarketCandle), row_values)
+                    await session.execute(stmt)
+                else:
+                    timestamps = [values["ts"] for values in batch]
+                    await session.execute(
+                        delete(MarketCandle).where(
+                            MarketCandle.symbol == symbol,
+                            MarketCandle.timeframe == timeframe,
+                            MarketCandle.source == source,
+                            MarketCandle.ts.in_(timestamps),
+                        )
+                    )
+                    await session.execute(insert(MarketCandle), batch)
 
         return len(row_values)
 

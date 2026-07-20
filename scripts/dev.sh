@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # BrokerAI local development — bootstrap and run all dev services on macOS/Linux.
 #
+# Each run wipes the local Supabase DB volume + data/auth so the app starts as a
+# fresh install (setup wizard). Pass --no-supabase to skip Docker wipe/start.
+#
 # Usage:
-#   ./scripts/dev.sh              Start dev stack (bootstrap if needed)
-#   ./scripts/dev.sh --setup      Bootstrap only (venv, .env, supabase, npm)
+#   ./scripts/dev.sh              Fresh DB + start dev stack
+#   ./scripts/dev.sh --setup      Bootstrap only (venv, .env, wipe Supabase, npm)
 #   ./scripts/dev.sh --backend-only   API + orchestrator only (no Vite)
-#   ./scripts/dev.sh --no-supabase Skip self-hosted Supabase Docker stack
+#   ./scripts/dev.sh --no-supabase Skip Supabase Docker wipe/start
 #   ./scripts/dev.sh --no-open    Do not open browser (macOS)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="${ROOT}/venv"
 ENV_FILE="${ROOT}/.env"
+AUTH_DIR="${ROOT}/data/auth"
+SUPA="${ROOT}/deploy/supabase"
+SUPABASE_DB_CONTAINER="supabase-db"
 PIDS=()
 
 SETUP_ONLY=false
@@ -25,9 +31,12 @@ Usage: $(basename "$0") [OPTIONS]
 
 Bootstrap and run BrokerAI locally for development.
 
+Wipes the local Supabase Postgres/storage volumes and data/auth/ on every run
+so you land on a new-install setup wizard. Does not reset deploy/supabase/.env keys.
+
 Options:
-  --setup          Bootstrap venv, .env, Supabase, and npm deps; do not start servers
-  --no-supabase    Skip self-hosted Supabase Docker auto-start
+  --setup          Bootstrap venv, .env, wipe Supabase, and npm deps; do not start servers
+  --no-supabase    Skip Supabase Docker wipe/start (keep your existing DB)
   --no-open        Do not open the browser (macOS)
   --backend-only   Skip Vite; serve built static via uvicorn only
   -h, --help       Show this help
@@ -143,8 +152,111 @@ ensure_dirs() {
   mkdir -p "${ROOT}/data" "${ROOT}/logs"
 }
 
+compose_supabase() {
+  (
+    cd "${SUPA}"
+    docker compose -f docker-compose.yml -f docker-compose.brokerai.yml "$@"
+  )
+}
+
+postgres_ready() {
+  docker ps --format '{{.Names}}' | grep -qx "${SUPABASE_DB_CONTAINER}" \
+    && docker exec "${SUPABASE_DB_CONTAINER}" pg_isready -U postgres >/dev/null 2>&1
+}
+
+wait_for_postgres() {
+  local i
+  log "Waiting for Postgres (${SUPABASE_DB_CONTAINER}) — first init can take a minute"
+  for i in $(seq 1 120); do
+    if postgres_ready; then
+      # Give init scripts a moment after pg_isready flips true on a fresh volume.
+      sleep 2
+      if postgres_ready; then
+        log "Postgres is ready"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "Postgres not ready after 120s" >&2
+  return 1
+}
+
+brokerai_table_count() {
+  docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -Atc \
+    "SELECT count(*)::int FROM information_schema.tables
+     WHERE table_schema = 'brokerai' AND table_type = 'BASE TABLE'" 2>/dev/null || echo 0
+}
+
+ensure_brokerai_schema() {
+  local attempt max_attempts count
+  max_attempts=30
+
+  if [[ ! -x "${VENV}/bin/python" ]]; then
+    echo "venv missing — cannot ensure brokerai schema" >&2
+    return 1
+  fi
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    echo ".env missing — cannot ensure brokerai schema" >&2
+    return 1
+  fi
+
+  log "Ensuring Postgres brokerai schema (SQLAlchemy create_all)"
+  for attempt in $(seq 1 "${max_attempts}"); do
+    if (
+      cd "${ROOT}"
+      set -a
+      # shellcheck disable=SC1090
+      source "${ENV_FILE}"
+      set +a
+      "${VENV}/bin/python" -c \
+        "import asyncio; from brokerai.db.indexes import ensure_indexes; asyncio.run(ensure_indexes())"
+    ); then
+      count="$(brokerai_table_count)"
+      if [[ "${count}" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+        log "brokerai schema ready (${count} tables) — select schema 'brokerai' in Studio (not public)"
+        return 0
+      fi
+      warn "ensure_indexes returned OK but brokerai has ${count} tables — retrying (${attempt}/${max_attempts})"
+    else
+      warn "Schema ensure attempt ${attempt}/${max_attempts} failed — retrying"
+    fi
+    sleep 2
+  done
+
+  echo "Failed to create brokerai tables after ${max_attempts} attempts" >&2
+  return 1
+}
+
+wipe_supabase_db() {
+  log "Wiping Supabase Postgres volume (clean DB from scratch)"
+  if [[ -f "${SUPA}/.env" ]]; then
+    compose_supabase down --remove-orphans || true
+  else
+    warn "deploy/supabase/.env missing — compose down may be incomplete"
+  fi
+
+  # Bind-mounted data dirs (not Docker named volumes). Keep .env / JWT keys.
+  for dir in "${SUPA}/volumes/db/data" "${SUPA}/volumes/storage"; do
+    if [[ -e "${dir}" ]]; then
+      log "Removing ${dir}"
+      rm -rf "${dir}"
+    fi
+  done
+}
+
+reset_auth() {
+  log "Resetting local auth / onboarding state (data/auth)"
+  mkdir -p "${ROOT}/data" "${ROOT}/logs"
+  if [[ -d "${AUTH_DIR}" ]]; then
+    rm -rf "${AUTH_DIR}"
+  fi
+  mkdir -p "${AUTH_DIR}"
+}
+
 ensure_supabase() {
   if [[ "${NO_SUPABASE}" == "true" ]]; then
+    log "Skipping Supabase wipe/start (--no-supabase)"
     return 0
   fi
 
@@ -158,20 +270,11 @@ ensure_supabase() {
     return 0
   fi
 
-  log "Ensuring self-hosted Supabase"
+  wipe_supabase_db
+  log "Starting self-hosted Supabase on a fresh volume"
   "${ROOT}/scripts/setup-supabase.sh" --start
-
-  if [[ -x "${VENV}/bin/python" ]]; then
-    log "Ensuring Postgres brokerai schema"
-    (
-      cd "${ROOT}"
-      set -a
-      # shellcheck disable=SC1090
-      source "${ENV_FILE}"
-      set +a
-      "${VENV}/bin/python" -c "import asyncio; from brokerai.db.indexes import ensure_indexes; asyncio.run(ensure_indexes())"
-    ) || warn "Schema ensure failed — start API after Postgres is healthy"
-  fi
+  wait_for_postgres
+  ensure_brokerai_schema
 }
 
 ensure_frontend_deps() {
@@ -203,6 +306,7 @@ bootstrap() {
   ensure_venv
   ensure_env_file
   ensure_dirs
+  reset_auth
   ensure_supabase
   if [[ "${BACKEND_ONLY}" != "true" ]]; then
     ensure_frontend_deps
@@ -237,8 +341,9 @@ open_browser() {
     return 0
   fi
   if [[ "$(uname -s)" == "Darwin" ]] && command -v open >/dev/null 2>&1; then
-    sleep 1
-    open "http://localhost:5173" 2>/dev/null || true
+    sleep 1.5
+    # Fresh wipe → land on the first-run setup wizard.
+    open "http://localhost:5173/setup" 2>/dev/null || true
   fi
 }
 
@@ -252,8 +357,9 @@ print_banner() {
     echo "  UI:      http://localhost:5173  (Vite, hot reload)"
     echo "  API:     http://127.0.0.1:${port}"
   fi
-  echo "  Postgres: 127.0.0.1:5432 (Supabase)"
+  echo "  Postgres: 127.0.0.1:5432 (Supabase, wiped this run)"
   echo "  Studio:  http://127.0.0.1:3000"
+  echo "  Setup:   http://localhost:5173/setup  (fresh install)"
   if [[ "${BROKERAI_AUTH_MODE:-builtin}" == "oidc" ]]; then
     echo "  Auth:    OIDC (${BROKERAI_OIDC_ISSUER:-issuer not set})"
   else

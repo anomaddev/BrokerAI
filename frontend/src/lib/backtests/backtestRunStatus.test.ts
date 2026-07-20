@@ -13,6 +13,7 @@ describe("backtestRunStatus", () => {
     expect(normalizeBacktestRunStatus("running")).toBe("running");
     expect(normalizeBacktestRunStatus("completed")).toBe("completed");
     expect(normalizeBacktestRunStatus("failed")).toBe("failed");
+    expect(normalizeBacktestRunStatus("cancelled")).toBe("cancelled");
   });
 
   it("returns human-readable labels", () => {
@@ -20,6 +21,7 @@ describe("backtestRunStatus", () => {
     expect(backtestRunStatusLabel("running")).toBe("Running");
     expect(backtestRunStatusLabel("completed")).toBe("Completed");
     expect(backtestRunStatusLabel("failed")).toBe("Failed");
+    expect(backtestRunStatusLabel("cancelled")).toBe("Cancelled");
     expect(backtestRunStatusLabel(undefined)).toBe("Queued");
   });
 });

@@ -167,6 +167,8 @@ export type StopLossSpec = {
   mode: StopLossMode;
   atr_multiplier?: number;
   fixed_pips?: number;
+  /** Fixed-pip SL for JPY-quoted pairs (USD/JPY, …). Defaults to 50 when omitted. */
+  fixed_pips_jpy?: number;
   structure_lookback?: number;
 };
 
@@ -197,6 +199,11 @@ export type ExecutionSpec = {
   min_confidence: number;
   override_all_strategies?: boolean;
   priority?: number;
+  dont_hold_between_sessions?: boolean;
+  dont_hold_between_markets?: boolean;
+  close_before_market_hours?: number;
+  no_late_market_trading?: boolean;
+  late_market_hours?: number;
 };
 
 export type StrategyParamsV1 = {

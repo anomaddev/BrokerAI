@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
-from brokerai.trading.session_gate import is_asset_trading_session_active, is_strategy_session_active
+from brokerai.trading.session_gate import is_strategy_session_active
+from brokerai.trading.session_hold import (
+    effective_session_ids,
+    is_effective_session_coverage,
+    should_block_late_market_entry,
+)
 from brokerai.trading.types import AnalysisResult, TradeIntent
 
 
@@ -88,11 +94,19 @@ def passes_execution_gates(
     trade_counts: dict[tuple[str, str], int],
     *,
     when=None,
+    asset_enabled: bool | None = None,
+    asset_enabled_pairs: set[str] | frozenset[str] | list[str] | None = None,
     asset_enabled_sessions: dict[str, bool] | None = None,
     open_pairs: set[str] | frozenset[str] | None = None,
     only_one_position_per_pair: bool = False,
 ) -> tuple[bool, list[str], dict[str, Any]]:
-    """Evaluate all broker gates; return pass flag, reason codes, and metric details."""
+    """Evaluate all broker gates; return pass flag, reason codes, and metric details.
+
+    Asset hierarchy (same pattern as sessions):
+    - Global asset must be enabled (``asset_enabled``) when provided
+    - Pair must be in globally enabled pairs (``asset_enabled_pairs``) when provided
+    - Sessions use effective = global ∩ strategy (not independent OR layers)
+    """
     reasons: list[str] = []
     details: dict[str, Any] = {}
 
@@ -112,21 +126,51 @@ def passes_execution_gates(
             "min_confidence_pct": min_confidence,
         }
 
-    if asset_enabled_sessions is not None and not is_asset_trading_session_active(
-        asset_enabled_sessions,
-        when=when,
-    ):
-        reasons.append("asset_session_inactive")
-        details["asset_session_inactive"] = {
-            "enabled_sessions": asset_enabled_sessions,
-        }
+    if asset_enabled is False:
+        reasons.append("asset_disabled")
+        details["asset_disabled"] = {"pair": result.pair}
 
-    if not is_strategy_session_active(params, when=when):
+    if asset_enabled_pairs is not None:
+        enabled_set = (
+            set(asset_enabled_pairs)
+            if not isinstance(asset_enabled_pairs, (set, frozenset))
+            else asset_enabled_pairs
+        )
+        if result.pair not in enabled_set:
+            reasons.append("pair_not_enabled")
+            details["pair_not_enabled"] = {
+                "pair": result.pair,
+                "enabled_pairs": sorted(enabled_set),
+            }
+
+    gate_when = when if when is not None else datetime.now(timezone.utc)
+    if asset_enabled_sessions is not None:
+        # True intersection: session must be on globally AND on the strategy.
+        effective = effective_session_ids(asset_enabled_sessions, params)
+        if not effective or not is_effective_session_coverage(gate_when, effective):
+            reasons.append("session_inactive")
+            sessions = execution_cfg.get("sessions")
+            details["session_inactive"] = {
+                "allowed_sessions": list(sessions) if isinstance(sessions, list) else sessions,
+                "effective_sessions": sorted(effective),
+                "asset_enabled_sessions": asset_enabled_sessions,
+            }
+    elif not is_strategy_session_active(params, when=gate_when):
+        # No asset session map supplied (unit tests / offline) — strategy sessions only.
         reasons.append("session_inactive")
         sessions = execution_cfg.get("sessions")
         details["session_inactive"] = {
             "allowed_sessions": list(sessions) if isinstance(sessions, list) else sessions,
         }
+
+    late_blocked, late_details = should_block_late_market_entry(
+        params,
+        when=gate_when,
+        asset_enabled_sessions=asset_enabled_sessions,
+    )
+    if late_blocked:
+        reasons.append("late_market_trading")
+        details["late_market_trading"] = late_details
 
     risk = params.get("risk") or {}
     max_trades = int(risk.get("max_trades_per_day", 20))

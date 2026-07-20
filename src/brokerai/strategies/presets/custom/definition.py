@@ -15,6 +15,7 @@ DEFAULT_PARAMS: dict = {
             "mode": "atr_based",
             "atr_multiplier": 1.5,
             "fixed_pips": 15,
+            "fixed_pips_jpy": 50,
             "structure_lookback": 10,
         },
         "take_profit": {
@@ -31,6 +32,11 @@ DEFAULT_PARAMS: dict = {
         "min_confidence": 60,
         "override_all_strategies": False,
         "priority": 50,
+        "dont_hold_between_sessions": True,
+        "dont_hold_between_markets": True,
+        "close_before_market_hours": 2,
+        "no_late_market_trading": True,
+        "late_market_hours": 2,
     },
 }
 
@@ -46,6 +52,8 @@ PARAM_SCHEMA: dict = {
     "execution": {
         "min_confidence": {"minimum": 0, "maximum": 100},
         "priority": {"minimum": 0, "maximum": 100},
+        "close_before_market_hours": {"minimum": 1, "maximum": 24},
+        "late_market_hours": {"minimum": 1, "maximum": 24},
     },
     "min_candles": {"maximum": 2000},
 }

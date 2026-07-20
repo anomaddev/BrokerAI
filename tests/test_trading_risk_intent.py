@@ -1,6 +1,11 @@
 from tests.fixtures.mock_candles import generate_mock_candles
 import pytest
-from brokerai.trading.risk_intent import build_trade_intent, compute_sl_tp_prices, pip_size_for_pair
+from brokerai.trading.risk_intent import (
+    build_trade_intent,
+    compute_sl_tp_prices,
+    fixed_pips_for_stop,
+    pip_size_for_pair,
+)
 from brokerai.trading.types import AnalysisResult
 
 
@@ -24,7 +29,49 @@ def test_pip_size_for_jpy_quote():
     assert pip_size_for_pair("EUR/USD") == 0.0001
 
 
+def test_fixed_pips_for_stop_jpy_vs_standard():
+    assert fixed_pips_for_stop({"fixed_pips": 15, "fixed_pips_jpy": 50}, "EUR/USD") == 15.0
+    assert fixed_pips_for_stop({"fixed_pips": 15, "fixed_pips_jpy": 50}, "USD/JPY") == 50.0
+    assert fixed_pips_for_stop({"fixed_pips": 15}, "USD/JPY") == 50.0
+
+
+def test_compute_sl_tp_prices_standard_fixed_pips():
+    candles = generate_mock_candles(60)
+    entry = 1.1
+    params = {
+        "exits": {
+            "stop_loss": {
+                "mode": "fixed_pips",
+                "fixed_pips": 15,
+                "fixed_pips_jpy": 50,
+            },
+            "take_profit": {"mode": "fixed_pips", "fixed_pips": 30},
+        }
+    }
+    stop, take, _ = compute_sl_tp_prices(params, candles, entry, "long", pair="EUR/USD")
+    assert stop == pytest.approx(entry - 0.0015)
+    assert take == pytest.approx(entry + 0.003)
+
+
 def test_compute_sl_tp_prices_jpy_fixed_pips():
+    candles = generate_mock_candles(60)
+    entry = 112.0
+    params = {
+        "exits": {
+            "stop_loss": {
+                "mode": "fixed_pips",
+                "fixed_pips": 15,
+                "fixed_pips_jpy": 50,
+            },
+            "take_profit": {"mode": "fixed_pips", "fixed_pips": 30},
+        }
+    }
+    stop, take, _ = compute_sl_tp_prices(params, candles, entry, "long", pair="AUD/JPY")
+    assert stop == pytest.approx(entry - 0.50)
+    assert take == pytest.approx(entry + 0.30)
+
+
+def test_compute_sl_tp_prices_jpy_missing_fixed_pips_jpy_defaults_to_50():
     candles = generate_mock_candles(60)
     entry = 112.0
     params = {
@@ -33,9 +80,8 @@ def test_compute_sl_tp_prices_jpy_fixed_pips():
             "take_profit": {"mode": "fixed_pips", "fixed_pips": 30},
         }
     }
-    stop, take, _ = compute_sl_tp_prices(params, candles, entry, "long", pair="AUD/JPY")
-    assert stop == pytest.approx(entry - 0.15)
-    assert take == pytest.approx(entry + 0.30)
+    stop, _, _ = compute_sl_tp_prices(params, candles, entry, "long", pair="USD/JPY")
+    assert stop == pytest.approx(entry - 0.50)
 
 
 def test_build_trade_intent():

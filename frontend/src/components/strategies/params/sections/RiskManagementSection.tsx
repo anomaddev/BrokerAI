@@ -19,6 +19,7 @@ export type RiskManagementState = {
   stopLossType: StopLossMode;
   slAtrMultiplier: number;
   slFixedPips: number;
+  slFixedPipsJpy: number;
   slStructureLookback: number;
   takeProfitEnabled: boolean;
   takeProfitType: TakeProfitMode;
@@ -113,14 +114,27 @@ export default function RiskManagementSection({
         />
 
         {state.stopLossType === "fixed_pips" && (
-          <LiveSlider
-            id="sl-pips"
-            label="SL distance (pips)"
-            value={state.slFixedPips}
-            min={5}
-            max={100}
-            onChange={(v) => onChange("slFixedPips", v)}
-          />
+          <>
+            <LiveSlider
+              id="sl-pips"
+              label="SL distance (pips)"
+              value={state.slFixedPips}
+              min={5}
+              max={100}
+              onChange={(v) => onChange("slFixedPips", v)}
+            />
+            <LiveSlider
+              id="sl-pips-jpy"
+              label="SL distance — JPY pairs (pips)"
+              value={state.slFixedPipsJpy}
+              min={5}
+              max={150}
+              onChange={(v) => onChange("slFixedPipsJpy", v)}
+            />
+            <p className="param-helper">
+              JPY pip = 0.01. Used when the traded pair quotes in JPY (e.g. USD/JPY).
+            </p>
+          </>
         )}
 
         {state.stopLossType === "atr_based" && (

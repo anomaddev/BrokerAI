@@ -4,6 +4,7 @@ type StrategyOverlayProps = {
   wide?: boolean;
   extraWide?: boolean;
   titleId?: string;
+  dialogClassName?: string;
 };
 
 export default function StrategyOverlay({
@@ -12,11 +13,13 @@ export default function StrategyOverlay({
   wide,
   extraWide,
   titleId,
+  dialogClassName,
 }: StrategyOverlayProps) {
   const dialogClass = [
     "model-overlay-dialog",
     wide || extraWide ? "model-overlay-dialog--wide" : "",
     extraWide ? "model-overlay-dialog--create-strategy" : "",
+    dialogClassName ?? "",
   ]
     .filter(Boolean)
     .join(" ");

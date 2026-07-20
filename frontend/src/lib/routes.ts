@@ -14,6 +14,7 @@ export const ROUTES = {
     analysisRun: (runId: string) =>
       `/research/analysis/run/${encodeURIComponent(runId)}`,
     backtest: "/research/backtest",
+    backtestRun: (runId: string) => `/research/backtest/${encodeURIComponent(runId)}`,
   },
   trading: {
     forex: "/trading/forex",

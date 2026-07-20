@@ -17,6 +17,28 @@ def pip_size_for_pair(pair: str) -> float:
     return 0.01 if quote == "JPY" else PIP_SIZE
 
 
+def is_jpy_quote_pair(pair: str) -> bool:
+    """Return True when *pair* quotes in JPY (USD/JPY, EUR_JPY, …)."""
+    return pip_size_for_pair(pair) == 0.01
+
+
+def fixed_pips_for_stop(stop_loss: dict[str, Any], pair: str) -> float:
+    """Return the fixed-pip SL count for *pair*.
+
+    Uses ``fixed_pips_jpy`` for JPY quotes (default 50 when omitted) and
+    ``fixed_pips`` otherwise (default 15).
+    """
+    if is_jpy_quote_pair(pair):
+        raw = stop_loss.get("fixed_pips_jpy")
+        if raw is None:
+            return 50.0
+        return float(raw)
+    raw = stop_loss.get("fixed_pips")
+    if raw is None:
+        return 15.0
+    return float(raw)
+
+
 def _recent_swing_low(candles: list[dict[str, Any]], lookback: int) -> float:
     slice_candles = candles[-max(lookback, 2) :]
     return min(float(candle["low"]) for candle in slice_candles)
@@ -38,7 +60,7 @@ def compute_sl_tp_prices(
 
     sl_mode = str(stop_loss.get("mode", "atr_based"))
     if sl_mode == "fixed_pips":
-        sl_distance = float(stop_loss.get("fixed_pips", 15)) * pip_size
+        sl_distance = fixed_pips_for_stop(stop_loss, pair) * pip_size
     elif sl_mode == "structure":
         swing_low = _recent_swing_low(candles, int(stop_loss.get("structure_lookback", 10)))
         sl_distance = max(entry - swing_low, atr_val * 0.5)
