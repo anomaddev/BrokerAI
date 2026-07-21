@@ -7,6 +7,7 @@ from brokerai.trading.indicators.adx import compute_adx
 from brokerai.trading.indicators.at_time import atr_value_at_time, series_value_at_time
 from brokerai.trading.indicators.atr import compute_atr
 from brokerai.trading.registries.filters import register_filter
+from brokerai.trading.risk_intent import is_jpy_quote_pair
 
 
 def _compare(value: float, threshold: float, operator: str) -> bool:
@@ -77,7 +78,7 @@ class AtrFilterEvaluator:
             atr_val = indicators.get_scalar(key)
         if atr_val is None:
             atr_val = compute_atr(candles, period)
-        min_value = filter_spec.get("min_value")
+        min_value = atr_min_value_for_pair(filter_spec, indicators.pair)
         max_value = filter_spec.get("max_value")
         passed = True
         if min_value is not None and atr_val < float(min_value):
@@ -88,10 +89,90 @@ class AtrFilterEvaluator:
             "atr": atr_val,
             "min_value": min_value,
             "max_value": max_value,
+            "min_value_source": (
+                "min_value_jpy"
+                if is_jpy_quote_pair(indicators.pair) and filter_spec.get("min_value_jpy") is not None
+                else "min_value"
+            ),
         }
         return passed, metadata
+
+
+def atr_min_value_for_pair(filter_spec: dict[str, Any], pair: str) -> float | None:
+    """Return the ATR floor for *pair*.
+
+    JPY-quote pairs use ``min_value_jpy`` when set; otherwise fall back to
+    ``min_value`` so older strategies keep working. Non-JPY uses ``min_value``.
+    """
+    if is_jpy_quote_pair(pair):
+        jpy = filter_spec.get("min_value_jpy")
+        if jpy is not None:
+            return float(jpy)
+    min_value = filter_spec.get("min_value")
+    if min_value is None:
+        return None
+    return float(min_value)
+
+
+class HtfBiasFilterEvaluator:
+    """Require entry direction to align with higher-timeframe EMA trend.
+
+    Expects indicator cache series ``htf_ema:{tf}:fast`` and ``htf_ema:{tf}:slow``
+    (closed HTF bars only). When series are missing, the filter fails closed.
+    """
+
+    filter_type = "htf_bias"
+
+    def evaluate(
+        self,
+        filter_spec: dict[str, Any],
+        candles: list[dict[str, Any]],
+        indicators: IndicatorCacheView,
+        direction: str | None,
+        *,
+        evaluate_at_time: str | None = None,
+    ) -> tuple[bool, dict[str, Any]]:
+        _ = candles
+        timeframe = str(filter_spec.get("timeframe", "H4"))
+        fast_key = f"htf_ema:{timeframe}:fast"
+        slow_key = f"htf_ema:{timeframe}:slow"
+        fast = indicators.get_series(fast_key) or []
+        slow = indicators.get_series(slow_key) or []
+        if not fast or not slow:
+            return False, {
+                "timeframe": timeframe,
+                "reason": "htf_data_unavailable",
+                "direction": direction,
+            }
+
+        # Use last closed HTF point at or before evaluate_at_time when provided.
+        fast_val = series_value_at_time(fast, evaluate_at_time)
+        slow_val = series_value_at_time(slow, evaluate_at_time)
+        if fast_val is None:
+            fast_val = float(fast[-1]["value"])
+        if slow_val is None:
+            slow_val = float(slow[-1]["value"])
+
+        bullish = fast_val > slow_val
+        bearish = fast_val < slow_val
+        if direction == "long":
+            passed = bullish
+        elif direction == "short":
+            passed = bearish
+        else:
+            # No directional signal yet — do not block.
+            passed = True
+
+        return passed, {
+            "timeframe": timeframe,
+            "fast": fast_val,
+            "slow": slow_val,
+            "htf_bias": "bullish" if bullish else "bearish" if bearish else "flat",
+            "direction": direction,
+        }
 
 
 def register_ema_crossover_filters() -> None:
     register_filter("adx", AdxFilterEvaluator())
     register_filter("atr", AtrFilterEvaluator())
+    register_filter("htf_bias", HtfBiasFilterEvaluator())

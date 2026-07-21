@@ -34,6 +34,8 @@ export type EmaCrossoverParams = {
   atrFilter: boolean;
   atrPeriod: number;
   minAtr: number;
+  /** ATR floor for JPY-quote pairs (USD/JPY, …). */
+  minAtrJpy: number;
   direction: EmaCrossoverDirection;
   confirmation: EmaCrossoverConfirmation;
   stopLossEnabled: boolean;
@@ -50,6 +52,16 @@ export type EmaCrossoverParams = {
   tpAtrMultiplier: number;
   trailMode: TrailMode;
   trailAtrMultiplier: number;
+  reverseCrossoverEnabled: boolean;
+  reverseCrossoverMinBarsAfterEntry: number;
+  reverseCrossoverMinConfirmationBars: number;
+  reverseCrossoverMinSeparationAtr: number;
+  approachingEnabled: boolean;
+  approachingMaxGapAtr: number;
+  approachingMinNarrowBars: number;
+  postStopCooldownBars: number;
+  htfBiasEnabled: boolean;
+  htfBiasTimeframe: "H1" | "H4";
   riskPerTrade: number;
   minConfidence: number;
   maxTradesPerDay: number;
@@ -79,6 +91,7 @@ const BASE_DEFAULTS = {
   atrFilter: true,
   atrPeriod: 14,
   minAtr: 0.0008,
+  minAtrJpy: 0.05,
   direction: "both" as EmaCrossoverDirection,
   confirmation: "close" as EmaCrossoverConfirmation,
   stopLossEnabled: true,
@@ -94,6 +107,16 @@ const BASE_DEFAULTS = {
   tpAtrMultiplier: 2.5,
   trailMode: "atr" as TrailMode,
   trailAtrMultiplier: 1.0,
+  reverseCrossoverEnabled: true,
+  reverseCrossoverMinBarsAfterEntry: 6,
+  reverseCrossoverMinConfirmationBars: 2,
+  reverseCrossoverMinSeparationAtr: 0.2,
+  approachingEnabled: true,
+  approachingMaxGapAtr: 0.5,
+  approachingMinNarrowBars: 2,
+  postStopCooldownBars: 0,
+  htfBiasEnabled: false,
+  htfBiasTimeframe: "H4" as const,
   riskPerTrade: 1.0,
   minConfidence: 60,
   maxTradesPerDay: 3,

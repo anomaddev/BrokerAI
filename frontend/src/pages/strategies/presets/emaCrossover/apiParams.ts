@@ -109,10 +109,14 @@ export function emaCrossoverParamsToV1(
     schema_version: SCHEMA_VERSION,
     timeframe: params.timeframe,
     min_candles: params.minCandles,
-    additional_timeframes:
-      extras?.additionalTimeframes && extras.additionalTimeframes.length > 0
-        ? extras.additionalTimeframes
-        : undefined,
+    additional_timeframes: (() => {
+      const extrasTf = extras?.additionalTimeframes ?? [];
+      const needed = new Set(extrasTf);
+      if (params.htfBiasEnabled) {
+        needed.add(params.htfBiasTimeframe);
+      }
+      return needed.size > 0 ? ([...needed] as Timeframe[]) : undefined;
+    })(),
     indicators,
     signal: {
       type: "ema_crossover",
@@ -120,6 +124,11 @@ export function emaCrossoverParamsToV1(
       slow_ref: "slow",
       direction: params.direction,
       confirmation: params.confirmation,
+      approaching: {
+        enabled: params.approachingEnabled,
+        max_gap_atr: params.approachingMaxGapAtr,
+        min_narrow_bars: params.approachingMinNarrowBars,
+      },
     },
     filters: [
       {
@@ -136,7 +145,18 @@ export function emaCrossoverParamsToV1(
         enabled: params.atrFilter,
         period: params.atrPeriod,
         min_value: params.minAtr,
+        min_value_jpy: params.minAtrJpy,
       },
+      ...(params.htfBiasEnabled
+        ? [
+            {
+              id: "htf_bias",
+              type: "htf_bias" as const,
+              enabled: true,
+              timeframe: params.htfBiasTimeframe,
+            },
+          ]
+        : []),
     ],
     exits: {
       stop_loss: {
@@ -148,6 +168,12 @@ export function emaCrossoverParamsToV1(
         structure_lookback: params.slStructureLookback,
       },
       take_profit: takeProfitToApi(params),
+      reverse_crossover: {
+        enabled: params.takeProfitType === "reverse_crossover",
+        min_bars_after_entry: params.reverseCrossoverMinBarsAfterEntry,
+        min_confirmation_bars: params.reverseCrossoverMinConfirmationBars,
+        min_separation_atr: params.reverseCrossoverMinSeparationAtr,
+      },
     },
     risk: {
       risk_per_trade_pct: params.riskPerTrade,
@@ -163,6 +189,7 @@ export function emaCrossoverParamsToV1(
       close_before_market_hours: params.closeBeforeMarketHours,
       no_late_market_trading: params.noLateMarketTrading,
       late_market_hours: params.lateMarketHours,
+      post_stop_cooldown_bars: params.postStopCooldownBars,
     },
   };
 }
@@ -180,6 +207,9 @@ function emaPeriodFromRef(
 export function v1ToEmaCrossoverParams(v1: StrategyParamsV1): EmaCrossoverParams {
   const adx = v1.filters.find((f) => f.id === "adx" && f.type === "adx");
   const atr = v1.filters.find((f) => f.id === "atr" && f.type === "atr");
+  const htfBias = v1.filters.find((f) => f.type === "htf_bias");
+  const approaching =
+    v1.signal.type === "ema_crossover" ? v1.signal.approaching : undefined;
 
   let fastEma = 9;
   let slowEma = 21;
@@ -206,6 +236,7 @@ export function v1ToEmaCrossoverParams(v1: StrategyParamsV1): EmaCrossoverParams
     atrFilter: atr?.type === "atr" ? atr.enabled : true,
     atrPeriod: atr?.type === "atr" ? atr.period : 14,
     minAtr: atr?.type === "atr" ? (atr.min_value ?? 0.0008) : 0.0008,
+    minAtrJpy: atr?.type === "atr" ? (atr.min_value_jpy ?? 0.05) : 0.05,
     direction: v1.signal.type === "ema_crossover" ? v1.signal.direction : "both",
     confirmation: v1.signal.type === "ema_crossover" ? v1.signal.confirmation : "close",
     stopLossEnabled: v1.exits.stop_loss.enabled ?? true,
@@ -221,6 +252,22 @@ export function v1ToEmaCrossoverParams(v1: StrategyParamsV1): EmaCrossoverParams
     tpAtrMultiplier: v1.exits.take_profit.atr_multiplier ?? 2.5,
     trailMode: v1.exits.take_profit.trail_mode ?? "atr",
     trailAtrMultiplier: v1.exits.take_profit.trail_atr_multiplier ?? 1.0,
+    reverseCrossoverEnabled:
+      v1.exits.take_profit.mode === "reverse_crossover"
+        ? true
+        : (v1.exits.reverse_crossover?.enabled ?? false),
+    reverseCrossoverMinBarsAfterEntry: v1.exits.reverse_crossover?.min_bars_after_entry ?? 6,
+    reverseCrossoverMinConfirmationBars: v1.exits.reverse_crossover?.min_confirmation_bars ?? 2,
+    reverseCrossoverMinSeparationAtr: v1.exits.reverse_crossover?.min_separation_atr ?? 0.2,
+    approachingEnabled: approaching?.enabled ?? true,
+    approachingMaxGapAtr: approaching?.max_gap_atr ?? 0.5,
+    approachingMinNarrowBars: approaching?.min_narrow_bars ?? 2,
+    postStopCooldownBars: v1.execution.post_stop_cooldown_bars ?? 0,
+    htfBiasEnabled: Boolean(htfBias?.enabled),
+    htfBiasTimeframe:
+      htfBias && "timeframe" in htfBias && (htfBias.timeframe === "H1" || htfBias.timeframe === "H4")
+        ? htfBias.timeframe
+        : "H4",
     riskPerTrade: v1.risk.risk_per_trade_pct,
     minConfidence: v1.execution.min_confidence,
     maxTradesPerDay: v1.risk.max_trades_per_day,
@@ -237,7 +284,6 @@ export function v1ToEmaCrossoverParams(v1: StrategyParamsV1): EmaCrossoverParams
       ema: true,
       signals: true,
       slTp: true,
-      // Match DEFAULT_EMA_CROSSOVER_PARAMS so ADX/ATR panes show when filters are on.
       adx: adx?.type === "adx" ? adx.enabled : true,
       atr: atr?.type === "atr" ? atr.enabled : true,
     },

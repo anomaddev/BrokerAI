@@ -26,6 +26,8 @@ type ExecutionSectionProps = {
   onCloseBeforeMarketHoursChange: (value: number) => void;
   onNoLateMarketTradingChange: (value: boolean) => void;
   onLateMarketHoursChange: (value: number) => void;
+  postStopCooldownBars?: number;
+  onPostStopCooldownBarsChange?: (value: number) => void;
 };
 
 const EXECUTION_HELP = {
@@ -74,6 +76,11 @@ const EXECUTION_HELP = {
     title: "No new trades within hours of market close",
     body: "How many hours before major market close to stop opening new trades (1–24). Only applies when No Late Market Trading is on.",
   },
+  postStopCooldown: {
+    label: "Cooldown after stop-loss",
+    title: "Cooldown bars after stop-loss",
+    body: "After a stop-loss exit, wait this many bars before allowing a new entry on the same symbol. Reduces flip-flop clusters. 0 disables.",
+  },
 } as const;
 
 export default function ExecutionSection({
@@ -97,6 +104,8 @@ export default function ExecutionSection({
   onCloseBeforeMarketHoursChange,
   onNoLateMarketTradingChange,
   onLateMarketHoursChange,
+  postStopCooldownBars = 0,
+  onPostStopCooldownBarsChange,
 }: ExecutionSectionProps) {
   return (
     <ParameterCard
@@ -267,6 +276,23 @@ export default function ExecutionSection({
           onChange={onLateMarketHoursChange}
         />
       </ParamToggleRow>
+      {onPostStopCooldownBarsChange && (
+        <NumberStepper
+          id="post-stop-cooldown"
+          label="Cooldown bars after stop-loss"
+          labelHelp={
+            <ParamHelpTip
+              label={EXECUTION_HELP.postStopCooldown.label}
+              title={EXECUTION_HELP.postStopCooldown.title}
+              body={EXECUTION_HELP.postStopCooldown.body}
+            />
+          }
+          value={postStopCooldownBars}
+          min={0}
+          max={30}
+          onChange={onPostStopCooldownBarsChange}
+        />
+      )}
     </ParameterCard>
   );
 }

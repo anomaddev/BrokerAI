@@ -125,6 +125,9 @@ class _TradeExitAnalyzer(_SubAnalyzer):
             close_metadata = dict(exit_intent.metadata or {})
             if candle_time:
                 close_metadata["exit_candle_open"] = candle_time
+                # Keep the returned intent in sync so same-bar entry gates
+                # (post-stop cooldown) can use this bar's open without re-query.
+                exit_intent.metadata = close_metadata
             await _close_lot(
                 self._lots_repo,
                 exit_intent.trade_id,
@@ -236,7 +239,12 @@ class BrokerMonitor:
         data_manager: DataManagerService,
         *,
         evaluate_pairs: set[tuple[str, str]] | None = None,
-    ) -> None:
+    ) -> list[ExitIntent]:
+        """Evaluate exit monitors for open lots.
+
+        Returns exit intents that closed a position on this pass (used by
+        broker execution to suppress same-bar flip entries).
+        """
         open_trades = await self._lots_repo.list_open_lots()
         units_by_pair: dict[str, WorkUnit] = {unit.pair: unit for unit in work_units}
         hold_closed = await self._apply_session_market_holds(open_trades, units_by_pair)
@@ -281,18 +289,27 @@ class BrokerMonitor:
             del self._sub_analyzers[tid]
 
         if not evaluate_pairs or not self._sub_analyzers:
-            return
+            return []
 
         analyzers = [
             analyzer
             for analyzer in self._sub_analyzers.values()
             if (analyzer._unit.pair, analyzer._unit.timeframe) in evaluate_pairs
         ]
-        if analyzers:
-            await asyncio.gather(
-                *[analyzer.evaluate() for analyzer in analyzers],
-                return_exceptions=True,
-            )
+        if not analyzers:
+            return []
+
+        outcomes = await asyncio.gather(
+            *[analyzer.evaluate() for analyzer in analyzers],
+            return_exceptions=True,
+        )
+        closed: list[ExitIntent] = []
+        for outcome in outcomes:
+            if isinstance(outcome, ExitIntent):
+                closed.append(outcome)
+            elif isinstance(outcome, BaseException):
+                logger.exception("Exit monitor evaluation failed: %s", outcome)
+        return closed
 
     async def _maybe_sync_oanda_trades(self) -> None:
         settings = get_settings()

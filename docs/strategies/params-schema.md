@@ -118,8 +118,19 @@ Entry logic. The `type` field selects the signal evaluator.
 | `slow_ref` | string | Key in `indicators` for slow EMA |
 | `direction` | string | `long`, `short`, or `both` |
 | `confirmation` | string | `close`, `pullback`, or `aggressive` |
+| `approaching` | object | Optional watch-only approaching-cross assist (see below) |
 
 **Cross-field rule:** `indicators[fast_ref].period` must be less than `indicators[slow_ref].period`.
+
+##### `approaching`
+
+| Field | Type | Default | Bounds | Description |
+|-------|------|---------|--------|-------------|
+| `enabled` | boolean | `true` | — | Emit watch-only approaching signals when EMAs converge |
+| `max_gap_atr` | number | `0.5` | 0.05–2.0 | Max `|fast − slow| / ATR` to count as approaching |
+| `min_narrow_bars` | integer | `2` | 1–10 | Consecutive narrow bars required |
+
+Approaching signals never open trades by themselves; disable to require a completed close-confirmed crossover only.
 
 ### `filters`
 
@@ -144,8 +155,22 @@ Ordered array. All **enabled** filters must pass (logical AND).
 | `type` | `"atr"` | Discriminator |
 | `enabled` | boolean | Toggle filter |
 | `period` | integer | ATR lookback (7–28) |
-| `min_value` | number | Optional minimum ATR |
+| `min_value` | number | Optional minimum ATR for non-JPY pairs (absolute; UI/schema max `0.5`) |
+| `min_value_jpy` | number | Optional minimum ATR for JPY-quote pairs (e.g. USD/JPY); same bounds. Engine picks by pair quote currency. |
 | `max_value` | number | Optional maximum ATR |
+
+#### `htf_bias`
+
+Require entry direction to align with a higher-timeframe EMA trend (closed bars only).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Stable id (e.g. `"htf_bias"`) |
+| `type` | `"htf_bias"` | Discriminator |
+| `enabled` | boolean | Toggle filter |
+| `timeframe` | string | `H1` or `H4` |
+
+When enabled, the analyzer warms `htf_ema:{tf}:fast` / `slow` series. Missing HTF data fails closed.
 
 #### `rsi` (reserved)
 
@@ -188,6 +213,19 @@ Ordered array. All **enabled** filters must pass (logical AND).
 
 `reverse_crossover` and `trail_mode: ema_slow` require `signal.type` of `ema_crossover`.
 
+#### `reverse_crossover`
+
+Nested exit settings for EMA reverse-crossover protection. Always normalized for `signal.type == "ema_crossover"`. When `enabled` is true, the reverse-crossover exit monitor is attached even if `take_profit.mode` is a price-based mode.
+
+| Field | Type | Default | Bounds | Description |
+|-------|------|---------|--------|-------------|
+| `enabled` | boolean | `true` | — | Master switch for reverse-crossover exits |
+| `min_bars_after_entry` | integer | `6` | 0–30 | Ignore reverse exits in the first N bars after entry |
+| `min_confirmation_bars` | integer | `2` | 1–5 | Reverse EMA relationship must hold for this many bars |
+| `min_separation_atr` | number | `0.2` | 0–1.0 | Minimum `|fast − slow| / ATR` before accepting the reverse (`0` disables) |
+
+Requires `signal.type` of `ema_crossover` when `enabled` is true. ATR stop loss remains the hard safety net independently of these settings.
+
 ### `risk`
 
 | Field | Type | Bounds |
@@ -209,6 +247,7 @@ Ordered array. All **enabled** filters must pass (logical AND).
 | `min_confidence` | integer | 0–100 minimum signal confidence |
 | `override_all_strategies` | boolean | When true, this strategy takes priority over other enabled strategies on overlapping instruments (default `false`) |
 | `priority` | integer | 0–100; lower value = higher priority (default `50`) |
+| `post_stop_cooldown_bars` | integer | 0–30; block new entries for N strategy bars after a `stop_loss` exit on the same strategy+pair (default `0`) |
 
 Note: `max_trades_per_day` is stored under `risk` but displayed in the Execution UI section.
 

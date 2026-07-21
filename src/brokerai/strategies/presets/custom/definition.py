@@ -37,6 +37,7 @@ DEFAULT_PARAMS: dict = {
         "close_before_market_hours": 2,
         "no_late_market_trading": True,
         "late_market_hours": 2,
+        "post_stop_cooldown_bars": 0,
     },
 }
 
@@ -54,6 +55,7 @@ PARAM_SCHEMA: dict = {
         "priority": {"minimum": 0, "maximum": 100},
         "close_before_market_hours": {"minimum": 1, "maximum": 24},
         "late_market_hours": {"minimum": 1, "maximum": 24},
+        "post_stop_cooldown_bars": {"minimum": 0, "maximum": 30},
     },
     "min_candles": {"maximum": 2000},
 }

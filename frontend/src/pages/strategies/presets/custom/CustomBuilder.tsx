@@ -14,6 +14,7 @@ import {
   ExecutionSection,
   FiltersSection,
   RiskManagementSection,
+  SignalRulesSection,
   type RiskManagementState,
 } from "../../../../components/strategies/params/sections";
 import { useStrategyBuilderExit } from "../../../../hooks/useStrategyBuilderExit";
@@ -56,9 +57,10 @@ import {
   type CustomBuilderParams,
 } from "./defaults";
 
-const ACCORDION_KEY = "brokerai-custom-builder-accordion-v3";
+const ACCORDION_KEY = "brokerai-custom-builder-accordion-v4";
 const DEFAULT_SECTIONS = {
   filters: true,
+  signalRules: true,
   risk: false,
   execution: false,
 };
@@ -335,6 +337,10 @@ export default function CustomBuilder({
       tpAtrMultiplier: params.tpAtrMultiplier,
       trailMode: params.trailMode,
       trailAtrMultiplier: params.trailAtrMultiplier,
+      reverseCrossoverEnabled: params.reverseCrossoverEnabled,
+      reverseCrossoverMinBarsAfterEntry: params.reverseCrossoverMinBarsAfterEntry,
+      reverseCrossoverMinConfirmationBars: params.reverseCrossoverMinConfirmationBars,
+      reverseCrossoverMinSeparationAtr: params.reverseCrossoverMinSeparationAtr,
     }),
     [params],
   );
@@ -460,9 +466,14 @@ export default function CustomBuilder({
                         enabled: params.atrFilter,
                         period: params.atrPeriod,
                         minAtr: params.minAtr,
+                        minAtrJpy: params.minAtrJpy,
                       }
                     : undefined
                 }
+                htfBias={{
+                  enabled: params.htfBiasEnabled,
+                  timeframe: params.htfBiasTimeframe,
+                }}
                 onAdxChange={(adx) => {
                   update("adxFilter", adx.enabled);
                   update("adxPeriod", adx.period);
@@ -472,6 +483,11 @@ export default function CustomBuilder({
                   update("atrFilter", atr.enabled);
                   update("atrPeriod", atr.period);
                   update("minAtr", atr.minAtr);
+                  update("minAtrJpy", atr.minAtrJpy);
+                }}
+                onHtfBiasChange={(htf) => {
+                  update("htfBiasEnabled", htf.enabled);
+                  update("htfBiasTimeframe", htf.timeframe);
                 }}
                 onAddFilter={(type) => {
                   setParams((prev) => {
@@ -497,6 +513,23 @@ export default function CustomBuilder({
                   if (type === "atr") update("hasAtr", false);
                 }}
               />
+
+              {params.signalType === "ema_crossover" ? (
+                <SignalRulesSection
+                  expanded={sections.signalRules}
+                  onToggle={() => setSections((s) => ({ ...s, signalRules: !s.signalRules }))}
+                  direction={params.direction}
+                  confirmation={params.confirmation}
+                  onDirectionChange={(v) => update("direction", v)}
+                  onConfirmationChange={(v) => update("confirmation", v)}
+                  approachingEnabled={params.approachingEnabled}
+                  approachingMaxGapAtr={params.approachingMaxGapAtr}
+                  approachingMinNarrowBars={params.approachingMinNarrowBars}
+                  onApproachingEnabledChange={(v) => update("approachingEnabled", v)}
+                  onApproachingMaxGapAtrChange={(v) => update("approachingMaxGapAtr", v)}
+                  onApproachingMinNarrowBarsChange={(v) => update("approachingMinNarrowBars", v)}
+                />
+              ) : null}
 
               <RiskManagementSection
                 expanded={sections.risk}
@@ -530,6 +563,7 @@ export default function CustomBuilder({
                 closeBeforeMarketHours={params.closeBeforeMarketHours}
                 noLateMarketTrading={params.noLateMarketTrading}
                 lateMarketHours={params.lateMarketHours}
+                postStopCooldownBars={params.postStopCooldownBars}
                 onMinConfidenceChange={(v) => update("minConfidence", v)}
                 onMaxTradesChange={(v) => update("maxTradesPerDay", v)}
                 onOverrideChange={(v) => update("overrideAllStrategies", v)}
@@ -538,6 +572,7 @@ export default function CustomBuilder({
                 onCloseBeforeMarketHoursChange={(v) => update("closeBeforeMarketHours", v)}
                 onNoLateMarketTradingChange={(v) => update("noLateMarketTrading", v)}
                 onLateMarketHoursChange={(v) => update("lateMarketHours", v)}
+                onPostStopCooldownBarsChange={(v) => update("postStopCooldownBars", v)}
               />
             </div>
           </aside>

@@ -11,6 +11,50 @@ from brokerai.trading.session_hold import (
 )
 from brokerai.trading.types import AnalysisResult, TradeIntent
 
+# Exit reasons that reuse the strategy's entry signal. Closing on these must not
+# also open the opposite side on the same bar (no flip entries).
+_SIGNAL_EXIT_REASONS = frozenset({"reverse_crossover"})
+
+
+def blocks_same_bar_entry(exit_reason: str | None) -> bool:
+    """Return True when a same-bar exit should suppress a new entry.
+
+    Reverse-crossover (and similar signal exits) close the open trade using the
+    opposite crossover. That same bar's analysis would otherwise immediately
+    open the flipped side — which is not desired.
+    """
+    if not exit_reason:
+        return False
+    return str(exit_reason).strip().lower() in _SIGNAL_EXIT_REASONS
+
+
+def bars_since_anchor(
+    candles: list[dict[str, Any]],
+    anchor_time: str | None,
+) -> int | None:
+    """Count closed bars from ``anchor_time`` to the last candle (0 = same bar)."""
+    if not candles or not anchor_time:
+        return None
+    from brokerai.db.market_data_timeseries import candle_open_time_to_datetime
+
+    anchor_dt = candle_open_time_to_datetime(anchor_time)
+    if anchor_dt is None:
+        return None
+    entry_index: int | None = None
+    for index, candle in enumerate(candles):
+        candle_dt = candle_open_time_to_datetime(candle.get("time"))
+        if candle_dt is None:
+            continue
+        if candle_dt == anchor_dt:
+            entry_index = index
+            break
+        if candle_dt > anchor_dt and entry_index is None:
+            entry_index = index
+            break
+    if entry_index is None:
+        return None
+    return max(0, len(candles) - 1 - entry_index)
+
 
 def is_executor_eligible(result: AnalysisResult) -> bool:
     """Return whether broker should evaluate trade intents for this analysis.
@@ -51,8 +95,9 @@ def passes_open_position_gate(
 ) -> bool:
     """Block a new entry when the pair already has an open position.
 
-    Exit monitors run before entry gates, so a reverse-cross close on the same
-    candle removes the pair from ``open_pairs`` and allows a fresh entry signal.
+    Exit monitors run before entry gates. A reverse-crossover close frees the
+    pair in ``open_pairs``; same-bar flip entries are blocked separately via
+    ``blocks_same_bar_entry`` / ``closed_on_signal``.
     """
     if not only_one_position_per_pair:
         return True
@@ -99,6 +144,10 @@ def passes_execution_gates(
     asset_enabled_sessions: dict[str, bool] | None = None,
     open_pairs: set[str] | frozenset[str] | None = None,
     only_one_position_per_pair: bool = False,
+    signal_closed_reasons: dict[str, str] | None = None,
+    last_stop_exit_time: str | None = None,
+    candles: list[dict[str, Any]] | None = None,
+    cooldown_bars: int | None = None,
 ) -> tuple[bool, list[str], dict[str, Any]]:
     """Evaluate all broker gates; return pass flag, reason codes, and metric details.
 
@@ -112,6 +161,28 @@ def passes_execution_gates(
 
     if result.direction is None:
         reasons.append("no_signal")
+
+    if signal_closed_reasons:
+        closed_reason = signal_closed_reasons.get(result.pair)
+        if closed_reason and blocks_same_bar_entry(closed_reason):
+            reasons.append("closed_on_signal")
+            details["closed_on_signal"] = {"exit_reason": closed_reason}
+
+    execution_cfg = params.get("execution") or {}
+    cooldown = (
+        cooldown_bars
+        if cooldown_bars is not None
+        else int(execution_cfg.get("post_stop_cooldown_bars") or 0)
+    )
+    if cooldown > 0 and last_stop_exit_time and candles:
+        held = bars_since_anchor(candles, last_stop_exit_time)
+        if held is not None and held < cooldown:
+            reasons.append("post_stop_cooldown")
+            details["post_stop_cooldown"] = {
+                "bars_since_stop": held,
+                "required_bars": cooldown,
+                "last_stop_exit_time": last_stop_exit_time,
+            }
 
     filter_reasons, filter_details = _filter_gate_reasons(result)
     reasons.extend(filter_reasons)

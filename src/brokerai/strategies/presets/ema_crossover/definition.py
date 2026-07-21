@@ -37,6 +37,7 @@ DEFAULT_PARAMS: dict = {
             "enabled": True,
             "period": 14,
             "min_value": 0.0008,
+            "min_value_jpy": 0.05,
         },
     ],
     "exits": {
@@ -55,6 +56,12 @@ DEFAULT_PARAMS: dict = {
             "fixed_pips": 30,
             "atr_multiplier": 2.5,
         },
+        "reverse_crossover": {
+            "enabled": True,
+            "min_bars_after_entry": 6,
+            "min_confirmation_bars": 2,
+            "min_separation_atr": 0.2,
+        },
     },
     "risk": {"risk_per_trade_pct": 1.0, "max_trades_per_day": 3},
     "execution": {
@@ -67,6 +74,7 @@ DEFAULT_PARAMS: dict = {
         "close_before_market_hours": 2,
         "no_late_market_trading": True,
         "late_market_hours": 2,
+        "post_stop_cooldown_bars": 0,
     },
 }
 
@@ -77,7 +85,7 @@ PARAM_SCHEMA: dict = {
     },
     "filters": [
         {"id": "adx", "period": {"minimum": 7, "maximum": 28}, "threshold": {"minimum": 15, "maximum": 40}},
-        {"id": "atr", "period": {"minimum": 7, "maximum": 28}, "min_value": {"minimum": 0.0001, "maximum": 0.005}},
+        {"id": "atr", "period": {"minimum": 7, "maximum": 28}, "min_value": {"minimum": 0.0001, "maximum": 0.5}, "min_value_jpy": {"minimum": 0.0001, "maximum": 0.5}},
     ],
     "signal": {},
     "exits": {},
@@ -90,6 +98,7 @@ PARAM_SCHEMA: dict = {
         "priority": {"minimum": 0, "maximum": 100},
         "close_before_market_hours": {"minimum": 1, "maximum": 24},
         "late_market_hours": {"minimum": 1, "maximum": 24},
+        "post_stop_cooldown_bars": {"minimum": 0, "maximum": 30},
     },
     "min_candles": {"maximum": 2000},
 }

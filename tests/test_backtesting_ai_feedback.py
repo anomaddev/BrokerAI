@@ -151,6 +151,29 @@ def test_normalize_ai_feedback_none_when_empty():
     assert normalized is not None
     assert normalized["status"] == AI_FEEDBACK_STATUS_COMPLETED
     assert normalized["markdown"] == "## Summary"
+    assert normalized["suggestions"] == []
+
+
+def test_normalize_ai_feedback_keeps_allowlisted_suggestions():
+    normalized = normalize_ai_feedback(
+        {
+            "status": "completed",
+            "markdown": "## Summary",
+            "suggestions": [
+                {
+                    "id": "atr_floor",
+                    "path": "filters.atr.min_value",
+                    "to": 0.05,
+                    "rationale": "JPY",
+                    "priority": 1,
+                },
+                {"id": "bad", "path": "indicators.fast.period", "to": 12},
+            ],
+        }
+    )
+    assert normalized is not None
+    assert len(normalized["suggestions"]) == 1
+    assert normalized["suggestions"][0]["path"] == "filters.atr.min_value"
 
 
 @pytest.mark.asyncio

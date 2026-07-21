@@ -12,7 +12,7 @@ from brokerai.bots.secretary.types import PipelineContext
 from brokerai.core.worker_pool import get_worker_pool
 from brokerai.db.repositories.asset_settings import AssetSettingsRepository, enabled_forex_pairs
 from brokerai.db.repositories.broker_lots import BrokerLotsRepository
-from brokerai.trading.execution_gates import is_executor_eligible
+from brokerai.trading.execution_gates import blocks_same_bar_entry, is_executor_eligible
 from brokerai.trading.pipeline import ensure_trading_registries
 from brokerai.trading.schedule import utc_now
 from brokerai.trading.types import AnalysisResult, TradeIntent, WorkUnit
@@ -82,11 +82,24 @@ async def run_broker_execution(
         strategies=context.strategies,
     )
     monitor = BrokerMonitor()
-    await monitor.sync_exit_monitors(
+    closed_exits = await monitor.sync_exit_monitors(
         [unit],
         dm,
         evaluate_pairs={(context.symbol, context.timeframe)},
     )
+    signal_closed_reasons = {
+        str(intent.pair): intent.reason
+        for intent in closed_exits
+        if intent.pair and blocks_same_bar_entry(intent.reason)
+    }
+    stop_exit_times: dict[tuple[str, str], str] = {}
+    for intent in closed_exits:
+        if str(intent.reason).strip().lower() != "stop_loss":
+            continue
+        candle_open = (intent.metadata or {}).get("exit_candle_open")
+        if not candle_open:
+            continue
+        stop_exit_times[(intent.strategy_id, str(intent.pair))] = str(candle_open)
 
     # Re-query open pairs after exit monitors may have closed trades on this candle.
     open_lots = await BrokerLotsRepository().list_open_lots()
@@ -113,6 +126,8 @@ async def run_broker_execution(
         data_manager=dm,
         open_pairs=open_pairs,
         only_one_position_per_pair=only_one_position_per_pair,
+        signal_closed_reasons=signal_closed_reasons or None,
+        stop_exit_times=stop_exit_times or None,
     )
 
     duration_ms = int((time.monotonic() - started) * 1000)

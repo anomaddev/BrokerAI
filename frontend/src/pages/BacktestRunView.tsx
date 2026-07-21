@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, FileDown, Maximize2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -27,11 +27,19 @@ import {
   findEventIndex,
   type EventStepKind,
 } from "../lib/backtests/backtestActionStep";
+import { openBacktestFeedbackPrintView } from "../lib/backtests/exportBacktestFeedbackPdf";
 import {
   backtestRunStatusLabel,
   normalizeBacktestRunStatus,
 } from "../lib/backtests/backtestRunStatus";
 import { TIMEFRAME_LABELS, type Timeframe } from "../lib/strategyParams";
+import {
+  applySuggestionsToParams,
+  suggestionDisplayValue,
+  storeBacktestAiDraft,
+  type AiFeedbackSuggestion,
+} from "../lib/backtests/applyAiSuggestions";
+import type { StrategyParamsV1 } from "../lib/strategyParams";
 import { getSupabaseBrowserClient } from "../lib/supabaseClient";
 
 type PanelTab = "overview" | "strategy" | "actions" | "feedback";
@@ -311,7 +319,10 @@ export default function BacktestRunView() {
   const [feedbackSettings, setFeedbackSettings] = useState<BacktestSettings | null>(null);
   const [analyzeBusy, setAnalyzeBusy] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(new Set());
   const selectedActionItemRef = useRef<HTMLButtonElement | null>(null);
+  const feedbackMarkdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!runId) return;
@@ -663,6 +674,14 @@ export default function BacktestRunView() {
     }
   }
 
+  const feedbackStatus = run?.ai_feedback?.status ?? null;
+  const feedbackFinishedAt = run?.ai_feedback?.finished_at ?? null;
+  useEffect(() => {
+    if (feedbackStatus !== "completed") return;
+    const suggestions = (run?.ai_feedback?.suggestions ?? []) as AiFeedbackSuggestion[];
+    setSelectedSuggestionIds(new Set(suggestions.map((s) => s.id)));
+  }, [feedbackStatus, feedbackFinishedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (loading) {
     return <div className="center-page">Loading backtest…</div>;
   }
@@ -680,8 +699,38 @@ export default function BacktestRunView() {
   const status = normalizeBacktestRunStatus(run.status);
   const params = run.params_snapshot || strategy?.params || {};
   const feedback = run.ai_feedback ?? null;
+  const feedbackSuggestions = (feedback?.suggestions ?? []) as AiFeedbackSuggestion[];
   const feedbackRunning =
     feedback?.status === "queued" || feedback?.status === "running";
+
+  function toggleSuggestion(id: string) {
+    setSelectedSuggestionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function openSuggestionsInBuilder() {
+    if (!run?.params_snapshot || !run.strategy_id || !runId) return;
+    const selected = feedbackSuggestions.filter((s) => selectedSuggestionIds.has(s.id));
+    if (selected.length === 0) return;
+    const patched = applySuggestionsToParams(
+      run.params_snapshot as StrategyParamsV1,
+      selected,
+    );
+    storeBacktestAiDraft({
+      runId,
+      strategyId: run.strategy_id,
+      params: patched,
+      appliedSuggestionIds: selected.map((s) => s.id),
+      createdAt: new Date().toISOString(),
+    });
+    navigate(
+      `${ROUTES.research.strategyEdit(run.strategy_id)}?fromBacktest=${encodeURIComponent(runId)}`,
+    );
+  }
   const feedbackFeatureEnabled = Boolean(feedbackSettings?.ai_feedback_enabled);
   const showFeedbackTab = feedbackFeatureEnabled || Boolean(feedback);
   const aiEnabled = Boolean(
@@ -698,6 +747,31 @@ export default function BacktestRunView() {
   const panelTabs: PanelTab[] = showFeedbackTab
     ? ["overview", "strategy", "actions", "feedback"]
     : ["overview", "strategy", "actions"];
+
+  function exportFeedbackPdf() {
+    if (!feedback?.markdown || !feedbackMarkdownRef.current) return;
+    setExportError(null);
+    try {
+      const metaLines: string[] = [];
+      if (feedback.model_name) metaLines.push(feedback.model_name);
+      if (feedback.finished_at) metaLines.push(formatInstant(feedback.finished_at));
+      openBacktestFeedbackPrintView({
+        title: `${run.name || run.strategy_name} — AI feedback`,
+        subtitle: [
+          run.strategy_name,
+          symbol,
+          TIMEFRAME_LABELS[timeframe] ?? timeframe,
+          run.period,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        metaLines,
+        bodyHtml: feedbackMarkdownRef.current.innerHTML,
+      });
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Failed to export PDF");
+    }
+  }
 
   return (
     <div className="analysis-run-view backtest-run-view">
@@ -1120,23 +1194,38 @@ export default function BacktestRunView() {
                   ) : null}
                 </div>
                 {status === "completed" ? (
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    disabled={analyzeDisabled}
-                    title={analyzeTitle}
-                    onClick={() => void requestAnalyze()}
-                  >
-                    {feedbackRunning || analyzeBusy
-                      ? "Analyzing…"
-                      : feedback?.status === "completed" || feedback?.status === "failed"
-                        ? "Re-analyze"
-                        : "Analyze"}
-                  </button>
+                  <div className="backtest-feedback-hero-actions">
+                    {feedback?.status === "completed" && feedback.markdown ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        title="Export as PDF"
+                        aria-label="Export AI feedback as PDF"
+                        onClick={exportFeedbackPdf}
+                      >
+                        <FileDown size={14} strokeWidth={2} aria-hidden />
+                        Export PDF
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={analyzeDisabled}
+                      title={analyzeTitle}
+                      onClick={() => void requestAnalyze()}
+                    >
+                      {feedbackRunning || analyzeBusy
+                        ? "Analyzing…"
+                        : feedback?.status === "completed" || feedback?.status === "failed"
+                          ? "Re-analyze"
+                          : "Analyze"}
+                    </button>
+                  </div>
                 ) : null}
               </section>
 
               {analyzeError ? <p className="settings-error">{analyzeError}</p> : null}
+              {exportError ? <p className="settings-error">{exportError}</p> : null}
 
               {!feedback && !feedbackRunning ? (
                 <div className="backtest-actions-empty">
@@ -1168,11 +1257,58 @@ export default function BacktestRunView() {
               ) : null}
 
               {feedback?.status === "completed" && feedback.markdown ? (
-                <div className="research-report-body backtest-feedback-markdown">
+                <div
+                  className="research-report-body backtest-feedback-markdown"
+                  ref={feedbackMarkdownRef}
+                >
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {feedback.markdown}
                   </ReactMarkdown>
                 </div>
+              ) : null}
+
+              {feedback?.status === "completed" && feedbackSuggestions.length > 0 ? (
+                <section className="backtest-feedback-suggestions" aria-label="Structured suggestions">
+                  <div className="backtest-feedback-suggestions-header">
+                    <h3 className="backtest-feedback-suggestions-title">Builder suggestions</h3>
+                    <p className="settings-muted">
+                      Select changes to review in the strategy builder. Nothing is saved until you
+                      confirm there.
+                    </p>
+                  </div>
+                  <ul className="backtest-feedback-suggestion-list">
+                    {feedbackSuggestions.map((suggestion) => (
+                      <li key={suggestion.id} className="backtest-feedback-suggestion-card">
+                        <label className="backtest-feedback-suggestion-label">
+                          <input
+                            type="checkbox"
+                            checked={selectedSuggestionIds.has(suggestion.id)}
+                            onChange={() => toggleSuggestion(suggestion.id)}
+                          />
+                          <span>
+                            <strong>{suggestion.label || suggestion.path}</strong>
+                            <span className="settings-muted">
+                              {" "}
+                              {suggestionDisplayValue(suggestion.from)} →{" "}
+                              {suggestionDisplayValue(suggestion.to)}
+                            </span>
+                          </span>
+                        </label>
+                        {suggestion.rationale ? (
+                          <p className="param-helper">{suggestion.rationale}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={selectedSuggestionIds.size === 0 || !run.params_snapshot}
+                    onClick={openSuggestionsInBuilder}
+                  >
+                    Open selected in builder
+                  </button>
+                </section>
               ) : null}
             </div>
           ) : null}

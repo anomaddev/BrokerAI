@@ -13,7 +13,16 @@ def trade_requires_exit_monitor(params: dict[str, Any]) -> bool:
     """Return True when strategy params use a runtime exit monitor (not fixed TP)."""
     exits = params.get("exits") or {}
     tp_mode = str((exits.get("take_profit") or {}).get("mode", ""))
-    return tp_mode in {"reverse_crossover", "trailing_stop"}
+    if tp_mode in {"reverse_crossover", "trailing_stop"}:
+        return True
+    if str((params.get("signal") or {}).get("type", "")) != "ema_crossover":
+        return False
+    rc = exits.get("reverse_crossover")
+    if isinstance(rc, dict):
+        return bool(rc.get("enabled", True))
+    # EMA strategies default to reverse-crossover monitoring when the nested
+    # block is omitted (matches preset / validate_exits normalization).
+    return True
 
 
 def build_exit_analysis_result(

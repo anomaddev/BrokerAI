@@ -14,6 +14,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from brokerai.backtesting.feedback_suggestions import (
+    ALLOWLIST_FOR_PROMPT,
+    normalize_suggestions,
+    parse_suggestions_from_markdown,
+)
 from brokerai.bots.data_manager.candle_schedule import timeframe_to_duration
 from brokerai.bots.researcher.llm import analyze_with_model
 from brokerai.db.repositories.ai_models import AiModelsRepository, bind_source_model
@@ -53,7 +58,7 @@ MAX_TRADE_WINDOWS = 40
 MAX_WARN_LOGS = 30
 MAX_CONTEXT_JSON_CHARS = 120_000
 
-_FEEDBACK_SYSTEM_PROMPT = """\
+_FEEDBACK_SYSTEM_PROMPT = f"""\
 You are an expert algorithmic trading coach reviewing a completed strategy backtest.
 
 Your job is to give actionable feedback on where the strategy could improve — not
@@ -74,7 +79,32 @@ Respond in clear markdown with these sections:
 ## Suggested improvements
 ## Risks / caveats
 
-Be specific and grounded in the supplied data. Do not invent trades or metrics.
+After the markdown sections, append ONE fenced JSON block with structured suggestions
+that map to UI-editable strategy params. Use only these paths:
+{', '.join(ALLOWLIST_FOR_PROMPT)}
+
+JSON shape:
+```json
+{{
+  "suggestions": [
+    {{
+      "id": "atr_floor_jpy",
+      "path": "filters.atr.min_value_jpy",
+      "from": 0.0008,
+      "to": 0.05,
+      "rationale": "JPY ATR floor",
+      "priority": 1,
+      "test_alone": true
+    }}
+  ]
+}}
+```
+
+Rules for JSON:
+- Only include paths from the allowlist above.
+- Prefer one-factor-at-a-time (set test_alone true; keep the list short).
+- Do not invent unsupported features or EMA period retunes unless path is allowlisted.
+- Be specific and grounded in the supplied data. Do not invent trades or metrics.
 """
 
 # Prevent overlapping auto/manual jobs for the same run on one API process.
@@ -106,6 +136,7 @@ def empty_ai_feedback() -> dict[str, Any]:
         "model_name": None,
         "reasoning_effort": None,
         "markdown": None,
+        "suggestions": [],
         "error": None,
         "started_at": None,
         "finished_at": None,
@@ -137,6 +168,7 @@ def normalize_ai_feedback(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         "model_name": str(raw["model_name"]) if raw.get("model_name") else None,
         "reasoning_effort": effort,
         "markdown": str(raw["markdown"]) if raw.get("markdown") is not None else None,
+        "suggestions": normalize_suggestions(raw.get("suggestions") or []),
         "error": str(raw["error"]) if raw.get("error") is not None else None,
         "started_at": str(raw["started_at"]) if raw.get("started_at") else None,
         "finished_at": str(raw["finished_at"]) if raw.get("finished_at") else None,
@@ -536,6 +568,7 @@ async def mark_ai_feedback_running(
         "model_name": model_name,
         "reasoning_effort": reasoning_effort,
         "markdown": None,
+        "suggestions": [],
         "error": None,
         "started_at": _now_iso(),
         "finished_at": None,
@@ -595,12 +628,22 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
                 "backtest_run_id": run_id,
             },
         )
+        params_snapshot = (
+            context.get("params_snapshot")
+            if isinstance(context.get("params_snapshot"), dict)
+            else None
+        )
+        cleaned_markdown, suggestions = parse_suggestions_from_markdown(
+            markdown,
+            params_snapshot=params_snapshot,
+        )
         feedback = {
             "status": AI_FEEDBACK_STATUS_COMPLETED,
             "model_id": str(model_id),
             "model_name": resolved_name,
             "reasoning_effort": str(effort),
-            "markdown": markdown,
+            "markdown": cleaned_markdown,
+            "suggestions": suggestions,
             "error": None,
             "started_at": started_at,
             "finished_at": _now_iso(),
@@ -616,6 +659,7 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
             "model_name": resolved_name,
             "reasoning_effort": str(effort),
             "markdown": None,
+            "suggestions": [],
             "error": str(exc),
             "started_at": started_at,
             "finished_at": _now_iso(),
@@ -691,6 +735,7 @@ async def begin_ai_feedback_job(run_id: str) -> dict[str, Any]:
                         "model_name": model_name,
                         "reasoning_effort": effort,
                         "markdown": None,
+                        "suggestions": [],
                         "error": "AI feedback task failed to start",
                         "started_at": _now_iso(),
                         "finished_at": _now_iso(),

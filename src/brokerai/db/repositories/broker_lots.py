@@ -694,6 +694,44 @@ class BrokerLotsRepository:
             rows = _dedupe_open_lots(rows)
         return rows
 
+    async def latest_stop_loss_exit_candle_open(
+        self,
+        *,
+        strategy_id: str,
+        pair: str,
+        limit: int = 50,
+    ) -> str | None:
+        """Return the candle-open time of the most recent stop-loss exit for strategy+pair.
+
+        Prefers ``exit_candle_open`` (strategy bar open) when present, otherwise
+        falls back to ``close_time`` / ``closed_at`` ISO strings. Used by the
+        post-stop cooldown gate so live execution matches backtest bar counting.
+        """
+        if not strategy_id or not pair:
+            return None
+        rows = await self._query_broker_lots(
+            exchange_id=None,
+            state="closed",
+            strategy_id=strategy_id,
+            pair=pair,
+            limit=max(1, min(limit, 200)),
+            before=None,
+        )
+        for doc in rows:
+            reason = str(doc.get("close_reason") or "").strip().lower()
+            if reason != "stop_loss":
+                continue
+            candle_open = doc.get("exit_candle_open")
+            if candle_open:
+                return str(candle_open)
+            close_instant = doc.get("close_time") or doc.get("closed_at")
+            if close_instant is None:
+                continue
+            if hasattr(close_instant, "isoformat"):
+                return close_instant.isoformat()
+            return str(close_instant)
+        return None
+
     async def close_lot(
         self,
         lot_id: str,

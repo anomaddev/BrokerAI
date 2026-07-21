@@ -162,6 +162,12 @@ def validate_filter(
             min_bounds = _bounds_from_schema((schema or {}).get("min_value"))
             _check_bounds(min_value, f"{field}.min_value", *min_bounds)
             normalized["min_value"] = min_value
+        if "min_value_jpy" in data and data["min_value_jpy"] is not None:
+            min_value_jpy = _require_number(data["min_value_jpy"], f"{field}.min_value_jpy")
+            jpy_schema = (schema or {}).get("min_value_jpy") or (schema or {}).get("min_value")
+            jpy_bounds = _bounds_from_schema(jpy_schema)
+            _check_bounds(min_value_jpy, f"{field}.min_value_jpy", *jpy_bounds)
+            normalized["min_value_jpy"] = min_value_jpy
         if "max_value" in data and data["max_value"] is not None:
             max_value = _require_number(data["max_value"], f"{field}.max_value")
             normalized["max_value"] = max_value
@@ -173,6 +179,15 @@ def validate_filter(
             normalized["min_value"] = _require_number(data["min_value"], f"{field}.min_value")
         if "max_value" in data and data["max_value"] is not None:
             normalized["max_value"] = _require_number(data["max_value"], f"{field}.max_value")
+
+    elif filter_type == "htf_bias":
+        timeframe = _require_str(data.get("timeframe", "H4"), f"{field}.timeframe")
+        if timeframe not in {"H1", "H4"}:
+            raise ParamsValidationError(
+                "htf_bias timeframe must be H1 or H4",
+                field=f"{field}.timeframe",
+            )
+        normalized["timeframe"] = timeframe
 
     elif filter_type == "custom":
         expression = _require_str(data.get("expression", ""), f"{field}.expression")
@@ -307,11 +322,63 @@ def validate_exits(
                 f"{field}.take_profit.trail_atr_multiplier",
             )
 
+    reverse_crossover_raw = data.get("reverse_crossover")
+    reverse_crossover: dict[str, Any] | None = None
+    if reverse_crossover_raw is not None and signal_type != "ema_crossover":
+        raise ParamsValidationError(
+            "exits.reverse_crossover requires ema_crossover signal",
+            field=f"{field}.reverse_crossover",
+        )
+    if signal_type == "ema_crossover":
+        rc_data = (
+            _require_dict(reverse_crossover_raw, f"{field}.reverse_crossover")
+            if reverse_crossover_raw is not None
+            else {}
+        )
+        reverse_crossover = {
+            "enabled": _require_bool(
+                rc_data.get("enabled", True), f"{field}.reverse_crossover.enabled"
+            ),
+            "min_bars_after_entry": _require_int(
+                rc_data.get("min_bars_after_entry", 6),
+                f"{field}.reverse_crossover.min_bars_after_entry",
+            ),
+            "min_confirmation_bars": _require_int(
+                rc_data.get("min_confirmation_bars", 2),
+                f"{field}.reverse_crossover.min_confirmation_bars",
+            ),
+            "min_separation_atr": _require_number(
+                rc_data.get("min_separation_atr", 0.2),
+                f"{field}.reverse_crossover.min_separation_atr",
+            ),
+        }
+        _check_bounds(
+            float(reverse_crossover["min_bars_after_entry"]),
+            f"{field}.reverse_crossover.min_bars_after_entry",
+            0,
+            30,
+        )
+        _check_bounds(
+            float(reverse_crossover["min_confirmation_bars"]),
+            f"{field}.reverse_crossover.min_confirmation_bars",
+            1,
+            5,
+        )
+        _check_bounds(
+            reverse_crossover["min_separation_atr"],
+            f"{field}.reverse_crossover.min_separation_atr",
+            0.0,
+            1.0,
+        )
+
     _ = schema
-    return {
+    result: dict[str, Any] = {
         "stop_loss": sl_normalized,
         "take_profit": tp_normalized,
     }
+    if reverse_crossover is not None:
+        result["reverse_crossover"] = reverse_crossover
+    return result
 
 
 def validate_risk(spec: Any, *, schema: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -392,6 +459,20 @@ def validate_execution(spec: Any, *, schema: dict[str, Any] | None = None) -> di
         *late_bounds,
     )
 
+    post_stop_cooldown_bars = data.get("post_stop_cooldown_bars", 0)
+    post_stop_cooldown_bars = _require_int(
+        post_stop_cooldown_bars,
+        f"{field}.post_stop_cooldown_bars",
+    )
+    cooldown_bounds = _bounds_from_schema(schema.get("post_stop_cooldown_bars"))
+    if cooldown_bounds == (None, None):
+        cooldown_bounds = (0.0, 30.0)
+    _check_bounds(
+        float(post_stop_cooldown_bars),
+        f"{field}.post_stop_cooldown_bars",
+        *cooldown_bounds,
+    )
+
     _ = schema
     return {
         "sessions": sessions,
@@ -403,6 +484,7 @@ def validate_execution(spec: Any, *, schema: dict[str, Any] | None = None) -> di
         "close_before_market_hours": close_before_market_hours,
         "no_late_market_trading": no_late_market_trading,
         "late_market_hours": late_market_hours,
+        "post_stop_cooldown_bars": post_stop_cooldown_bars,
     }
 
 

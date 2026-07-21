@@ -226,6 +226,8 @@ class BacktestSimulator:
             "pair": pos.pair,
             "direction": pos.direction,
             "entry_price": pos.entry_price,
+            "entry_time": pos.entry_time,
+            "entry_candle_open": pos.entry_time,
         }
         monitor = create_exit_monitor(trade_doc, self.params)
         if monitor is None:

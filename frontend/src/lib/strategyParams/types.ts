@@ -114,6 +114,8 @@ export type AtrFilterSpec = {
   enabled: boolean;
   period: number;
   min_value?: number;
+  /** ATR floor for JPY-quote pairs (USD/JPY, …); engine picks by pair. */
+  min_value_jpy?: number;
   max_value?: number;
 };
 
@@ -133,7 +135,20 @@ export type CustomFilterSpec = {
   expression: string;
 };
 
-export type FilterSpec = AdxFilterSpec | AtrFilterSpec | RsiFilterSpec | CustomFilterSpec;
+export type HtfBiasFilterSpec = {
+  id: string;
+  type: "htf_bias";
+  enabled: boolean;
+  /** Higher timeframe used for EMA alignment (closed bars only). */
+  timeframe: "H1" | "H4";
+};
+
+export type FilterSpec =
+  | AdxFilterSpec
+  | AtrFilterSpec
+  | RsiFilterSpec
+  | CustomFilterSpec
+  | HtfBiasFilterSpec;
 
 export type MonthlyHighSignalSpec = {
   type: "monthly_high";
@@ -184,9 +199,17 @@ export type TakeProfitSpec = {
   trail_ema_ref?: string;
 };
 
+export type ReverseCrossoverExitSpec = {
+  enabled?: boolean;
+  min_bars_after_entry?: number;
+  min_confirmation_bars?: number;
+  min_separation_atr?: number;
+};
+
 export type ExitsSpec = {
   stop_loss: StopLossSpec;
   take_profit: TakeProfitSpec;
+  reverse_crossover?: ReverseCrossoverExitSpec;
 };
 
 export type RiskSpec = {
@@ -204,6 +227,8 @@ export type ExecutionSpec = {
   close_before_market_hours?: number;
   no_late_market_trading?: boolean;
   late_market_hours?: number;
+  /** Bars to wait after a stop-loss before allowing a new entry (0 = off). */
+  post_stop_cooldown_bars?: number;
 };
 
 export type StrategyParamsV1 = {

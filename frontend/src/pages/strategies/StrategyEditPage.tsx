@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type Strategy } from "../../api/client";
 import { ROUTES } from "../../lib/routes";
+import { clearBacktestAiDraft, loadBacktestAiDraft } from "../../lib/backtests/applyAiSuggestions";
 import EmaCrossoverBuilder from "./presets/emaCrossover/EmaCrossoverBuilder";
 import CustomBuilder from "./presets/custom/CustomBuilder";
 import { v1ToEmaCrossoverParams } from "./presets/emaCrossover/apiParams";
@@ -9,9 +10,13 @@ import { v1ToCustomBuilderParams } from "./presets/custom/defaults";
 
 export default function StrategyEditPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const fromBacktest = searchParams.get("fromBacktest");
   const [strategy, setStrategy] = useState<Strategy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [draftBanner, setDraftBanner] = useState<string | null>(null);
+  const [draftParams, setDraftParams] = useState<Strategy["params"] | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -19,7 +24,20 @@ export default function StrategyEditPage() {
     (async () => {
       try {
         const doc = await api.getStrategy(id);
-        if (!cancelled) setStrategy(doc);
+        if (cancelled) return;
+
+        if (fromBacktest) {
+          const draft = loadBacktestAiDraft(fromBacktest);
+          if (draft && draft.strategyId === id) {
+            setDraftParams(draft.params);
+            setDraftBanner(
+              "Draft from backtest AI suggestions — review the highlighted settings before saving.",
+            );
+            clearBacktestAiDraft(fromBacktest);
+          }
+        }
+
+        setStrategy(doc);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load strategy");
       } finally {
@@ -29,11 +47,13 @@ export default function StrategyEditPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, fromBacktest]);
 
   if (!id) return <Navigate to={ROUTES.research.strategies} replace />;
   if (loading) return <div className="center-page">Loading strategy…</div>;
   if (error || !strategy) return <Navigate to={ROUTES.research.strategies} replace />;
+
+  const params = draftParams ?? strategy.params;
 
   const commonProps = {
     editStrategyId: strategy.id,
@@ -43,23 +63,35 @@ export default function StrategyEditPage() {
     editEnabled: strategy.enabled,
   };
 
-  if (strategy.preset_id === "ema_crossover" && strategy.params) {
+  const banner = draftBanner ? (
+    <div className="strategy-builder-ai-draft-banner" role="status">
+      {draftBanner}
+    </div>
+  ) : null;
+
+  if (strategy.preset_id === "ema_crossover" && params) {
     return (
-      <EmaCrossoverBuilder
-        {...commonProps}
-        initialParams={v1ToEmaCrossoverParams(strategy.params)}
-        initialParamsV1={strategy.params}
-      />
+      <>
+        {banner}
+        <EmaCrossoverBuilder
+          {...commonProps}
+          initialParams={v1ToEmaCrossoverParams(params)}
+          initialParamsV1={params}
+        />
+      </>
     );
   }
 
-  if (strategy.preset_id === "custom" && strategy.params) {
+  if (strategy.preset_id === "custom" && params) {
     return (
-      <CustomBuilder
-        {...commonProps}
-        initialParams={v1ToCustomBuilderParams(strategy.params)}
-        initialParamsV1={strategy.params}
-      />
+      <>
+        {banner}
+        <CustomBuilder
+          {...commonProps}
+          initialParams={v1ToCustomBuilderParams(params)}
+          initialParamsV1={params}
+        />
+      </>
     );
   }
 

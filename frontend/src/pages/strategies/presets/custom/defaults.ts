@@ -43,6 +43,17 @@ function buildFilters(params: CustomBuilderParams) {
             enabled: params.atrFilter,
             period: params.atrPeriod,
             min_value: params.minAtr,
+            min_value_jpy: params.minAtrJpy,
+          },
+        ]
+      : []),
+    ...(params.htfBiasEnabled
+      ? [
+          {
+            id: "htf_bias",
+            type: "htf_bias" as const,
+            enabled: true,
+            timeframe: params.htfBiasTimeframe,
           },
         ]
       : []),
@@ -67,11 +78,13 @@ export function customBuilderParamsToV1(params: CustomBuilderParams, sessions?: 
     return { ...base, filters: buildFilters(params) };
   }
 
+  const { reverse_crossover: _rc, ...exitsWithoutRc } = base.exits;
   return {
     ...base,
     indicators: {},
     signal: { type: params.signalType },
     filters: buildFilters(params),
+    exits: exitsWithoutRc,
   };
 }
 
@@ -93,6 +106,7 @@ export function v1ToCustomBuilderParams(v1: StrategyParamsV1): CustomBuilderPara
       atrFilter: atr?.type === "atr" ? atr.enabled : true,
       atrPeriod: atr?.type === "atr" ? atr.period : 14,
       minAtr: atr?.type === "atr" ? (atr.min_value ?? 0.0008) : 0.0008,
+      minAtrJpy: atr?.type === "atr" ? (atr.min_value_jpy ?? 0.05) : 0.05,
       overlays: {
         ...ema.overlays,
         adx: Boolean(adx) && (adx?.type === "adx" ? adx.enabled : true),
@@ -127,6 +141,7 @@ export function v1ToCustomBuilderParams(v1: StrategyParamsV1): CustomBuilderPara
     atrFilter: atr?.type === "atr" ? atr.enabled : true,
     atrPeriod: atr?.type === "atr" ? atr.period : 14,
     minAtr: atr?.type === "atr" ? (atr.min_value ?? 0.0008) : 0.0008,
+    minAtrJpy: atr?.type === "atr" ? (atr.min_value_jpy ?? 0.05) : 0.05,
     overlays: {
       ...ema.overlays,
       adx: Boolean(adx) && (adx?.type === "adx" ? adx.enabled : true),

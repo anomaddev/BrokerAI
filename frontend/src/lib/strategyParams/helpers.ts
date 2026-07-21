@@ -113,5 +113,6 @@ export function defaultAtrFilter(): Extract<FilterSpec, { type: "atr" }> {
     enabled: true,
     period: 14,
     min_value: 0.0008,
+    min_value_jpy: 0.05,
   };
 }

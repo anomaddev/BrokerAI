@@ -15,6 +15,7 @@ import {
   ExecutionSection,
   FiltersSection,
   RiskManagementSection,
+  SignalRulesSection,
   type RiskManagementState,
 } from "../../../../components/strategies/params/sections";
 import { useStrategyBuilderExit } from "../../../../hooks/useStrategyBuilderExit";
@@ -67,6 +68,7 @@ import {
 const ACCORDION_KEY = "brokerai-ema-crossover-accordion-v10";
 const DEFAULT_SECTIONS = {
   filters: true,
+  signalRules: true,
   risk: false,
   execution: false,
 };
@@ -350,6 +352,10 @@ export default function EmaCrossoverBuilder({
       tpAtrMultiplier: params.tpAtrMultiplier,
       trailMode: params.trailMode,
       trailAtrMultiplier: params.trailAtrMultiplier,
+      reverseCrossoverEnabled: params.reverseCrossoverEnabled,
+      reverseCrossoverMinBarsAfterEntry: params.reverseCrossoverMinBarsAfterEntry,
+      reverseCrossoverMinConfirmationBars: params.reverseCrossoverMinConfirmationBars,
+      reverseCrossoverMinSeparationAtr: params.reverseCrossoverMinSeparationAtr,
     }),
     [params],
   );
@@ -483,6 +489,11 @@ export default function EmaCrossoverBuilder({
                   enabled: params.atrFilter,
                   period: params.atrPeriod,
                   minAtr: params.minAtr,
+                  minAtrJpy: params.minAtrJpy,
+                }}
+                htfBias={{
+                  enabled: params.htfBiasEnabled,
+                  timeframe: params.htfBiasTimeframe,
                 }}
                 onAdxChange={(adx) => {
                   update("adxFilter", adx.enabled);
@@ -493,7 +504,28 @@ export default function EmaCrossoverBuilder({
                   update("atrFilter", atr.enabled);
                   update("atrPeriod", atr.period);
                   update("minAtr", atr.minAtr);
+                  update("minAtrJpy", atr.minAtrJpy);
                 }}
+                onHtfBiasChange={(htf) => {
+                  update("htfBiasEnabled", htf.enabled);
+                  update("htfBiasTimeframe", htf.timeframe);
+                }}
+              />
+
+              <SignalRulesSection
+                expanded={sections.signalRules}
+                onToggle={() => toggleSection("signalRules")}
+                direction={params.direction}
+                confirmation={params.confirmation}
+                onDirectionChange={(v) => update("direction", v)}
+                onConfirmationChange={(v) => update("confirmation", v)}
+                showApproaching
+                approachingEnabled={params.approachingEnabled}
+                approachingMaxGapAtr={params.approachingMaxGapAtr}
+                approachingMinNarrowBars={params.approachingMinNarrowBars}
+                onApproachingEnabledChange={(v) => update("approachingEnabled", v)}
+                onApproachingMaxGapAtrChange={(v) => update("approachingMaxGapAtr", v)}
+                onApproachingMinNarrowBarsChange={(v) => update("approachingMinNarrowBars", v)}
               />
 
               <RiskManagementSection
@@ -526,6 +558,7 @@ export default function EmaCrossoverBuilder({
                 closeBeforeMarketHours={params.closeBeforeMarketHours}
                 noLateMarketTrading={params.noLateMarketTrading}
                 lateMarketHours={params.lateMarketHours}
+                postStopCooldownBars={params.postStopCooldownBars}
                 onMinConfidenceChange={(v) => update("minConfidence", v)}
                 onMaxTradesChange={(v) => update("maxTradesPerDay", v)}
                 onOverrideChange={(v) => update("overrideAllStrategies", v)}
@@ -534,6 +567,7 @@ export default function EmaCrossoverBuilder({
                 onCloseBeforeMarketHoursChange={(v) => update("closeBeforeMarketHours", v)}
                 onNoLateMarketTradingChange={(v) => update("noLateMarketTrading", v)}
                 onLateMarketHoursChange={(v) => update("lateMarketHours", v)}
+                onPostStopCooldownBarsChange={(v) => update("postStopCooldownBars", v)}
               />
             </div>
           </aside>

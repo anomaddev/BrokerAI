@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from brokerai.bots.data_manager.candle_requirements import (
     collect_candle_requirements,
+    htf_required_bars,
     required_candle_bars,
+    strategy_extra_timeframes,
     strategy_timeframe,
 )
 from brokerai.integrations.oanda import forex_pair_to_instrument, timeframe_to_granularity
@@ -132,3 +134,88 @@ def test_oanda_timeframe_mapping():
 
 def test_forex_pair_to_oanda_instrument():
     assert forex_pair_to_instrument("EUR/USD") == "EUR_USD"
+
+
+def test_strategy_extra_timeframes_includes_htf_bias_and_additional():
+    params = {
+        "additional_timeframes": ["H1"],
+        "indicators": {
+            "fast": {"type": "ema", "period": 9},
+            "slow": {"type": "ema", "period": 21},
+        },
+        "signal": {"type": "ema_crossover", "fast_ref": "fast", "slow_ref": "slow"},
+        "filters": [
+            {"id": "htf_bias", "type": "htf_bias", "enabled": True, "timeframe": "H4"},
+        ],
+    }
+    extras = strategy_extra_timeframes(params)
+    assert extras == ["H1", "H4"]
+    assert htf_required_bars(params) == 63
+
+
+def test_collect_candle_requirements_includes_htf_bias_timeframe():
+    strategies = [
+        (
+            {
+                "name": "EMA+HTF",
+                "timeframe": "M15",
+                "params": {
+                    "indicators": {
+                        "fast": {"type": "ema", "period": 9, "source": "close"},
+                        "slow": {"type": "ema", "period": 21, "source": "close"},
+                    },
+                    "signal": {
+                        "type": "ema_crossover",
+                        "fast_ref": "fast",
+                        "slow_ref": "slow",
+                        "direction": "both",
+                        "confirmation": "close",
+                    },
+                    "filters": [
+                        {
+                            "id": "htf_bias",
+                            "type": "htf_bias",
+                            "enabled": True,
+                            "timeframe": "H4",
+                        }
+                    ],
+                    "additional_timeframes": ["H4"],
+                },
+            },
+            ["USD/JPY", "EUR/USD"],
+        ),
+    ]
+
+    requirements, warnings = collect_candle_requirements(strategies)
+    assert warnings == []
+    by_tf = {item.timeframe: item for item in requirements}
+    assert "M15" in by_tf
+    assert "H4" in by_tf
+    assert by_tf["H4"].pairs == ("EUR/USD", "USD/JPY")
+    assert by_tf["H4"].bar_count == 63
+
+
+def test_collect_candle_requirements_skips_disabled_htf_bias():
+    strategies = [
+        (
+            {
+                "name": "NoHTF",
+                "timeframe": "M15",
+                "params": {
+                    "indicators": {"slow": {"period": 21}},
+                    "filters": [
+                        {
+                            "id": "htf_bias",
+                            "type": "htf_bias",
+                            "enabled": False,
+                            "timeframe": "H4",
+                        }
+                    ],
+                },
+            },
+            ["EUR/USD"],
+        ),
+    ]
+    requirements, warnings = collect_candle_requirements(strategies)
+    assert warnings == []
+    assert [item.timeframe for item in requirements] == ["M15"]

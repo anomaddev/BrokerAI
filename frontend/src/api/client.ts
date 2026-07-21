@@ -1635,12 +1635,24 @@ export type BacktestAiFeedbackStatus =
   | "completed"
   | "failed";
 
+export type BacktestAiSuggestion = {
+  id: string;
+  path: string;
+  label?: string;
+  from?: unknown;
+  to: unknown;
+  rationale?: string;
+  priority?: number;
+  test_alone?: boolean;
+};
+
 export type BacktestAiFeedback = {
   status: BacktestAiFeedbackStatus;
   model_id: string | null;
   model_name: string | null;
   reasoning_effort: ReasoningEffort | null;
   markdown: string | null;
+  suggestions?: BacktestAiSuggestion[];
   error: string | null;
   started_at: string | null;
   finished_at: string | null;

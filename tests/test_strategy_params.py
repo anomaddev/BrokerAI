@@ -34,6 +34,51 @@ def test_validate_params_accepts_default_ema_crossover():
     assert result["signal"]["approaching"]["max_gap_atr"] == 0.5
     assert result["exits"]["stop_loss"]["mode"] == "atr_based"
     assert result["exits"]["stop_loss"]["fixed_pips_jpy"] == 50
+    assert result["execution"]["post_stop_cooldown_bars"] == 0
+    atr = next(f for f in result["filters"] if f["type"] == "atr")
+    assert atr["min_value"] == 0.0008
+    assert atr["min_value_jpy"] == 0.05
+
+
+def test_validate_params_accepts_jpy_atr_floor_htf_bias_and_cooldown():
+    preset = get_preset("ema_crossover")
+    assert preset is not None
+    filters = list(DEFAULT_PARAMS["filters"])
+    filters.append({"id": "htf_bias", "type": "htf_bias", "enabled": True, "timeframe": "H4"})
+    atr_idx = next(i for i, f in enumerate(filters) if f.get("type") == "atr")
+    filters[atr_idx] = {**filters[atr_idx], "min_value": 0.0008, "min_value_jpy": 0.08}
+    result = validate_params(
+        preset,
+        {
+            **DEFAULT_PARAMS,
+            "filters": filters,
+            "execution": {
+                **DEFAULT_PARAMS["execution"],
+                "post_stop_cooldown_bars": 6,
+            },
+            "signal": {
+                **DEFAULT_PARAMS["signal"],
+                "approaching": {"enabled": False, "max_gap_atr": 0.4, "min_narrow_bars": 3},
+            },
+        },
+    )
+    atr = next(f for f in result["filters"] if f["type"] == "atr")
+    assert atr["min_value"] == 0.0008
+    assert atr["min_value_jpy"] == 0.08
+    htf = next(f for f in result["filters"] if f["type"] == "htf_bias")
+    assert htf["timeframe"] == "H4"
+    assert result["execution"]["post_stop_cooldown_bars"] == 6
+    assert result["signal"]["approaching"]["enabled"] is False
+
+
+def test_validate_params_rejects_atr_min_above_schema_max():
+    preset = get_preset("ema_crossover")
+    assert preset is not None
+    filters = list(DEFAULT_PARAMS["filters"])
+    atr_idx = next(i for i, f in enumerate(filters) if f.get("type") == "atr")
+    filters[atr_idx] = {**filters[atr_idx], "min_value": 0.9}
+    with pytest.raises(ParamsValidationError):
+        validate_params(preset, {**DEFAULT_PARAMS, "filters": filters})
 
 
 def test_validate_params_accepts_fixed_pips_jpy():

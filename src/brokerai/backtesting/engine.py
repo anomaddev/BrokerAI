@@ -25,9 +25,18 @@ from brokerai.db.repositories.backtest_runs import (
 from brokerai.strategies.candles import effective_min_candles
 from brokerai.trading.data.candle_cache import CandleCache, OANDA_SOURCE
 from brokerai.trading.data.time_utils import parse_oanda_time
-from brokerai.trading.execution_gates import is_executor_eligible, passes_execution_gates
+from brokerai.trading.execution_gates import (
+    blocks_same_bar_entry,
+    is_executor_eligible,
+    passes_execution_gates,
+)
 from brokerai.trading.indicator_cache import IndicatorCache, IndicatorCacheView
 from brokerai.trading.pipeline import ensure_trading_registries, run_strategy_analysis
+from brokerai.trading.presets.ema_crossover.htf_bias import (
+    attach_htf_ema_series,
+    htf_bias_filter_spec,
+    signal_ema_periods,
+)
 from brokerai.trading.session_hold import (
     should_force_close_market,
     should_force_close_session_boundary,
@@ -39,21 +48,8 @@ HEARTBEAT_INTERVAL_S = 1.5
 HEARTBEAT_EVERY_N_BARS = 25
 ACTION_FLUSH_SIZE = 50
 
-# Exit reasons that reuse the strategy's entry signal. Closing on these must not
-# also open the opposite side on the same bar (no flip entries).
-_SIGNAL_EXIT_REASONS = frozenset({"reverse_crossover"})
-
-
-def blocks_same_bar_entry(exit_reason: str | None) -> bool:
-    """Return True when a same-bar exit should suppress a new entry.
-
-    Reverse-crossover (and similar signal exits) close the open trade using the
-    opposite crossover. That same bar's analysis would otherwise immediately
-    open the flipped side — which is not desired.
-    """
-    if not exit_reason:
-        return False
-    return str(exit_reason).strip().lower() in _SIGNAL_EXIT_REASONS
+# Re-export for callers/tests that historically imported from this module.
+__all__ = ("blocks_same_bar_entry", "run_backtest_engine")
 
 
 def _slice_indicator_view(
@@ -273,11 +269,40 @@ async def run_backtest_engine(
 
     cache = IndicatorCache()
     full_view = cache.warm(pair, timeframe, all_candles, [params])
+
+    htf_spec = htf_bias_filter_spec(params)
+    if htf_spec is not None:
+        htf_tf = str(htf_spec.get("timeframe") or "H4")
+        try:
+            htf_candles = await _ensure_candles(
+                symbol=pair,
+                timeframe=htf_tf,
+                start=warmup_start,
+                end=end,
+                log=log,
+            )
+            fast_p, slow_p = signal_ema_periods(params)
+            htf_full_view = IndicatorCacheView(pair=pair, timeframe=htf_tf, _values={})
+            attach_htf_ema_series(
+                htf_full_view,
+                timeframe=htf_tf,
+                candles=htf_candles,
+                fast_period=fast_p,
+                slow_period=slow_p,
+            )
+            # Merge into primary cache so sliced views retain HTF keys.
+            full_view._values.update(htf_full_view._values)
+            log.info("Warmed HTF bias series for %s (%d bars)", htf_tf, len(htf_candles))
+        except Exception:
+            log.warning("Failed to warm HTF candles for bias filter", exc_info=True)
+
     sim = BacktestSimulator(pair=pair, params=params, initial_equity=account_margin)
     action_buffer: list[dict[str, Any]] = []
     sequence = 0
     last_heartbeat = time.monotonic()
     total_bars = max(1, len(all_candles) - period_start_idx)
+    last_stop_exit_time: str | None = None
+    cooldown_bars = int((params.get("execution") or {}).get("post_stop_cooldown_bars") or 0)
 
     # Seed live stats so the UI shows 0s instead of blanks while the bar loop runs.
     await runs_repo.update_progress(
@@ -358,6 +383,8 @@ async def run_backtest_engine(
             )
             sequence += 1
             log.info(action_buffer[-1]["message"])
+            if closed_reason == "stop_loss":
+                last_stop_exit_time = through_time
 
         # 2) Live-parity analysis on the prefix window.
         analysis = run_strategy_analysis(
@@ -380,6 +407,9 @@ async def run_backtest_engine(
             asset_enabled_sessions=asset_enabled_sessions,
             open_pairs=open_pairs,
             only_one_position_per_pair=True,
+            last_stop_exit_time=last_stop_exit_time,
+            candles=window,
+            cooldown_bars=cooldown_bars,
         )
 
         # Do not flip into a new trade on the same bar/signal that closed the last one.

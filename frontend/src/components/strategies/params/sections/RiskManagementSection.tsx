@@ -28,6 +28,10 @@ export type RiskManagementState = {
   tpAtrMultiplier: number;
   trailMode: TrailMode;
   trailAtrMultiplier: number;
+  reverseCrossoverEnabled: boolean;
+  reverseCrossoverMinBarsAfterEntry: number;
+  reverseCrossoverMinConfirmationBars: number;
+  reverseCrossoverMinSeparationAtr: number;
 };
 
 type RiskManagementSectionProps = {
@@ -53,6 +57,11 @@ const RISK_HELP = {
     label: "Take profit",
     title: "Take profit",
     body: "Defines how winning trades exit — fixed pips, a risk/reward multiple of the stop, ATR distance, reverse crossover, or a trailing stop.",
+  },
+  reverseCrossover: {
+    label: "Reverse crossover exit",
+    title: "Reverse crossover protection",
+    body: "When take profit is reverse crossover, ignore early flips until min bars / confirmation / ATR separation are met. ATR stop loss remains the hard safety net.",
   },
 } as const;
 
@@ -249,6 +258,48 @@ export default function RiskManagementSection({
                 onChange={(v) => onChange("trailAtrMultiplier", v)}
               />
             )}
+          </>
+        )}
+
+        {state.takeProfitType === "reverse_crossover" && emaSignalActive && (
+          <>
+            <p className="param-helper">
+              <ParamHelpTip
+                label={RISK_HELP.reverseCrossover.label}
+                title={RISK_HELP.reverseCrossover.title}
+                body={RISK_HELP.reverseCrossover.body}
+              />{" "}
+              Early-trade protection for reverse-crossover exits:
+            </p>
+            <NumberStepper
+              id="rc-min-bars"
+              label="Min bars after entry"
+              value={state.reverseCrossoverMinBarsAfterEntry}
+              min={0}
+              max={30}
+              onChange={(v) => onChange("reverseCrossoverMinBarsAfterEntry", v)}
+            />
+            <p className="param-helper">Ignore reverse crosses in the first N bars after entry.</p>
+            <NumberStepper
+              id="rc-confirm-bars"
+              label="Min confirmation bars"
+              value={state.reverseCrossoverMinConfirmationBars}
+              min={1}
+              max={5}
+              onChange={(v) => onChange("reverseCrossoverMinConfirmationBars", v)}
+            />
+            <p className="param-helper">Reverse EMA relationship must hold for this many bars.</p>
+            <LiveSlider
+              id="rc-separation"
+              label="Min separation (× ATR)"
+              value={state.reverseCrossoverMinSeparationAtr}
+              min={0}
+              max={1}
+              step={0.05}
+              formatValue={(v) => v.toFixed(2)}
+              onChange={(v) => onChange("reverseCrossoverMinSeparationAtr", v)}
+            />
+            <p className="param-helper">Require EMAs to separate by this × ATR before exiting (0 disables).</p>
           </>
         )}
       </ParamToggleRow>

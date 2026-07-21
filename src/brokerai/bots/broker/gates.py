@@ -5,6 +5,7 @@ from datetime import datetime
 from brokerai.bots.data_manager.candle_requirements import required_candle_bars, strategy_params, strategy_timeframe
 from brokerai.bots.data_manager.candles import OANDA_SOURCE
 from brokerai.bots.data_manager.service import DataManagerService
+from brokerai.db.repositories.broker_lots import BrokerLotsRepository
 from brokerai.db.repositories.strategy_analysis_runs import StrategyAnalysisRunsRepository
 from brokerai.trading.ai_confirmation import maybe_confirm_trade_intent
 from brokerai.trading.execution_gates import is_executor_eligible, passes_execution_gates, resolve_priority_conflicts
@@ -34,6 +35,7 @@ async def record_execution_outcomes(
     asset_enabled_pairs: set[str] | frozenset[str] | list[str] | None = None,
     open_pairs: set[str] | frozenset[str] | None = None,
     only_one_position_per_pair: bool = False,
+    signal_closed_reasons: dict[str, str] | None = None,
 ) -> None:
     """Persist gate outcomes for analyses that will not enter intent dispatch."""
     for analysis in analyses:
@@ -53,6 +55,7 @@ async def record_execution_outcomes(
             asset_enabled_sessions=asset_enabled_sessions,
             open_pairs=open_pairs,
             only_one_position_per_pair=only_one_position_per_pair,
+            signal_closed_reasons=signal_closed_reasons,
         )
         await persist_execution_outcome(
             analysis,
@@ -103,8 +106,27 @@ async def apply_execution_gates(
     asset_enabled_pairs: set[str] | frozenset[str] | list[str] | None = None,
     open_pairs: set[str] | frozenset[str] | None = None,
     only_one_position_per_pair: bool = False,
+    signal_closed_reasons: dict[str, str] | None = None,
+    stop_exit_times: dict[tuple[str, str], str] | None = None,
 ) -> list[TradeIntent]:
-    gated: list[tuple[AnalysisResult, dict, dict]] = []
+    gated: list[tuple[AnalysisResult, dict, dict, list[dict]]] = []
+    lots_repo = BrokerLotsRepository()
+    candle_cache: dict[tuple[str, str], list[dict]] = {}
+
+    async def _candles_for(strategy: dict, analysis: AnalysisResult) -> list[dict]:
+        timeframe = strategy_timeframe(strategy)
+        if not timeframe:
+            return []
+        key = (analysis.pair, timeframe)
+        if key not in candle_cache:
+            candle_cache[key] = await data_manager.request_candles(
+                analysis.pair,
+                timeframe,
+                bar_count=required_candle_bars(strategy),
+                source=OANDA_SOURCE,
+                requester="broker",
+            )
+        return candle_cache[key]
 
     for analysis in analyses:
         if not is_executor_eligible(analysis):
@@ -113,6 +135,19 @@ async def apply_execution_gates(
         if strategy is None:
             continue
         params = strategy_params(strategy)
+        cooldown = int((params.get("execution") or {}).get("post_stop_cooldown_bars") or 0)
+        last_stop_exit_time: str | None = None
+        gate_candles: list[dict] = []
+        if cooldown > 0:
+            key = (analysis.strategy_id, analysis.pair)
+            last_stop_exit_time = (stop_exit_times or {}).get(key)
+            if last_stop_exit_time is None:
+                last_stop_exit_time = await lots_repo.latest_stop_loss_exit_candle_open(
+                    strategy_id=analysis.strategy_id,
+                    pair=analysis.pair,
+                )
+            if last_stop_exit_time:
+                gate_candles = await _candles_for(strategy, analysis)
         passed, reasons, gate_details = passes_execution_gates(
             analysis,
             params,
@@ -123,9 +158,12 @@ async def apply_execution_gates(
             asset_enabled_sessions=asset_enabled_sessions,
             open_pairs=open_pairs,
             only_one_position_per_pair=only_one_position_per_pair,
+            signal_closed_reasons=signal_closed_reasons,
+            last_stop_exit_time=last_stop_exit_time,
+            candles=gate_candles or None,
         )
         if passed:
-            gated.append((analysis, params, strategy))
+            gated.append((analysis, params, strategy, gate_candles))
         else:
             await persist_execution_outcome(
                 analysis,
@@ -138,11 +176,11 @@ async def apply_execution_gates(
                 intent=None,
             )
 
-    winners = resolve_priority_conflicts([(analysis, params) for analysis, params, _ in gated])
+    winners = resolve_priority_conflicts([(analysis, params) for analysis, params, _, _ in gated])
     winner_ids = {(analysis.strategy_id, analysis.pair) for analysis, _ in winners}
 
     intents: list[TradeIntent] = []
-    for analysis, params, strategy in gated:
+    for analysis, params, strategy, gate_candles in gated:
         key = (analysis.strategy_id, analysis.pair)
         if key not in winner_ids:
             await persist_execution_outcome(
@@ -157,16 +195,7 @@ async def apply_execution_gates(
             )
             continue
 
-        timeframe = strategy_timeframe(strategy)
-        candles: list[dict] = []
-        if timeframe:
-            candles = await data_manager.request_candles(
-                analysis.pair,
-                timeframe,
-                bar_count=required_candle_bars(strategy),
-                source=OANDA_SOURCE,
-                requester="broker",
-            )
+        candles = gate_candles or await _candles_for(strategy, analysis)
 
         intent = await maybe_confirm_trade_intent(
             analysis,
