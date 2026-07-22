@@ -1429,6 +1429,29 @@
   .onboarding-instruments-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .onboarding-segmented {
+    gap: 0.25rem;
+    padding: 0.55rem 0.5rem 0.65rem;
+  }
+
+  .onboarding-segment {
+    min-height: 2rem;
+    font-size: 0.55rem;
+    letter-spacing: 0.01em;
+    padding: 0.25rem 0.15rem;
+    line-height: 1.15;
+  }
+
+  .onboarding-overlay {
+    padding: 0.5rem;
+    padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .onboarding-dialog {
+    width: min(100%, 100vw - 1rem);
+  }
 }
 
 @media (max-height: 520px) {

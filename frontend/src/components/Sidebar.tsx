@@ -18,6 +18,7 @@ import {
   PanelLeftOpen,
   Settings,
   TrendingUp,
+  X,
   Zap,
 } from "lucide-react";
 import type { AssetClass } from "../api/client";
@@ -76,8 +77,14 @@ const SYSTEM_ITEMS: NavItem[] = [
 ];
 
 type SidebarProps = {
+  /** Desktop sticky rail vs mobile off-canvas drawer. */
+  variant?: "rail" | "drawer";
   collapsed: boolean;
+  /** When `variant="drawer"`, controls slide-in visibility. Ignored for rail. */
+  open?: boolean;
   onToggle: () => void;
+  /** Called after a nav link is activated (used to close the mobile drawer). */
+  onNavigate?: () => void;
 };
 
 function NavStatusDot({ enabled }: { enabled: boolean }) {
@@ -151,10 +158,12 @@ function NavItemLink({
   item,
   collapsed,
   assetClassEnabled,
+  onNavigate,
 }: {
   item: NavItem;
   collapsed: boolean;
   assetClassEnabled?: boolean;
+  onNavigate?: () => void;
 }) {
   const location = useLocation();
   const title = collapsed
@@ -189,15 +198,25 @@ function NavItemLink({
       to={item.to}
       className={`nav-item${active ? " active" : ""}`}
       title={title}
+      onClick={() => onNavigate?.()}
     >
       <NavItemContent item={item} assetClassEnabled={assetClassEnabled} />
     </NavLink>
   );
 }
 
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({
+  variant = "rail",
+  collapsed,
+  open = true,
+  onToggle,
+  onNavigate,
+}: SidebarProps) {
   const assetClassStatuses = useAssetClassStatuses();
   const unread = useResearchReportsUnreadCount();
+  const isDrawer = variant === "drawer";
+  // Drawer always shows labels; collapse only applies to the desktop rail.
+  const showCollapsed = !isDrawer && collapsed;
 
   function resolveAssetClassEnabled(item: NavItem): boolean | undefined {
     if (!item.assetClass) return undefined;
@@ -212,10 +231,38 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     return item;
   }
 
+  const asideClass = [
+    "sidebar",
+    isDrawer ? "sidebar--drawer" : "sidebar--rail",
+    showCollapsed ? "collapsed" : "",
+    isDrawer && open ? "sidebar--open" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
+    <aside
+      className={asideClass}
+      aria-hidden={isDrawer && !open ? true : undefined}
+      inert={isDrawer && !open ? true : undefined}
+    >
       <div className="sidebar-header">
-        {collapsed ? (
+        {isDrawer ? (
+          <>
+            <span className="sidebar-brand-icon" aria-hidden>
+              <TrendingUp size={22} strokeWidth={2} />
+            </span>
+            <span className="sidebar-title">BrokerAI</span>
+            <button
+              type="button"
+              className="sidebar-toggle-btn sidebar-toggle-btn--collapse"
+              onClick={onNavigate}
+              aria-label="Close navigation menu"
+            >
+              <X size={18} strokeWidth={1.75} />
+            </button>
+          </>
+        ) : showCollapsed ? (
           <button
             type="button"
             className="sidebar-toggle-btn"
@@ -248,8 +295,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <NavItemLink
             key={item.label}
             item={item}
-            collapsed={collapsed}
+            collapsed={showCollapsed}
             assetClassEnabled={resolveAssetClassEnabled(item)}
+            onNavigate={onNavigate}
           />
         ))}
         {NAV_SECTIONS.map((section) => (
@@ -261,8 +309,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 <NavItemLink
                   key={item.label}
                   item={navItem}
-                  collapsed={collapsed}
+                  collapsed={showCollapsed}
                   assetClassEnabled={resolveAssetClassEnabled(navItem)}
+                  onNavigate={onNavigate}
                 />
               );
             })}
@@ -275,8 +324,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <NavItemLink
             key={item.label}
             item={item}
-            collapsed={collapsed}
+            collapsed={showCollapsed}
             assetClassEnabled={resolveAssetClassEnabled(item)}
+            onNavigate={onNavigate}
           />
         ))}
         <div className="sidebar-bottom-spacer" aria-hidden="true" />
