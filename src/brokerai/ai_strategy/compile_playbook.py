@@ -43,11 +43,29 @@ def _infer_bias(standing_rules: list[str]) -> str:
 
 
 def _anti_active(anti_rules: list[str]) -> bool:
-    """v1: anti rules that mention hard-block keywords mark the book inactive."""
-    block_tokens = ("do not trade", "stand aside", "no entries", "halt", "kill switch")
+    """True only for *global* kill-switch anti rules.
+
+    Conditional phrasing like \"Stand aside through MOF alerts\" or \"stand aside
+    momentum-only chases at extremes\" must NOT disable the whole playbook —
+    those are location/regime lessons, not a halt. Matching bare \"stand aside\"
+    previously zeroed every startup/trade loop.
+    """
+    hard_block_phrases = (
+        "do not trade",
+        "no entries",
+        "no trading",
+        "halt trading",
+        "kill switch",
+        "stop all trading",
+        "stand aside entirely",
+        "stand aside always",
+        "stand aside completely",
+    )
     for rule in anti_rules:
-        blob = str(rule or "").lower()
-        if any(token in blob for token in block_tokens):
+        blob = str(rule or "").lower().strip()
+        if not blob:
+            continue
+        if any(phrase in blob for phrase in hard_block_phrases):
             return True
     return False
 
@@ -72,6 +90,7 @@ def compile_playbook_params(
     standing = list(normalized["standing_rules"])
     anti = list(normalized["anti_rules"])
     bias = _infer_bias(standing)
+    anti_active = _anti_active(anti)
 
     params["signal"] = {
         "type": SIGNAL_TYPE,
@@ -80,7 +99,7 @@ def compile_playbook_params(
         "require_momentum": True,
         "momentum_bars": DEFAULT_MOMENTUM_BARS,
         "min_confidence": DEFAULT_MIN_CONFIDENCE,
-        "anti_active": _anti_active(anti),
+        "anti_active": anti_active,
         "standing_rules": standing,
         "anti_rules": anti,
         "digest_version": digest_version_key(normalized),
@@ -90,12 +109,20 @@ def compile_playbook_params(
     params["ai"] = {**ai, "llm_mode": "off"}
     if "risk" not in params or not isinstance(params.get("risk"), dict):
         params["risk"] = {"risk_per_trade_pct": 1.0, "max_trades_per_day": 3}
-    if "execution" not in params or not isinstance(params.get("execution"), dict):
-        params["execution"] = {
+    # Align the execution confidence gate with the playbook signal scale so a
+    # long anti-rule list cannot soft-fail every entry below strategy defaults
+    # (often min_confidence=60 while playbook signals sit near 55%).
+    signal_min_pct = int(round(DEFAULT_MIN_CONFIDENCE * 100))
+    existing_exec = params.get("execution") if isinstance(params.get("execution"), dict) else {}
+    params["execution"] = {
+        **{
             "sessions": ["London", "NY"],
-            "min_confidence": 60,
+            "min_confidence": signal_min_pct,
             "post_stop_cooldown_bars": 0,
-        }
+        },
+        **existing_exec,
+        "min_confidence": signal_min_pct,
+    }
     if "timeframe" not in params:
         params["timeframe"] = strategy.get("timeframe") or "M15"
     params.setdefault("schema_version", 1)

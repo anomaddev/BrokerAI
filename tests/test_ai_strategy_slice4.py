@@ -185,10 +185,43 @@ def test_compile_playbook_from_digest_strings():
     assert compiled["signal"]["type"] == "compiled_playbook"
     assert compiled["signal"]["bias"] == "long"
     assert compiled["signal"]["digest_version"] == "3"
+    assert compiled["signal"]["anti_active"] is False
+    assert compiled["execution"]["min_confidence"] == 55
     assert compiled["risk"] == strategy["params"]["risk"]
     assert compiled["ai"]["llm_mode"] == "off"
     assert compile_playbook_params(strategy, None) is None
     assert compile_playbook_params(strategy, {"standing_rules": [], "anti_rules": []}) is None
+
+
+def test_compile_playbook_conditional_stand_aside_does_not_kill_switch():
+    """Regime 'stand aside when…' antis must not zero the whole book."""
+    strategy = _ai_strategy()
+    digest = {
+        "version": 4,
+        "standing_rules": ["Lean long buy-the-dip USD/JPY on London holds"],
+        "anti_rules": [
+            "Stand aside through explicit MOF/BoJ alert windows",
+            "Stand aside momentum-only chases at multi-decade extremes",
+            "Avoid large naked USD/JPY direction while geopolitics remain two-way",
+        ],
+        "summary": "selective long",
+    }
+    compiled = compile_playbook_params(strategy, digest)
+    assert compiled is not None
+    assert compiled["signal"]["anti_active"] is False
+    assert compiled["signal"]["bias"] == "long"
+
+    killed = compile_playbook_params(
+        strategy,
+        {
+            "version": 5,
+            "standing_rules": ["Lean long buy-the-dip"],
+            "anti_rules": ["Kill switch — halt trading until digest refresh"],
+            "summary": "halted",
+        },
+    )
+    assert killed is not None
+    assert killed["signal"]["anti_active"] is True
 
 
 def test_cadence_skip_reasons():

@@ -196,6 +196,90 @@ class AiStrategyStartupJobsRepository:
             row.doc = doc
             return self._serialize(row)
 
+    async def attach_current_run_if_absent(
+        self,
+        job_id: str,
+        *,
+        loop_index: int,
+        run_id: str,
+        status_message: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically attach ``run_id`` when this loop still has no current run.
+
+        Returns the job after the write. When another drain already attached a
+        run for this loop, returns that job unchanged (``current_backtest_run_id``
+        may differ from ``run_id``) so the loser can cancel its duplicate.
+        Returns ``None`` only when the job is missing or no longer open.
+        """
+        rid = (run_id or "").strip()
+        if not rid:
+            return None
+        async with session_scope() as session:
+            row = await session.get(
+                AiStrategyStartupJobRow, job_id, with_for_update=True
+            )
+            if row is None:
+                return None
+            if row.status not in STARTUP_OPEN_STATUSES:
+                return self._serialize(row)
+            doc = dict(row.doc)
+            current_index = int(doc.get("loop_index") or 0)
+            if current_index != int(loop_index):
+                # Stale drain tick — another process already advanced the loop.
+                return self._serialize(row)
+            existing = doc.get("current_backtest_run_id")
+            if existing:
+                return self._serialize(row)
+            doc["current_backtest_run_id"] = rid
+            doc["phase"] = STARTUP_PHASE_LOOPING
+            doc["loop_index"] = int(loop_index)
+            doc["updated_at"] = _now().isoformat()
+            if status_message is not None:
+                doc["status_message"] = status_message
+            row.phase = STARTUP_PHASE_LOOPING
+            row.doc = doc
+            return self._serialize(row)
+
+    async def advance_loop_after_run(
+        self,
+        job_id: str,
+        *,
+        expected_run_id: str,
+        expected_loop_index: int,
+        next_loop_index: int,
+        status_message: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Clear the finished run and bump ``loop_index`` only once.
+
+        Prevents API + secretary drain from both advancing the same completed
+        loop (which previously queued a second backtest for the next index).
+        """
+        expected = (expected_run_id or "").strip()
+        if not expected:
+            return None
+        async with session_scope() as session:
+            row = await session.get(
+                AiStrategyStartupJobRow, job_id, with_for_update=True
+            )
+            if row is None:
+                return None
+            if row.status not in STARTUP_OPEN_STATUSES:
+                return self._serialize(row)
+            doc = dict(row.doc)
+            if str(doc.get("current_backtest_run_id") or "") != expected:
+                return self._serialize(row)
+            if int(doc.get("loop_index") or 0) != int(expected_loop_index):
+                return self._serialize(row)
+            doc["loop_index"] = int(next_loop_index)
+            doc["current_backtest_run_id"] = None
+            doc["phase"] = STARTUP_PHASE_LOOPING
+            doc["updated_at"] = _now().isoformat()
+            if status_message is not None:
+                doc["status_message"] = status_message
+            row.phase = STARTUP_PHASE_LOOPING
+            row.doc = doc
+            return self._serialize(row)
+
     async def mark_completed(self, job_id: str, *, extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
         async with session_scope() as session:
             row = await session.get(AiStrategyStartupJobRow, job_id)

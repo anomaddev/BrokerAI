@@ -5,9 +5,13 @@ Phases:
 2. ``seeding_digest`` — LLM drafts an initial memory digest from research
 3. ``looping`` — N compiled-playbook backtests with synchronous memory feedback
 
-Improve-loop semantics (anti-cheat):
+Improve-loop semantics (anti-cheat, single shared sequence):
+- ``loop_target`` is the total number of passes (default 3), not explore+trade
+  counted separately.
 - Loop 0 is **explore**: walk candles for patterns only (no fills).
-- Loops 1+ are **trade**: live-parity fills; learn from *this* run's outcomes.
+- Loops 1..N-1 are **trade**: live-parity fills; learn from *this* run's outcomes.
+- API and secretary both drain the job; cadence keys + atomic attach/advance keep
+  each loop index to one backtest (no duplicate "loop" and "trade" pairs).
 - Digests carry distilled lessons forward, but each loop must not reuse
   foreknowledge of the same period's path/returns from prior walks.
 """
@@ -797,35 +801,27 @@ async def _loop_phase(job: dict[str, Any]) -> dict[str, Any]:
                     {"last_feedback_error": str(exc)[:1000]},
                 )
             next_index = loop_index + 1
-            patched = await jobs_repo.patch_doc(
+            patched = await jobs_repo.advance_loop_after_run(
                 str(job["id"]),
-                {
-                    "loop_index": next_index,
-                    "current_backtest_run_id": None,
-                    "phase": STARTUP_PHASE_LOOPING,
-                    **_progress_fields(
-                        {
-                            **job,
-                            "phase": STARTUP_PHASE_LOOPING,
-                            "loop_index": next_index,
-                            "current_backtest_run_id": None,
-                        },
-                        status_message=(
-                            "Startup completed"
-                            if next_index >= loop_target
-                            else (
-                                f"{loop_label} done — starting "
-                                f"{_loop_progress_label(next_index, loop_target)}"
-                            )
-                        ),
-                    ),
-                },
+                expected_run_id=str(current_run_id),
+                expected_loop_index=loop_index,
+                next_loop_index=next_index,
+                status_message=(
+                    "Startup completed"
+                    if next_index >= loop_target
+                    else (
+                        f"{loop_label} done — starting "
+                        f"{_loop_progress_label(next_index, loop_target)}"
+                    )
+                ),
             )
+            if patched is None:
+                return job
             if next_index >= loop_target:
-                return await jobs_repo.mark_completed(str(job["id"])) or patched or job
-            return patched or job
+                return await jobs_repo.mark_completed(str(job["id"])) or patched
+            return patched
 
-    # Queue next loop.
+    # Queue next loop (idempotent across API + secretary drain).
     strategy = await strategies_repo.get_by_id(strategy_id)
     if strategy is None:
         return await jobs_repo.mark_failed(str(job["id"]), error="strategy not found") or job
@@ -838,43 +834,89 @@ async def _loop_phase(job: dict[str, Any]) -> dict[str, Any]:
 
     digest_version = digest_version_key(normalize_memory_digest(digest))
     mode_noun = "explore" if mode == LOOP_MODE_EXPLORE else "trade"
-    created = await runs_repo.create_queued_runs(
-        [compiled],
-        name=(
-            f"{strategy.get('name') or 'AI Strategy'} startup {mode_noun} "
-            f"{loop_index + 1}/{loop_target}"
-        ),
-        period=period,
-        origin=ORIGIN_AI_STRATEGY_STARTUP,
-        cadence_key=f"startup:{strategy_id}:{job['id']}:{loop_index + 1}",
-        digest_version=digest_version,
-        loop_mode=mode,
-    )
-    if not created:
-        return await jobs_repo.mark_failed(str(job["id"]), error="failed to queue startup backtest") or job
+    cadence_key = f"startup:{strategy_id}:{job['id']}:{loop_index + 1}"
+    existing = await runs_repo.find_by_cadence_key(cadence_key)
+    created_new = False
+    if existing is not None:
+        run_id = str(existing.get("id") or "")
+    else:
+        created = await runs_repo.create_queued_runs(
+            [compiled],
+            name=(
+                f"{strategy.get('name') or 'AI Strategy'} startup {mode_noun} "
+                f"{loop_index + 1}/{loop_target}"
+            ),
+            period=period,
+            origin=ORIGIN_AI_STRATEGY_STARTUP,
+            cadence_key=cadence_key,
+            digest_version=digest_version,
+            loop_mode=mode,
+        )
+        if not created:
+            return await jobs_repo.mark_failed(
+                str(job["id"]), error="failed to queue startup backtest"
+            ) or job
+        run_id = str(created[0].get("id") or "")
+        created_new = True
+        # Another drain may have created the same cadence a moment earlier.
+        winner = await runs_repo.find_by_cadence_key(cadence_key)
+        if winner is not None and str(winner.get("id") or "") != run_id:
+            try:
+                await runs_repo.request_cancel(run_id)
+            except Exception:
+                logger.warning(
+                    "Failed to cancel duplicate startup run %s cadence=%s",
+                    run_id,
+                    cadence_key,
+                    exc_info=True,
+                )
+            run_id = str(winner.get("id") or "")
+            created_new = False
 
-    run_id = str(created[0].get("id") or "")
-    await _start_backtest_if_needed(run_id)
+    if not run_id:
+        return await jobs_repo.mark_failed(
+            str(job["id"]), error="failed to resolve startup backtest id"
+        ) or job
+
     queued_verb = (
         "pattern explore queued" if mode == LOOP_MODE_EXPLORE else "live-parity trade queued"
     )
-    return await jobs_repo.patch_doc(
+    attached = await jobs_repo.attach_current_run_if_absent(
         str(job["id"]),
-        {
-            "current_backtest_run_id": run_id,
-            "phase": STARTUP_PHASE_LOOPING,
-            "loop_index": loop_index,
-            **_progress_fields(
-                {
-                    **job,
-                    "phase": STARTUP_PHASE_LOOPING,
-                    "loop_index": loop_index,
-                    "current_backtest_run_id": run_id,
-                },
-                status_message=f"{loop_label} — {queued_verb}",
-            ),
-        },
-    ) or job
+        loop_index=loop_index,
+        run_id=run_id,
+        status_message=f"{loop_label} — {queued_verb}",
+    )
+    if attached is None:
+        return job
+    attached_run = str(attached.get("current_backtest_run_id") or "")
+    if attached_run and attached_run != run_id:
+        # Lost the attach race — keep the winner, cancel our duplicate if we made one.
+        if created_new:
+            try:
+                await runs_repo.request_cancel(run_id)
+            except Exception:
+                logger.warning(
+                    "Failed to cancel unattached startup run %s",
+                    run_id,
+                    exc_info=True,
+                )
+        run_id = attached_run
+    elif not attached_run:
+        # Loop index moved or job closed while we queued.
+        if created_new:
+            try:
+                await runs_repo.request_cancel(run_id)
+            except Exception:
+                logger.warning(
+                    "Failed to cancel abandoned startup run %s",
+                    run_id,
+                    exc_info=True,
+                )
+        return attached
+
+    await _start_backtest_if_needed(run_id)
+    return attached
 
 
 async def advance_startup_job(job_id: str) -> dict[str, Any] | None:

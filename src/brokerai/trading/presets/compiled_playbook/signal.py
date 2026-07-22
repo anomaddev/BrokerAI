@@ -154,10 +154,9 @@ class CompiledPlaybookSignalEvaluator:
                 metadata={**base_meta, "reason": "momentum_mismatch" if require_momentum else "no_signal"},
             )
 
-        anti_count = len(signal.get("anti_rules") or [])
-        confidence = min_confidence
-        if anti_count:
-            confidence = max(0.35, min_confidence - 0.05 * min(anti_count, 4))
+        # Advisory anti rules are digest lessons in v1; they do not soft-fail the
+        # confidence gate. Hard blocks are handled exclusively via anti_active.
+        confidence = float(min_confidence)
 
         return StrategyResult(
             confidence=confidence,

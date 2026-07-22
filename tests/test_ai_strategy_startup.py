@@ -275,6 +275,10 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
             new=AsyncMock(return_value=strategy),
         ),
         patch(
+            "brokerai.ai_strategy.startup.BacktestRunsRepository.find_by_cadence_key",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
             "brokerai.ai_strategy.startup.BacktestRunsRepository.create_queued_runs",
             new=create_mock,
         ),
@@ -315,6 +319,10 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
             new=AsyncMock(return_value=strategy),
         ),
         patch(
+            "brokerai.ai_strategy.startup.BacktestRunsRepository.find_by_cadence_key",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
             "brokerai.ai_strategy.startup.BacktestRunsRepository.create_queued_runs",
             new=create_mock_2,
         ),
@@ -352,6 +360,65 @@ async def test_startup_job_repo_mark_failed():
     assert failed is not None
     assert failed["status"] == STARTUP_STATUS_FAILED
     assert failed["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_attach_current_run_if_absent_is_idempotent():
+    repo = AiStrategyStartupJobsRepository()
+    job = await repo.enqueue(
+        "s-attach",
+        {"loop_target": 3, "required_reports": [], "loop_index": 0, "phase": "looping"},
+    )
+    await repo.mark_running(job["id"])
+    first = await repo.attach_current_run_if_absent(
+        job["id"], loop_index=0, run_id="run-a", status_message="queued a"
+    )
+    second = await repo.attach_current_run_if_absent(
+        job["id"], loop_index=0, run_id="run-b", status_message="queued b"
+    )
+    assert first is not None and second is not None
+    assert first["current_backtest_run_id"] == "run-a"
+    assert second["current_backtest_run_id"] == "run-a"
+
+
+@pytest.mark.asyncio
+async def test_advance_loop_after_run_only_once():
+    repo = AiStrategyStartupJobsRepository()
+    job = await repo.enqueue(
+        "s-advance",
+        {
+            "loop_target": 3,
+            "required_reports": [],
+            "loop_index": 0,
+            "phase": "looping",
+            "current_backtest_run_id": "run-1",
+        },
+    )
+    await repo.mark_running(job["id"])
+    # Ensure current run is attached for the open job.
+    await repo.patch_doc(
+        job["id"],
+        {"loop_index": 0, "current_backtest_run_id": "run-1", "phase": "looping"},
+    )
+    first = await repo.advance_loop_after_run(
+        job["id"],
+        expected_run_id="run-1",
+        expected_loop_index=0,
+        next_loop_index=1,
+        status_message="next",
+    )
+    second = await repo.advance_loop_after_run(
+        job["id"],
+        expected_run_id="run-1",
+        expected_loop_index=0,
+        next_loop_index=1,
+        status_message="again",
+    )
+    assert first is not None and second is not None
+    assert first["loop_index"] == 1
+    assert first["current_backtest_run_id"] is None
+    assert second["loop_index"] == 1
+    assert second["current_backtest_run_id"] is None
 
 
 @pytest.mark.asyncio
