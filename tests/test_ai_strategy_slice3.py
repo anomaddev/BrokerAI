@@ -416,11 +416,11 @@ async def test_runtime_prompt_includes_digest():
                 "llm_mode": "interval",
                 "model_id": "model-1",
                 "min_llm_interval_minutes": 15,
-                "max_context_bars": 32,
+                "max_context_bars": 30,
             },
         },
     )
-    candles = generate_mock_candles(80)
+    candles = generate_mock_candles(220)
     cache = IndicatorCache().warm("EUR/USD", "M15", candles, [params])
     evaluator = ModelSignalRuntime()
     decision_json = (

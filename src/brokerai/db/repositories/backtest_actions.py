@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from brokerai.db.pg.client import session_scope
 from brokerai.db.pg.models import BacktestActionRow
@@ -51,6 +52,18 @@ def serialize_action(row: BacktestActionRow) -> dict[str, Any]:
     }
 
 
+def _action_values(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "sequence": int(action.get("sequence") or 0),
+        "kind": str(action.get("kind") or "info"),
+        "message": str(action.get("message") or ""),
+        "bar_time": _parse_instant(action.get("bar_time")),
+        "meta": dict(action["meta"]) if isinstance(action.get("meta"), dict) else None,
+        "created_at": _parse_instant(action.get("created_at")) or _now_utc(),
+    }
+
+
 class BacktestActionsRepository:
     COLLECTION = "backtest_actions"
 
@@ -58,19 +71,29 @@ class BacktestActionsRepository:
         if not actions:
             return 0
         async with session_scope() as session:
-            for action in actions:
-                session.add(
-                    BacktestActionRow(
-                        run_id=run_id,
-                        sequence=int(action.get("sequence") or 0),
-                        kind=str(action.get("kind") or "info"),
-                        message=str(action.get("message") or ""),
-                        bar_time=_parse_instant(action.get("bar_time")),
-                        meta=dict(action["meta"]) if isinstance(action.get("meta"), dict) else None,
-                        created_at=_parse_instant(action.get("created_at")) or _now_utc(),
+            bind = session.get_bind()
+            dialect = bind.dialect.name if bind is not None else ""
+            inserted = 0
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                for action in actions:
+                    stmt = (
+                        pg_insert(BacktestActionRow)
+                        .values(**_action_values(run_id, action))
+                        .on_conflict_do_nothing(constraint="uq_backtest_actions_run_sequence")
                     )
-                )
-        return len(actions)
+                    result = await session.execute(stmt)
+                    inserted += int(result.rowcount or 0)
+            else:
+                for action in actions:
+                    try:
+                        async with session.begin_nested():
+                            session.add(BacktestActionRow(**_action_values(run_id, action)))
+                        inserted += 1
+                    except IntegrityError:
+                        pass
+        return inserted
 
     async def list_for_run(
         self,

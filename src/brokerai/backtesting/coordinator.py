@@ -7,6 +7,7 @@ import logging
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
+from uuid import uuid4
 
 from brokerai.backtesting.worker import run_backtest_job, run_backtest_job_async
 from brokerai.db.repositories.backtest_runs import (
@@ -146,10 +147,24 @@ class BacktestCoordinator:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        inflight_ids = list(self._inflight)
         for fut in list(self._inflight.values()):
             fut.cancel()
         self._inflight.clear()
         self._manual_ready.clear()
+        # Drop leases so a reloaded API process can reclaim without waiting for
+        # stale-heartbeat timeout — superseded workers exit on the next check.
+        if inflight_ids:
+            runs_repo = BacktestRunsRepository()
+            for rid in inflight_ids:
+                try:
+                    await runs_repo.clear_worker_claim(rid)
+                except Exception:
+                    logger.warning(
+                        "Failed to clear worker claim for %s on coordinator stop",
+                        rid,
+                        exc_info=True,
+                    )
         pool = self._pool
         self._pool = None
         self._pool_size = 0
@@ -251,12 +266,25 @@ class BacktestCoordinator:
                         break
 
                     run_id = str(run["id"])
+                    if run_id in self._inflight:
+                        continue
+                    worker_token = uuid4().hex
+                    claimed = await runs_repo.claim_for_worker(run_id, worker_token)
+                    if claimed is None:
+                        logger.info(
+                            "Skip backtest %s — another worker already holds the lease",
+                            run_id,
+                        )
+                        # Avoid spinning on the same contested run within this tick.
+                        if run is not None and not auto_start:
+                            break
+                        continue
                     strategy_id = str(run.get("strategy_id") or "")
                     if strategy_id:
                         await strategies_repo.set_backtest_status(
                             strategy_id, BACKTEST_STATUS_RUNNING
                         )
-                    self._submit(run_id, max_concurrent)
+                    self._submit(run_id, worker_token, max_concurrent)
                     slots -= 1
 
             except Exception:
@@ -267,16 +295,16 @@ class BacktestCoordinator:
             except asyncio.TimeoutError:
                 pass
 
-    def _submit(self, run_id: str, pool_size: int) -> None:
+    def _submit(self, run_id: str, worker_token: str, pool_size: int) -> None:
         if run_id in self._inflight:
             return
         loop = asyncio.get_running_loop()
         if self._use_processes:
             pool = self._ensure_pool(pool_size)
             assert pool is not None
-            fut = loop.run_in_executor(pool, run_backtest_job, run_id)
+            fut = loop.run_in_executor(pool, run_backtest_job, run_id, worker_token)
         else:
-            fut = loop.create_task(run_backtest_job_async(run_id))
+            fut = loop.create_task(run_backtest_job_async(run_id, worker_token))
         self._inflight[run_id] = fut  # type: ignore[assignment]
         logger.info("Submitted backtest run %s (inflight=%d)", run_id, len(self._inflight))
 

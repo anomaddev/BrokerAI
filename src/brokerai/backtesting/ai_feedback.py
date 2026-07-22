@@ -16,7 +16,10 @@ from typing import Any
 
 from brokerai.ai_strategy.daily_backtest import ORIGIN_AI_STRATEGY_DAILY
 from brokerai.ai_strategy.learning import queue_learning_job
-from brokerai.ai_strategy.memory_digest import merge_feedback_notes_into_digest
+from brokerai.ai_strategy.memory_digest import (
+    digest_content_unchanged,
+    merge_feedback_notes_into_digest,
+)
 from brokerai.backtesting.feedback_suggestions import (
     ALLOWLIST_FOR_PROMPT,
     normalize_suggestions,
@@ -967,6 +970,10 @@ async def apply_memory_feedback_to_digest(
 
     Does **not** call ``apply_suggestions_to_params``. When notes are empty,
     queues a learning job instead so Slice 3 can refresh from outcomes.
+
+    Skips creating a new version when the merged learning content fingerprint
+    matches the prior digest — version bumps without content changes were
+    masking no-op feedback and making Memory look "stuck" while vN advanced.
     """
     sid = (strategy_id or "").strip()
     if not sid:
@@ -979,6 +986,14 @@ async def apply_memory_feedback_to_digest(
     merged = merge_feedback_notes_into_digest(
         prior, memory_notes, strategy_id=sid, source=source
     )
+    if prior is not None and digest_content_unchanged(prior, merged):
+        logger.info(
+            "Memory feedback for strategy=%s produced no content change — "
+            "keeping digest v%s (skip version bump)",
+            sid,
+            prior.get("version"),
+        )
+        return prior
     version = await digests.next_version(sid)
     return await digests.create_version(sid, merged, version=version)
 

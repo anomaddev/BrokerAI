@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from brokerai.ai_strategy.compile_playbook import compile_playbook_params
+from brokerai.ai_strategy.compile_playbook import compile_playbook_params, compile_playbook_strategy_doc
 from brokerai.ai_strategy.daily_backtest import (
     ORIGIN_AI_STRATEGY_DAILY,
     daily_cadence_key,
@@ -16,6 +16,10 @@ from brokerai.ai_strategy.daily_backtest import (
     strategy_allows_daily_ai_backtest,
 )
 from brokerai.ai_strategy.lifecycle import ensure_lifecycle_on_create
+from brokerai.ai_strategy.memory_digest import (
+    digest_content_unchanged,
+    merge_feedback_notes_into_digest,
+)
 from brokerai.backtesting.ai_feedback import (
     apply_memory_feedback_to_digest,
     build_backtest_feedback_messages,
@@ -177,7 +181,7 @@ def test_compile_playbook_from_digest_strings():
     digest = {
         "version": 3,
         "standing_rules": ["Favor bullish continuation in London"],
-        "anti_rules": ["Avoid risk-off shorts into data"],
+        "anti_rules": ["Respect holiday liquidity when sizing"],
         "summary": "ok",
     }
     compiled = compile_playbook_params(strategy, digest)
@@ -186,11 +190,62 @@ def test_compile_playbook_from_digest_strings():
     assert compiled["signal"]["bias"] == "long"
     assert compiled["signal"]["digest_version"] == "3"
     assert compiled["signal"]["anti_active"] is False
+    # No cautionary tokens → default gate.
+    assert compiled["signal"]["momentum_bars"] == 3
     assert compiled["execution"]["min_confidence"] == 55
     assert compiled["risk"] == strategy["params"]["risk"]
     assert compiled["ai"]["llm_mode"] == "off"
     assert compile_playbook_params(strategy, None) is None
     assert compile_playbook_params(strategy, {"standing_rules": [], "anti_rules": []}) is None
+
+
+def test_compile_playbook_honors_explicit_bias_and_caution_gate():
+    """Feedback bias + cautionary antis must change the compiled gate (anti-clone)."""
+    strategy = _ai_strategy()
+    long_seed = {
+        "version": 1,
+        "standing_rules": [
+            "Bias buy-the-dip while funding favors high-yielders",
+            "Prefer bullish continuation in London",
+            "Lean long on risk-on carry",
+        ],
+        "anti_rules": ["Avoid chasing late NY spikes"],
+        "summary": "seed long",
+        "bias": None,
+    }
+    seed_compiled = compile_playbook_params(strategy, long_seed)
+    assert seed_compiled is not None
+    assert seed_compiled["signal"]["bias"] == "long"
+    assert seed_compiled["signal"]["momentum_bars"] == 3
+
+    flipped = {
+        "version": 2,
+        # Newest-first: short lesson outweighs older long seed block.
+        "standing_rules": [
+            "Fade overextended rallies; prefer short mean-reversion",
+            "Bias buy-the-dip while funding favors high-yielders",
+            "Prefer bullish continuation in London",
+            "Lean long on risk-on carry",
+        ],
+        "anti_rules": [
+            "Stand aside through MOF intervention alerts",
+            "Avoid momentum-only chases at extremes",
+            "Do not force late-NY fades",
+            "Avoid thin liquidity opens",
+        ],
+        "summary": "Fade overextended rallies · Stand aside through MOF…",
+        "bias": "short",
+    }
+    next_compiled = compile_playbook_params(strategy, flipped)
+    assert next_compiled is not None
+    assert next_compiled["signal"]["bias"] == "short"
+    assert next_compiled["signal"]["digest_bias"] == "short"
+    # Four cautionary antis → +1 momentum bar and higher confidence / cooldown.
+    assert next_compiled["signal"]["momentum_bars"] == 4
+    assert next_compiled["signal"]["min_confidence"] > seed_compiled["signal"]["min_confidence"]
+    assert next_compiled["execution"]["min_confidence"] > seed_compiled["execution"]["min_confidence"]
+    assert next_compiled["execution"]["post_stop_cooldown_bars"] >= 4
+    assert next_compiled["risk"]["max_trades_per_day"] <= seed_compiled["risk"]["max_trades_per_day"]
 
 
 def test_compile_playbook_conditional_stand_aside_does_not_kill_switch():
@@ -210,6 +265,8 @@ def test_compile_playbook_conditional_stand_aside_does_not_kill_switch():
     assert compiled is not None
     assert compiled["signal"]["anti_active"] is False
     assert compiled["signal"]["bias"] == "long"
+    # Soft caution still tightens the gate without a hard kill.
+    assert compiled["signal"]["momentum_bars"] >= 4
 
     killed = compile_playbook_params(
         strategy,
@@ -222,6 +279,96 @@ def test_compile_playbook_conditional_stand_aside_does_not_kill_switch():
     )
     assert killed is not None
     assert killed["signal"]["anti_active"] is True
+
+
+def test_merge_feedback_newest_first_and_fingerprint_noop():
+    prior = {
+        "standing_rules": ["old long seed", "another long seed"],
+        "anti_rules": ["old anti"],
+        "summary": "old long seed summary that fills the preview forever",
+        "bias": "long",
+    }
+    notes = [
+        {
+            "id": "n1",
+            "kind": "standing_rule",
+            "text": "Prefer short mean-reversion at extremes",
+            "bias": "short",
+        },
+        {
+            "id": "n2",
+            "kind": "anti_rule",
+            "text": "Stand aside through MOF alerts",
+            "bias": None,
+        },
+    ]
+    merged = merge_feedback_notes_into_digest(prior, notes, strategy_id="s1")
+    assert merged["standing_rules"][0] == "Prefer short mean-reversion at extremes"
+    assert merged["anti_rules"][0] == "Stand aside through MOF alerts"
+    assert merged["summary"].startswith("Prefer short mean-reversion")
+    assert merged["bias"] == "short"
+    assert not digest_content_unchanged(prior, merged)
+
+    # Same notes again → identical learning fingerprint (no version bump).
+    again = merge_feedback_notes_into_digest(merged, notes, strategy_id="s1")
+    assert digest_content_unchanged(merged, again)
+
+
+@pytest.mark.asyncio
+async def test_feedback_apply_then_next_compile_binds_updated_memory():
+    """Startup/trade loop contract: feedback → new digest → next compile uses it."""
+    strategy = await _seed_strategy(_ai_strategy("ai-bind-1", enabled=True, learn_enabled=True))
+    await StrategyMemoryDigestsRepository().create_version(
+        strategy["id"],
+        {
+            "standing_rules": ["Bias buy-the-dip long continuation"],
+            "anti_rules": [],
+            "summary": "seed long",
+            "bias": "long",
+        },
+        version=1,
+    )
+    first = compile_playbook_strategy_doc(
+        strategy,
+        await StrategyMemoryDigestsRepository().get_latest(strategy["id"]),
+    )
+    assert first is not None
+    assert first["params"]["signal"]["bias"] == "long"
+    assert first["params"]["signal"]["digest_version"] == "1"
+
+    applied = await apply_memory_feedback_to_digest(
+        strategy["id"],
+        [
+            {
+                "id": "flip",
+                "kind": "standing_rule",
+                "text": "Fade rallies; prefer short at extremes",
+                "bias": "short",
+            },
+            {
+                "id": "caution",
+                "kind": "anti_rule",
+                "text": "Avoid late-NY chase entries",
+            },
+        ],
+        source="ai_strategy_startup_trade",
+    )
+    assert applied is not None
+    assert applied["version"] == 2
+    assert applied["standing_rules"][0] == "Fade rallies; prefer short at extremes"
+    assert applied["bias"] == "short"
+
+    second = compile_playbook_strategy_doc(
+        strategy,
+        await StrategyMemoryDigestsRepository().get_latest(strategy["id"]),
+    )
+    assert second is not None
+    assert second["params"]["signal"]["digest_version"] == "2"
+    assert second["params"]["signal"]["bias"] == "short"
+    assert second["params"]["signal"]["momentum_bars"] >= first["params"]["signal"]["momentum_bars"]
+    assert second["params"]["signal"]["standing_rules"][0] == (
+        "Fade rallies; prefer short at extremes"
+    )
 
 
 def test_cadence_skip_reasons():
@@ -344,7 +491,16 @@ async def test_feedback_fork_memory_not_ema_allowlist():
     applied = await apply_memory_feedback_to_digest(sid, notes)
     assert applied is not None
     assert applied["version"] == 2
+    assert applied["standing_rules"][0] == "Hold London winners"
     assert "Hold London winners" in applied["standing_rules"]
+    assert applied["summary"].startswith("Hold London winners")
+    assert applied.get("bias") == "long"
+
+    # Duplicate notes must not bump version when content is unchanged.
+    again = await apply_memory_feedback_to_digest(sid, notes)
+    assert again is not None
+    assert again["version"] == 2
+    assert again["id"] == applied["id"]
 
     # Guard: EMA apply helper is unused for memory notes path.
     params = {"filters": [{"id": "atr", "type": "atr", "min_value": 0.0008}]}

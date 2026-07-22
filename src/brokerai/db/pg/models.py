@@ -285,7 +285,9 @@ class BacktestActionRow(Base):
 
     __tablename__ = "backtest_actions"
     __table_args__ = (
-        Index("ix_backtest_actions_run_sequence", "run_id", "sequence"),
+        UniqueConstraint(
+            "run_id", "sequence", name="uq_backtest_actions_run_sequence"
+        ),
         Index("ix_backtest_actions_run_bar", "run_id", "bar_time"),
         {"schema": "brokerai"},
     )

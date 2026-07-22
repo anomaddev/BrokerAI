@@ -51,6 +51,9 @@ DEFAULT_ACCOUNT_MARGIN = 10_000.0
 MIN_ACCOUNT_MARGIN = 100.0
 MAX_ACCOUNT_MARGIN = 50_000_000.0
 
+# Exclusive worker lease: reclaim only after this long without a heartbeat.
+WORKER_CLAIM_STALE_S = 90.0
+
 
 def normalize_backtest_run_status(raw: Any) -> str:
     if isinstance(raw, str) and raw.strip() in BACKTEST_RUN_STATUSES:
@@ -466,6 +469,10 @@ class BacktestRunsRepository:
             doc["started_at"] = started
             doc["status_message"] = "Starting backtest"
             doc["progress_pct"] = 0.0
+            # Fresh running mark is unclaimed until the coordinator leases it.
+            doc.pop("worker_token", None)
+            doc.pop("worker_claimed_at", None)
+            doc.pop("worker_heartbeat_at", None)
             _sync_row_columns(row, doc)
             return serialize_backtest_run(doc, row=row)
 
@@ -484,8 +491,108 @@ class BacktestRunsRepository:
             doc["started_at"] = _now_iso()
             doc["status_message"] = "Starting backtest"
             doc["progress_pct"] = 0.0
+            doc.pop("worker_token", None)
+            doc.pop("worker_claimed_at", None)
+            doc.pop("worker_heartbeat_at", None)
             _sync_row_columns(row, doc)
             return serialize_backtest_run(doc, row=row)
+
+    @staticmethod
+    def _worker_claim_is_fresh(doc: dict[str, Any], *, now: datetime | None = None) -> bool:
+        token = str(doc.get("worker_token") or "").strip()
+        if not token:
+            return False
+        heartbeat = _parse_instant(doc.get("worker_heartbeat_at")) or _parse_instant(
+            doc.get("worker_claimed_at")
+        )
+        if heartbeat is None:
+            return False
+        when = now or _now_utc()
+        return (when - heartbeat).total_seconds() < WORKER_CLAIM_STALE_S
+
+    async def claim_for_worker(self, run_id: str, token: str) -> dict[str, Any] | None:
+        """Take an exclusive worker lease on a running backtest.
+
+        Succeeds when the run is running/uncancelled and either unclaimed or the
+        existing lease is stale (crashed worker). Returns ``None`` when another
+        worker still holds a fresh lease.
+        """
+        cleaned = (token or "").strip()
+        if not cleaned:
+            return None
+        async with session_scope() as session:
+            try:
+                stmt = (
+                    select(BacktestRunRow)
+                    .where(BacktestRunRow.id == run_id)
+                    .with_for_update()
+                )
+                row = (await session.execute(stmt)).scalars().first()
+            except Exception:
+                row = await session.get(BacktestRunRow, run_id)
+            if row is None:
+                return None
+            if normalize_backtest_run_status(row.status) != BACKTEST_RUN_STATUS_RUNNING:
+                return None
+            if row.cancel_requested:
+                return None
+            doc = dict(row.doc)
+            existing = str(doc.get("worker_token") or "").strip()
+            if existing and existing != cleaned and self._worker_claim_is_fresh(doc):
+                return None
+            now = _now_iso()
+            doc["worker_token"] = cleaned
+            doc["worker_claimed_at"] = now
+            doc["worker_heartbeat_at"] = now
+            row.doc = doc
+            return serialize_backtest_run(doc, row=row)
+
+    async def worker_owns(self, run_id: str, token: str) -> bool:
+        """True when *token* still holds the exclusive lease for *run_id*."""
+        cleaned = (token or "").strip()
+        if not cleaned:
+            return False
+        async with session_scope() as session:
+            row = await session.get(BacktestRunRow, run_id)
+            if row is None:
+                return False
+            if normalize_backtest_run_status(row.status) != BACKTEST_RUN_STATUS_RUNNING:
+                return False
+            if row.cancel_requested:
+                return False
+            doc = dict(row.doc)
+            return str(doc.get("worker_token") or "").strip() == cleaned
+
+    async def touch_worker_heartbeat(self, run_id: str, token: str) -> bool:
+        """Refresh lease heartbeat when *token* still owns the run."""
+        cleaned = (token or "").strip()
+        if not cleaned:
+            return False
+        async with session_scope() as session:
+            row = await session.get(BacktestRunRow, run_id)
+            if row is None:
+                return False
+            doc = dict(row.doc)
+            if str(doc.get("worker_token") or "").strip() != cleaned:
+                return False
+            doc["worker_heartbeat_at"] = _now_iso()
+            row.doc = doc
+            return True
+
+    async def clear_worker_claim(self, run_id: str, token: str | None = None) -> None:
+        """Drop the worker lease (optionally only when *token* matches)."""
+        async with session_scope() as session:
+            row = await session.get(BacktestRunRow, run_id)
+            if row is None:
+                return
+            doc = dict(row.doc)
+            existing = str(doc.get("worker_token") or "").strip()
+            if token is not None and existing and existing != token.strip():
+                return
+            doc.pop("worker_token", None)
+            doc.pop("worker_claimed_at", None)
+            doc.pop("worker_heartbeat_at", None)
+            row.doc = doc
 
     async def request_cancel(self, run_id: str) -> dict[str, Any] | None:
         async with session_scope() as session:
@@ -524,18 +631,28 @@ class BacktestRunsRepository:
         current_bar: datetime | str | None = None,
         status_message: str | None = None,
         stats: dict[str, Any] | None = None,
-    ) -> None:
+        worker_token: str | None = None,
+    ) -> bool:
         """Persist progress fields (and optional live stats) for a running backtest.
 
         ``stats`` is written into ``doc`` so list/detail APIs can show Trades /
         Win Rate / Realized P/L while the worker is still mid-run.
+
+        When ``worker_token`` is provided, returns ``False`` (and skips the write)
+        if that token no longer owns the exclusive lease — so a superseded worker
+        stops mutating the run after a reclaim/reload.
         """
         bar_dt = _parse_instant(current_bar) if current_bar is not None else None
+        cleaned_token = (worker_token or "").strip() or None
         async with session_scope() as session:
             row = await session.get(BacktestRunRow, run_id)
             if row is None:
-                return
+                return False
             doc = dict(row.doc)
+            if cleaned_token is not None:
+                if str(doc.get("worker_token") or "").strip() != cleaned_token:
+                    return False
+                doc["worker_heartbeat_at"] = _now_iso()
             pct = max(0.0, min(100.0, float(progress_pct)))
             doc["progress_pct"] = pct
             row.progress_pct = pct
@@ -548,6 +665,7 @@ class BacktestRunsRepository:
             if stats is not None:
                 doc["stats"] = normalize_backtest_stats(stats)
             row.doc = doc
+            return True
 
     async def finish_run(
         self,
@@ -585,17 +703,28 @@ class BacktestRunsRepository:
                 doc["status_message"] = "Cancelled"
             elif terminal == BACKTEST_RUN_STATUS_FAILED:
                 doc["status_message"] = "Failed"
+            doc.pop("worker_token", None)
+            doc.pop("worker_claimed_at", None)
+            doc.pop("worker_heartbeat_at", None)
             _sync_row_columns(row, doc)
             return serialize_backtest_run(doc, row=row)
 
     async def list_claimable_manual_starts(self) -> list[str]:
-        """Return run ids marked running but not yet finished (coordinator pickup)."""
+        """Return running runs that need a worker (unclaimed or stale lease)."""
         async with session_scope() as session:
-            stmt = select(BacktestRunRow.id).where(
+            stmt = select(BacktestRunRow).where(
                 BacktestRunRow.status == BACKTEST_RUN_STATUS_RUNNING,
                 BacktestRunRow.cancel_requested.is_(False),
             )
-            return [str(rid) for rid in (await session.execute(stmt)).scalars().all()]
+            rows = (await session.execute(stmt)).scalars().all()
+            now = _now_utc()
+            claimable: list[str] = []
+            for row in rows:
+                doc = dict(row.doc)
+                if self._worker_claim_is_fresh(doc, now=now):
+                    continue
+                claimable.append(str(row.id))
+            return claimable
 
     async def finish_orphaned_cancel_requests(self) -> list[str]:
         """Terminalize running runs with cancel_requested and no active worker.

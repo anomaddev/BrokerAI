@@ -18,6 +18,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from brokerai.ai_strategy.memory_digest import digest_content_unchanged
 from brokerai.bots.researcher.llm import analyze_with_model
 from brokerai.cost.llm_guard import LlmBudgetExceeded
 from brokerai.db.repositories.ai_models import AiModelsRepository, bind_source_model
@@ -431,7 +432,6 @@ async def run_learning_job(
             return failed or {"id": job_id, "status": LEARNING_JOB_STATUS_FAILED}
 
         parsed = parse_learning_response(raw)
-        next_version = await digests_repo.next_version(strategy_id)
         digest_doc = {
             "standing_rules": parsed["standing_rules"],
             "anti_rules": parsed["anti_rules"],
@@ -444,10 +444,22 @@ async def run_learning_job(
             "covered_through": covered.isoformat() if covered else None,
             "prior_version": (prior or {}).get("version"),
             "model_id": str(model_id),
+            "source": "strategy_learn",
         }
-        digest = await digests_repo.create_version(
-            strategy_id, digest_doc, version=next_version
-        )
+        if prior is not None and digest_content_unchanged(prior, digest_doc):
+            logger.info(
+                "Learning job %s strategy=%s produced identical digest content — "
+                "keeping v%s (skip version bump)",
+                job_id,
+                strategy_id,
+                prior.get("version"),
+            )
+            digest = prior
+        else:
+            next_version = await digests_repo.next_version(strategy_id)
+            digest = await digests_repo.create_version(
+                strategy_id, digest_doc, version=next_version
+            )
         completed = await jobs_repo.mark_completed(
             job_id,
             digest_id=digest["id"],

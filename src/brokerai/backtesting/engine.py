@@ -48,6 +48,10 @@ HEARTBEAT_INTERVAL_S = 1.5
 HEARTBEAT_EVERY_N_BARS = 25
 ACTION_FLUSH_SIZE = 50
 
+
+class LostWorkerClaim(RuntimeError):
+    """Raised when another worker stole the exclusive lease for this run."""
+
 # Re-export for callers/tests that historically imported from this module.
 __all__ = ("blocks_same_bar_entry", "run_backtest_engine")
 
@@ -162,12 +166,14 @@ async def run_backtest_engine(
     log: logging.Logger,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     candles_override: list[dict[str, Any]] | None = None,
+    worker_token: str | None = None,
 ) -> dict[str, Any]:
     """Execute a full backtest for *run_doc*. Returns finish payload fields."""
     ensure_trading_registries()
     runs_repo = BacktestRunsRepository()
     actions_repo = BacktestActionsRepository()
     run_id = str(run_doc["id"])
+    claim_token = (worker_token or "").strip() or None
     strategy_id = str(run_doc.get("strategy_id") or "")
     pair = str(run_doc.get("instrument") or (run_doc.get("instruments") or [None])[0] or "")
     if not pair:
@@ -307,17 +313,23 @@ async def run_backtest_engine(
     signal_only = str(run_doc.get("loop_mode") or "").strip().lower() == "explore"
 
     # Seed live stats so the UI shows 0s instead of blanks while the bar loop runs.
-    await runs_repo.update_progress(
+    seeded = await runs_repo.update_progress(
         run_id,
         progress_pct=2,
         status_message="Exploring patterns" if signal_only else "Simulating",
         stats=compute_stats([], equity_curve=[], initial_equity=account_margin),
+        worker_token=claim_token,
     )
+    if claim_token and not seeded:
+        raise LostWorkerClaim(f"lost worker claim for backtest {run_id}")
 
     async def flush_actions() -> None:
         nonlocal action_buffer
         if not action_buffer:
             return
+        if claim_token and not await runs_repo.worker_owns(run_id, claim_token):
+            action_buffer = []
+            raise LostWorkerClaim(f"lost worker claim for backtest {run_id}")
         batch = action_buffer
         action_buffer = []
         await actions_repo.insert_many(run_id, batch)
@@ -492,13 +504,16 @@ async def run_backtest_engine(
                 equity_curve=sim.equity_curve,
                 initial_equity=account_margin,
             )
-            await runs_repo.update_progress(
+            ok = await runs_repo.update_progress(
                 run_id,
                 progress_pct=pct,
                 current_bar=_candle_dt(candle),
                 status_message=f"Processing {through_time}",
                 stats=live_stats,
+                worker_token=claim_token,
             )
+            if claim_token and not ok:
+                raise LostWorkerClaim(f"lost worker claim for backtest {run_id}")
             last_heartbeat = now
 
     # Force-close any open position at the last bar close.
