@@ -22,6 +22,10 @@ _RATES: dict[tuple[str, str], ModelRates] = {
     ("openai", "gpt-4.1-mini"): ModelRates(0.40, 1.60),
     ("openai", "o3"): ModelRates(10.00, 40.00),
     ("openai", "o3-mini"): ModelRates(1.10, 4.40),
+    # xAI catalog prices (USD / 1M tokens); longer prefixes win via startswith match.
+    ("grok", "grok-4.5"): ModelRates(2.00, 6.00),
+    ("grok", "grok-4.20"): ModelRates(1.25, 2.50),
+    ("grok", "grok-4.3"): ModelRates(1.25, 2.50),
     ("grok", "grok-4"): ModelRates(3.00, 15.00),
     ("grok", "grok-3"): ModelRates(3.00, 15.00),
     ("grok", "grok-2"): ModelRates(2.00, 10.00),
