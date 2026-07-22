@@ -20,9 +20,11 @@ def ensure_trading_registries() -> None:
     global _REGISTERED
     if _REGISTERED:
         return
+    from brokerai.trading.presets.ai_strategy import register_ai_strategy
     from brokerai.trading.presets.ema_crossover import register_ema_crossover
 
     register_ema_crossover()
+    register_ai_strategy()
     _REGISTERED = True
 
 

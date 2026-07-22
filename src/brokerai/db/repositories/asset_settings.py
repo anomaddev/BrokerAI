@@ -109,6 +109,11 @@ def _normalize_forex_doc(doc: dict[str, Any]) -> dict[str, Any]:
     doc["enabled_sessions"] = normalize_enabled_sessions(doc.get("enabled_sessions"))
     if "only_one_position_per_pair" not in doc:
         doc["only_one_position_per_pair"] = True
+    try:
+        warmup_days = int(doc.get("default_warmup_trading_days", 5))
+    except (TypeError, ValueError):
+        warmup_days = 5
+    doc["default_warmup_trading_days"] = max(1, min(60, warmup_days))
     return doc
 
 
@@ -139,6 +144,7 @@ class AssetSettingsRepository:
             default["pair_order"] = default_pair_order([])
             default["enabled_sessions"] = normalize_enabled_sessions(None)
             default["only_one_position_per_pair"] = True
+            default["default_warmup_trading_days"] = 5
         else:
             default["enabled_symbols"] = []
         return default
@@ -151,8 +157,9 @@ class AssetSettingsRepository:
         enabled_pairs: list[str] | None = None,
         pair_order: list[str] | None = None,
         enabled_sessions: dict[str, bool] | None = None,
-        only_one_position_per_pair: bool | None = None,
+            only_one_position_per_pair: bool | None = None,
         primary_exchange: str | None = None,
+        default_warmup_trading_days: int | None = None,
     ) -> dict[str, Any]:
         """Persist asset settings.
 
@@ -192,6 +199,8 @@ class AssetSettingsRepository:
                 doc["only_one_position_per_pair"] = bool(
                     existing.get("only_one_position_per_pair", True)
                 )
+            if default_warmup_trading_days is not None:
+                doc["default_warmup_trading_days"] = int(default_warmup_trading_days)
         elif enabled_pairs is not None:
             doc["enabled_symbols"] = sorted(set(enabled_pairs))
 

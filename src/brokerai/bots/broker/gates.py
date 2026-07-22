@@ -176,8 +176,10 @@ async def apply_execution_gates(
                 intent=None,
             )
 
-    winners = resolve_priority_conflicts([(analysis, params) for analysis, params, _, _ in gated])
-    winner_ids = {(analysis.strategy_id, analysis.pair) for analysis, _ in winners}
+    winners = resolve_priority_conflicts(
+        [(analysis, params) for analysis, params, _, _ in gated],
+        strategies_by_id=strategies_by_id,
+    )    winner_ids = {(analysis.strategy_id, analysis.pair) for analysis, _ in winners}
 
     intents: list[TradeIntent] = []
     for analysis, params, strategy, gate_candles in gated:

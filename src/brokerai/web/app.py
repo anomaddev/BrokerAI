@@ -34,6 +34,7 @@ from brokerai.db.pg.models import (
 from sqlalchemy import func, select
 from brokerai.web.routes.bot_activity import router as bot_activity_router
 from brokerai.web.routes.cost_ledger import router as cost_ledger_router
+from brokerai.web.routes.llm_budget_settings import router as llm_budget_settings_router
 from brokerai.web.routes.assets_settings import router as assets_settings_router
 from brokerai.web.routes.auth import require_auth, router as auth_router
 from brokerai.web.routes.backups_settings import router as backups_settings_router
@@ -212,6 +213,7 @@ app.include_router(trades_router)
 app.include_router(system_router)
 app.include_router(bot_activity_router)
 app.include_router(cost_ledger_router)
+app.include_router(llm_budget_settings_router)
 app.include_router(tasks_router)
 
 if STATIC_DIR.exists():

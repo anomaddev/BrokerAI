@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from brokerai.strategies.base import StrategyPreset
+from brokerai.strategies.presets.ai_strategy.definition import AI_STRATEGY_PRESET
 from brokerai.strategies.presets.custom.definition import CUSTOM_PRESET
 from brokerai.strategies.presets.ema_crossover.definition import EMA_CROSSOVER_PRESET
 
 PRESETS: dict[str, StrategyPreset] = {
     EMA_CROSSOVER_PRESET.id: EMA_CROSSOVER_PRESET,
     CUSTOM_PRESET.id: CUSTOM_PRESET,
+    AI_STRATEGY_PRESET.id: AI_STRATEGY_PRESET,
 }
 
 

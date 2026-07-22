@@ -515,6 +515,12 @@ async def run_daily_report(
 
     signals_snapshot = await compute_signals_snapshot()
     await cache_signals_snapshot(signals_snapshot)
+    try:
+        from brokerai.db.repositories.strategy_guidance import StrategyGuidanceRepository
+
+        await StrategyGuidanceRepository().upsert_from_signals_snapshot(signals_snapshot)
+    except Exception:
+        logger.exception("Failed to materialize strategy_guidance from signals snapshot")
 
     _emit_progress(on_progress, "done", "Complete", 100)
     return RunResult(

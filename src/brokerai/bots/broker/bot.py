@@ -88,6 +88,15 @@ class BrokerBot(Bot):
         for analysis in results:
             self._processed_analysis_at[(analysis.strategy_id, analysis.pair)] = analysis.analyzed_at
 
+    async def _strategies_lookup(self, context: PipelineContext) -> dict[str, dict]:
+        await self._refresh_strategies()
+        by_id = dict(self._strategies_by_id)
+        for strategy in context.strategies:
+            strategy_id = str(strategy.get("id") or "")
+            if strategy_id:
+                by_id[strategy_id] = strategy
+        return by_id
+
     async def process_analysis(
         self,
         results: list[AnalysisResult],
@@ -117,7 +126,21 @@ class BrokerBot(Bot):
         )
 
         pool = get_worker_pool()
-        for intent in intents:
+        from brokerai.ai_strategy.shadow_dispatch import (
+            filter_live_dispatch_intents,
+            record_shadow_intents,
+        )
+
+        strategies_by_id = await self._strategies_lookup(context)
+        live_intents, shadow_intents = filter_live_dispatch_intents(intents, strategies_by_id)
+        if shadow_intents:
+            await record_shadow_intents(
+                shadow_intents,
+                strategies_by_id=strategies_by_id,
+                context=context,
+            )
+
+        for intent in live_intents:
             await log_pipeline_associate_started(context, intent.pair)
             assoc_start = time.monotonic()
             result = await pool.run(AssociateWorker, intent, job_id=context.job_id)
@@ -133,14 +156,15 @@ class BrokerBot(Bot):
         duration_ms = int((time.monotonic() - started) * 1000)
         await log_pipeline_broker_completed(context, duration_ms)
         logger.info(
-            "Broker processed %d analysis result(s), %d skipped (no signal), %d intent(s) for %s %s",
+            "Broker processed %d analysis result(s), %d skipped (no signal), %d live intent(s), %d shadow intent(s) for %s %s",
             len(new_results),
             skipped,
-            len(intents),
+            len(live_intents),
+            len(shadow_intents),
             context.symbol,
             context.timeframe,
         )
-        return intents
+        return live_intents
 
     async def tick(self) -> None:
         """Slow tick: account/position sync only — no full re-analysis."""

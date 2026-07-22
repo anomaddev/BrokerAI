@@ -24,7 +24,8 @@ Access is via the FastAPI app only: schema `brokerai` is not exposed to Supabase
   "filters": [ ],
   "exits": { },
   "risk": { },
-  "execution": { }
+  "execution": { },
+  "ai": { }
 }
 ```
 
@@ -42,6 +43,7 @@ Access is via the FastAPI app only: schema `brokerai` is not exposed to Supabase
 | `exits` | `object` | Stop loss, take profit, trailing stop |
 | `risk` | `object` | Position sizing and trade caps |
 | `execution` | `object` | Sessions and confidence threshold |
+| `ai` | `object` | AI Strategy knobs only (model, guidance toggles, LLM cadence). Required/persisted for `ai_strategy` preset. |
 
 ### Naming rules
 
@@ -59,6 +61,7 @@ Access is via the FastAPI app only: schema `brokerai` is not exposed to Supabase
 |-------|-----------|
 | Instrument assignment | Strategy document `instrument_selection` |
 | Strategy on/off | Strategy document `enabled` |
+| AI execution phase / warm-up clocks | Strategy document `execution_phase`, `warmup` (lifecycle) |
 | Chart UI overlays | Frontend only (not persisted) |
 
 ---

@@ -65,7 +65,7 @@ DEFAULT_LATE_MARKET_HOURS = 2
 
 INDICATOR_TYPES = frozenset({"ema", "sma", "rsi"})
 FILTER_TYPES = frozenset({"adx", "atr", "rsi", "custom", "htf_bias"})
-SIGNAL_TYPES = frozenset({"ema_crossover", "monthly_high", "monthly_low"})
+SIGNAL_TYPES = frozenset({"ema_crossover", "monthly_high", "monthly_low", "ai_strategy"})
 
 PRICE_SOURCES = frozenset({"close", "open", "high", "low", "hl2", "hlc3", "ohlc4"})
 
@@ -80,4 +80,5 @@ SECTIONS = (
     "risk",
     "execution",
     "min_candles",
+    "ai",
 )

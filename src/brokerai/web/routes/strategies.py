@@ -243,6 +243,25 @@ async def update_strategy(
     return JSONResponse(doc)
 
 
+@router.post("/{strategy_id}/promote")
+async def promote_ai_strategy(
+    strategy_id: str,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    """Explicit ready → live promotion for AI Strategies."""
+    repo = StrategiesRepository()
+    existing = await repo.get_by_id(strategy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    try:
+        doc = await repo.promote_to_live(strategy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not doc:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    return JSONResponse(doc)
+
+
 @router.delete("/{strategy_id}")
 async def delete_strategy(
     strategy_id: str,

@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     research_search_concurrency: int = 6
     research_analysis_concurrency: int = 4
     ai_confirmation_enabled: bool = False
+    llm_kill_switch: bool = False
     candle_sync_chunk_size: int = 5000
     candle_sync_concurrency: int = 4
     candle_default_timeframes: str = "M15"

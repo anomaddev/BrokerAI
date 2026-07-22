@@ -145,6 +145,11 @@ def _normalize_doc_params(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def serialize_strategy(doc: dict[str, Any]) -> dict[str, Any]:
+    from brokerai.ai_strategy.lifecycle import (
+        is_ai_strategy_doc,
+        normalize_lifecycle,
+    )
+
     asset_class = doc["asset_class"]
     params = _normalize_doc_params(doc)
     payload: dict[str, Any] = {
@@ -168,6 +173,12 @@ def serialize_strategy(doc: dict[str, Any]) -> dict[str, Any]:
     }
     if doc.get("instrument_selection"):
         payload["instrument_selection"] = doc["instrument_selection"]
+    if is_ai_strategy_doc(doc):
+        lifecycle = normalize_lifecycle(doc)
+        payload["execution_phase"] = lifecycle["execution_phase"]
+        payload["warmup"] = lifecycle["warmup"]
+        if doc.get("ai_improve"):
+            payload["ai_improve"] = doc["ai_improve"]
     return payload
 
 
@@ -247,6 +258,15 @@ class StrategiesRepository:
             "created_at": now,
             "updated_at": now,
         }
+        if preset_id == "ai_strategy":
+            if asset_class != "forex" or set(cleaned_selection.keys()) - {"forex"}:
+                raise ValueError("AI Strategy is forex-only in v1")
+            from brokerai.ai_strategy.lifecycle import ensure_lifecycle_on_create
+            from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+
+            forex_settings = await AssetSettingsRepository().get("forex")
+            default_days = int(forex_settings.get("default_warmup_trading_days") or 5)
+            doc = ensure_lifecycle_on_create(doc, default_warmup_trading_days=default_days)
 
         async with session_scope() as session:
             row = StrategyRow(
@@ -338,6 +358,33 @@ class StrategiesRepository:
                     change_label=change_label or "Strategy updated",
                 )
 
+        return await self.get_by_id(strategy_id)
+
+    async def promote_to_live(self, strategy_id: str) -> dict[str, Any] | None:
+        from brokerai.ai_strategy.lifecycle import is_ai_strategy_doc, promote_to_live
+
+        async with session_scope() as session:
+            row = await session.get(StrategyRow, strategy_id)
+            if not row:
+                return None
+            existing = dict(row.doc)
+            if not is_ai_strategy_doc(existing):
+                raise ValueError("Only AI Strategies can be promoted")
+            updated = promote_to_live(existing)
+            updated["updated_at"] = _now_iso()
+            _sync_row_columns(row, updated)
+        return await self.get_by_id(strategy_id)
+
+    async def save_lifecycle(self, strategy_id: str, doc_updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Persist lifecycle fields (phase/warmup) without creating a params version."""
+        async with session_scope() as session:
+            row = await session.get(StrategyRow, strategy_id)
+            if not row:
+                return None
+            existing = dict(row.doc)
+            existing.update(doc_updates)
+            existing["updated_at"] = _now_iso()
+            _sync_row_columns(row, existing)
         return await self.get_by_id(strategy_id)
 
     async def delete(self, strategy_id: str) -> bool:
