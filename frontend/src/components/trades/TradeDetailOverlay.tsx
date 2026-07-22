@@ -26,6 +26,7 @@ import {
 } from "../../lib/trades/tradeCandleWindow";
 import TradeCandleChart from "./TradeCandleChart";
 import TradeDetailPanel from "./TradeDetailPanel";
+import MobileSheetAside from "../MobileSheetAside";
 
 const TITLE_ID = "trade-detail-title";
 
@@ -276,14 +277,14 @@ export default function TradeDetailOverlay({
               timeOptions={tradeTimeOptions}
             />
           </div>
-          <aside className="trades-detail-panel-col">
+          <MobileSheetAside className="trades-detail-panel-col" fabLabel="Trade details">
             <TradeDetailPanel
               trade={trade}
               reconciliation={reconciliation}
               onClose={onClose}
               formatInstant={formatTradeInstant}
             />
-          </aside>
+          </MobileSheetAside>
         </div>
       </div>
     </div>

@@ -6714,3 +6714,332 @@ button.research-back-link {
 }
 
 
+
+/* ── Shared mobile data-density + sheet panels (must stay last) ── */
+
+.cost-ledger-period-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cost-ledger-period-total {
+  margin-left: auto;
+}
+
+.cost-ledger-panel {
+  margin-bottom: 1rem;
+}
+
+.research-report-body {
+  overflow-x: auto;
+}
+
+.research-report-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.research-report-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.mobile-sheet-panel-handle,
+.mobile-sheet-panel-toolbar,
+.mobile-sheet-panel-fab,
+.mobile-sheet-scrim {
+  display: none;
+}
+
+.mobile-sheet-panel-body {
+  display: contents;
+}
+
+@media (max-width: 768px) {
+  .col-hide-sm {
+    display: none !important;
+  }
+
+  .research-table-wrap {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .research-table th.col-sticky,
+  .research-table td.col-sticky {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--surface);
+    box-shadow: 1px 0 0 var(--border);
+  }
+
+  .research-table.strategy-table th.strategy-table-checkbox-col,
+  .research-table.strategy-table td.strategy-table-checkbox-col,
+  .research-table.analysis-runs-table th.analysis-runs-table-checkbox-col,
+  .research-table.analysis-runs-table td.analysis-runs-table-checkbox-col {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: var(--surface);
+  }
+
+  .research-table.strategy-table th.col-sticky,
+  .research-table.strategy-table td.col-sticky,
+  .research-table.analysis-runs-table th.col-sticky,
+  .research-table.analysis-runs-table td.col-sticky {
+    left: 2.75rem;
+  }
+
+  .strategy-list-header {
+    gap: 0.5rem;
+  }
+
+  .strategy-list-header .page-title {
+    font-size: 1.25rem;
+  }
+
+  .strategy-status-cell {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .strategy-promote-btn {
+    width: 100%;
+  }
+
+  .cost-ledger-period-bar {
+    gap: 0.375rem;
+  }
+
+  .cost-ledger-period-bar .btn {
+    padding: 0.4rem 0.65rem;
+    font-size: 0.8125rem;
+  }
+
+  .cost-ledger-period-total {
+    margin-left: 0;
+    width: 100%;
+    font-size: 0.8125rem;
+  }
+
+  .research-view-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* Bottom sheet for chart detail panes */
+  .mobile-sheet-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    max-height: min(62vh, 560px);
+    z-index: 45;
+    border-left: none !important;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    background: var(--surface);
+    transform: translateY(105%);
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    padding-bottom: var(--safe-area-bottom);
+    box-shadow: none;
+    overflow: hidden;
+  }
+
+  .mobile-sheet-panel.mobile-sheet-panel--open {
+    transform: translateY(0);
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35);
+  }
+
+  .mobile-sheet-panel-handle {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 0.55rem auto 0.15rem;
+    border-radius: 999px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+
+  .mobile-sheet-panel-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.35rem 1rem 0.5rem;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .mobile-sheet-panel-toolbar-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .mobile-sheet-panel-close {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.25rem 0.15rem;
+  }
+
+  .mobile-sheet-panel-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .mobile-sheet-panel-body > .backtest-panel-tabs,
+  .mobile-sheet-panel-body > .research-signals-tabs {
+    flex-shrink: 0;
+  }
+
+  .mobile-sheet-panel-body > .backtest-panel-body,
+  .mobile-sheet-panel-body > *:not(.backtest-panel-tabs):not(.research-signals-tabs) {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-sheet-panel-fab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    right: max(1rem, var(--safe-area-right));
+    bottom: max(4.75rem, calc(3.5rem + var(--safe-area-bottom)));
+    z-index: 35;
+    padding: 0.7rem 1.1rem;
+    border-radius: 999px;
+    border: 1px solid var(--accent);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  }
+
+  .mobile-sheet-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: rgba(8, 12, 18, 0.45);
+    cursor: pointer;
+  }
+
+  .analysis-run-view,
+  .backtest-run-view {
+    max-height: calc(100dvh - var(--app-chrome-height-mobile));
+  }
+
+  .analysis-run-detail-layout,
+  .trades-detail-layout {
+    flex-direction: column;
+  }
+
+  .analysis-run-chart-col,
+  .trades-detail-chart-col {
+    flex: 1 1 auto;
+    min-height: 0;
+    border-right: none;
+  }
+
+  .analysis-run-title-row,
+  .backtest-run-header,
+  .trades-detail-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .backtest-step-controls {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .backtest-panel-tabs.research-signals-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .backtest-panel-tabs .research-signals-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-size: 0.8125rem;
+    padding: 0.5rem 0.65rem;
+  }
+
+  .backtest-actions-filters {
+    flex-wrap: wrap;
+  }
+
+  .analysis-toolbar-filters {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .ai-strategy-log-hero-actions {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .ai-strategy-log-hero-actions .btn {
+    flex: 1 1 auto;
+    min-width: calc(50% - 0.4rem);
+    justify-content: center;
+  }
+
+  .trades-detail-overlay {
+    padding: 0;
+  }
+
+  .trades-detail-shell {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: 100%;
+    margin: 0;
+    border-radius: 0;
+    border: none;
+  }
+
+  .model-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .model-overlay-dialog {
+    width: 100%;
+    max-width: none;
+    max-height: min(92vh, 100%);
+    border-radius: 14px 14px 0 0;
+    margin: 0;
+  }
+}
+
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  .mobile-sheet-panel {
+    transition: none;
+  }
+}

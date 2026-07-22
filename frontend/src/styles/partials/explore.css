@@ -871,12 +871,12 @@
     flex-direction: column;
   }
 
-  .explore-sidebar {
+  /* Sidebar becomes a mobile sheet (see .mobile-sheet-panel in base.css). */
+  .explore-sidebar.mobile-sheet-panel {
     width: 100%;
     min-width: 0;
-    max-height: min(42vh, 320px);
+    max-height: min(62vh, 560px);
     border-left: 0;
-    border-top: 1px solid rgba(45, 58, 79, 0.35);
   }
 
   .explore-sidebar-scroll {
@@ -884,6 +884,8 @@
     gap: 0.5rem;
     overflow-x: hidden;
     overflow-y: auto;
+    flex: 1;
+    min-height: 0;
   }
 
   .explore-sidebar-section {
@@ -912,5 +914,30 @@
   .explore-search {
     flex: 1 1 auto;
     max-width: none;
+  }
+
+  .explore-chart-area {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .explore-sidebar.mobile-sheet-panel .explore-sidebar-desc {
+    display: none;
+  }
+
+  .explore-sidebar.mobile-sheet-panel .explore-sidebar-header {
+    padding: 0.5rem 1rem 0.35rem;
+  }
+
+  .explore-sidebar.mobile-sheet-panel .explore-sidebar-title {
+    font-size: 0.95rem;
+  }
+
+  .explore-recent-cards {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
   }
 }

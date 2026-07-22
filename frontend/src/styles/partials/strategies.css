@@ -7224,3 +7224,46 @@
     padding-left: 0;
   }
 }
+
+@media (max-width: 768px) {
+  .strategy-builder-panel-fab {
+    right: max(1rem, var(--safe-area-right));
+    bottom: max(4.75rem, calc(3.5rem + var(--safe-area-bottom)));
+  }
+
+  .analysis-run-header,
+  .backtest-run-header-row {
+    gap: 0.5rem;
+  }
+
+  .analysis-run-header-actions,
+  .backtest-run-actions {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .analysis-run-header-actions .btn,
+  .backtest-run-actions .btn {
+    font-size: 0.8125rem;
+  }
+
+  .trades-detail-header {
+    padding: 0.75rem;
+  }
+
+  .trades-detail-header .toggle-switch,
+  .trades-detail-utc-toggle {
+    /* keep UTC control reachable but compact */
+    transform: scale(0.92);
+    transform-origin: right center;
+  }
+
+  .backtest-overview-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .backtest-step-controls .btn {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.5rem;
+  }
+}
