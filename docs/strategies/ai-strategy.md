@@ -146,7 +146,7 @@ frontend/.../presets/aiStrategy/   — builder
 | GET/PUT | `/api/backtest/settings` | Includes daily AI Strategy BT toggles |
 | GET/POST | `/api/backtest-runs` | List / create backtest runs |
 | POST | `/api/backtest-runs/{id}/ai-feedback` | Auto AI feedback on a completed run |
-| GET/PUT | `/api/settings/llm-budget` (or equivalent budget route) | Kill switch + daily USD limit |
+| GET/PUT | `/api/settings/llm-budget` | Kill switch + daily USD limit (`env_kill_switch` mirrors `BROKERAI_LLM_KILL_SWITCH`) |
 
 ## Tests
 
