@@ -18,7 +18,8 @@ DEFAULT_AI_SECTION: dict[str, Any] = {
     "max_llm_calls_per_day": 12,
     "max_llm_calls_per_symbol_per_day": 4,
     "max_context_bars": 64,
-    "learn_enabled": False,
+    # Default on so daily improve / memory loops work for newly created strategies.
+    "learn_enabled": True,
 }
 
 

@@ -34,27 +34,30 @@ class ShadowIntentsRepository:
                 )
             ).scalar_one_or_none()
             if existing is not None:
-                existing.doc = doc
-                existing.phase = str(doc.get("phase") or existing.phase)
-                existing.analysis_run_id = doc.get("analysis_run_id")
-                existing.timeframe = str(doc.get("timeframe") or "")
-                return {"id": existing.id, **doc}
+                merged = {**doc, "id": existing.id}
+                existing.doc = merged
+                existing.phase = str(merged.get("phase") or existing.phase)
+                existing.analysis_run_id = merged.get("analysis_run_id")
+                existing.timeframe = str(merged.get("timeframe") or "")
+                # Persist id last so callers never receive a regenerated UUID.
+                return merged
             intent_id = str(doc.get("id") or uuid4().hex)
+            merged = {**doc, "id": intent_id}
             session.add(
                 ShadowIntentRow(
                     id=intent_id,
                     strategy_id=strategy_id,
                     pair=pair,
-                    timeframe=str(doc.get("timeframe") or ""),
-                    analysis_run_id=doc.get("analysis_run_id"),
-                    phase=str(doc.get("phase") or "warming"),
+                    timeframe=str(merged.get("timeframe") or ""),
+                    analysis_run_id=merged.get("analysis_run_id"),
+                    phase=str(merged.get("phase") or "warming"),
                     direction=direction,
                     entry_candle_open=entry_candle_open,
                     created_at=_now(),
-                    doc=doc,
+                    doc=merged,
                 )
             )
-            return {"id": intent_id, **doc}
+            return merged
 
     async def list_for_strategy(self, strategy_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
         async with session_scope() as session:
@@ -71,30 +74,48 @@ class ShadowIntentsRepository:
 
 class ShadowLotsRepository:
     async def upsert_lot(self, doc: dict[str, Any]) -> dict[str, Any]:
-        lot_id = str(doc.get("id") or uuid4().hex)
+        """Upsert a shadow lot, idempotent on ``shadow_intent_id`` when present."""
+        intent_id = doc.get("shadow_intent_id")
         async with session_scope() as session:
-            row = await session.get(ShadowLotRow, lot_id)
+            row = None
+            if intent_id:
+                row = (
+                    await session.execute(
+                        select(ShadowLotRow)
+                        .where(ShadowLotRow.shadow_intent_id == str(intent_id))
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
             if row is None:
+                lot_id = str(doc.get("id") or uuid4().hex)
+                row = await session.get(ShadowLotRow, lot_id)
+            if row is None:
+                lot_id = str(doc.get("id") or uuid4().hex)
+                merged = {**doc, "id": lot_id}
                 session.add(
                     ShadowLotRow(
                         id=lot_id,
-                        strategy_id=str(doc["strategy_id"]),
-                        pair=str(doc["pair"]),
-                        timeframe=str(doc.get("timeframe") or ""),
-                        state=str(doc.get("state") or "open"),
-                        direction=str(doc["direction"]),
-                        shadow_intent_id=doc.get("shadow_intent_id"),
+                        strategy_id=str(merged["strategy_id"]),
+                        pair=str(merged["pair"]),
+                        timeframe=str(merged.get("timeframe") or ""),
+                        state=str(merged.get("state") or "open"),
+                        direction=str(merged["direction"]),
+                        shadow_intent_id=merged.get("shadow_intent_id"),
                         opened_at=_now(),
                         closed_at=None,
-                        doc=doc,
+                        doc=merged,
                     )
                 )
-            else:
-                row.doc = doc
-                row.state = str(doc.get("state") or row.state)
-                if row.state == "closed" and row.closed_at is None:
-                    row.closed_at = _now()
-            return {"id": lot_id, **doc}
+                return merged
+
+            merged = {**doc, "id": row.id}
+            if intent_id and not row.shadow_intent_id:
+                row.shadow_intent_id = str(intent_id)
+            row.doc = merged
+            row.state = str(merged.get("state") or row.state)
+            if row.state == "closed" and row.closed_at is None:
+                row.closed_at = _now()
+            return merged
 
     async def list_open(self, *, strategy_id: str | None = None, pair: str | None = None) -> list[dict[str, Any]]:
         async with session_scope() as session:

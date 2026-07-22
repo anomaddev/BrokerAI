@@ -271,7 +271,7 @@ AI Strategy knobs only. Required and persisted for `preset_id=ai_strategy`. Othe
 | `max_llm_calls_per_day` | integer | `12` | 0–500 |
 | `max_llm_calls_per_symbol_per_day` | integer | `4` | 0–100 |
 | `max_context_bars` | integer | `64` | 16–500 |
-| `learn_enabled` | boolean | `false` | Queue outcome → memory digest learning |
+| `learn_enabled` | boolean | `true` | Queue outcome → memory digest learning + daily improve eligibility |
 
 #### Signal types used with AI Strategy
 

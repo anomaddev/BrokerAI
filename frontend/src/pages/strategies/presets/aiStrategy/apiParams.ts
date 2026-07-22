@@ -78,17 +78,16 @@ export function aiStrategyParamsToV1(params: AiStrategyParams): StrategyParamsV1
       post_stop_cooldown_bars: 0,
     },
     ai: {
-      model_id: null,
+      model_id: params.modelId?.trim() || null,
       use_daily_report: params.useDailyReport,
       use_weekly_brief: params.useWeeklyBrief,
       use_weekly_debrief: params.useWeeklyDebrief,
-      // Slice 1: LLM always off regardless of UI state.
-      llm_mode: "off",
+      llm_mode: params.llmMode,
       min_llm_interval_minutes: 240,
       max_llm_calls_per_day: 12,
       max_llm_calls_per_symbol_per_day: 4,
       max_context_bars: lookback,
-      learn_enabled: false,
+      learn_enabled: params.learnEnabled,
     },
   };
 }
@@ -104,6 +103,9 @@ export function v1ToAiStrategyParams(v1: StrategyParamsV1): AiStrategyParams {
     v1.min_candles ?? lookback,
     DEFAULT_AI_STRATEGY_PARAMS.minCandles,
   );
+  const modelRaw = ai?.model_id;
+  const modelId =
+    typeof modelRaw === "string" && modelRaw.trim() ? modelRaw.trim() : null;
 
   return {
     timeframe: normalizeTimeframe(v1),
@@ -112,7 +114,9 @@ export function v1ToAiStrategyParams(v1: StrategyParamsV1): AiStrategyParams {
     useDailyReport: ai?.use_daily_report ?? DEFAULT_AI_STRATEGY_PARAMS.useDailyReport,
     useWeeklyBrief: ai?.use_weekly_brief ?? DEFAULT_AI_STRATEGY_PARAMS.useWeeklyBrief,
     useWeeklyDebrief: ai?.use_weekly_debrief ?? DEFAULT_AI_STRATEGY_PARAMS.useWeeklyDebrief,
+    modelId,
     llmMode: normalizeLlmMode(ai?.llm_mode),
+    learnEnabled: ai?.learn_enabled ?? DEFAULT_AI_STRATEGY_PARAMS.learnEnabled,
     sessions:
       v1.execution.sessions.length > 0
         ? [...v1.execution.sessions]

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Brain } from "lucide-react";
-import { api } from "../../../../api/client";
+import { api, type AiModel } from "../../../../api/client";
 import DiscardStrategyChangesDialog from "../../../../components/strategies/DiscardStrategyChangesDialog";
 import SaveStrategyOverlay from "../../../../components/strategies/SaveStrategyOverlay";
 import StrategyBuilderFooter from "../../../../components/strategies/StrategyBuilderFooter";
@@ -34,6 +34,8 @@ import {
   AI_LOOKBACK_MAX,
   AI_LOOKBACK_MIN,
   DEFAULT_AI_STRATEGY_PARAMS,
+  LLM_MODE_OPTIONS,
+  type AiLlmMode,
   type AiStrategyParams,
 } from "./defaults";
 
@@ -41,6 +43,7 @@ const ACCORDION_KEY = "brokerai-ai-strategy-accordion-v1";
 const DEFAULT_SECTIONS = {
   market: true,
   guidance: true,
+  model: true,
   lookback: true,
 };
 
@@ -117,7 +120,25 @@ export default function AiStrategyBuilder({
   const [enabled] = useState(() => Boolean(editEnabled));
   const [versionBannerAt, setVersionBannerAt] = useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = useState<number | null>(null);
+  const [models, setModels] = useState<AiModel[]>([]);
   const { timeOptions } = useGeneralSettings();
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await api.listModels();
+        if (!cancelled) {
+          setModels((data.models || []).filter((m) => m.enabled));
+        }
+      } catch {
+        if (!cancelled) setModels([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const preset = STRATEGY_PRESETS.find((p) => p.id === "ai_strategy");
   const supportedAssetClasses = preset?.assetClasses ?? (["forex"] as const);
@@ -307,14 +328,64 @@ export default function AiStrategyBuilder({
                   checked={params.useWeeklyDebrief}
                   onChange={(checked) => update("useWeeklyDebrief", checked)}
                 />
-                <div className="param-control param-control--readonly">
-                  <span className="param-control-label">LLM mode</span>
-                  <span className="param-control-value param-control-value--locked">Off</span>
-                </div>
+                <ParamToggleRow
+                  label="Learn from outcomes"
+                  checked={params.learnEnabled}
+                  onChange={(checked) => update("learnEnabled", checked)}
+                />
                 <p className="param-helper">
-                  Live LLM calls stay off in this release. Guidance toggles still select which
-                  research inputs the model may use later.
+                  Research inputs are bias only. Learning feeds memory digests and daily
+                  compiled-playbook improve runs (Settings → Backtesting).
                 </p>
+              </ParameterCard>
+
+              <ParameterCard
+                title="Model"
+                expanded={sections.model ?? true}
+                onToggle={() => toggleSection("model")}
+              >
+                <label className="param-control">
+                  <span className="param-control-label">Decision model</span>
+                  <select
+                    className="param-select"
+                    value={params.modelId ?? ""}
+                    onChange={(event) =>
+                      update("modelId", event.target.value.trim() ? event.target.value : null)
+                    }
+                  >
+                    <option value="">Select a model…</option>
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.title || model.model_name || model.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="param-control">
+                  <span className="param-control-label">LLM mode</span>
+                  <select
+                    className="param-select"
+                    value={params.llmMode}
+                    onChange={(event) => update("llmMode", event.target.value as AiLlmMode)}
+                  >
+                    {LLM_MODE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="param-helper">
+                  Keep mode Off during warm-up unless you intentionally want spend-gated
+                  decisions. Interval mode throttles calls (default 240 minutes) and respects
+                  daily / per-symbol caps.
+                </p>
+                {params.llmMode !== "off" && !params.modelId ? (
+                  <p className="param-helper param-helper--warning">
+                    Select an enabled model under Settings → Models before live LLM decisions
+                    can run.
+                  </p>
+                ) : null}
               </ParameterCard>
 
               <ParameterCard

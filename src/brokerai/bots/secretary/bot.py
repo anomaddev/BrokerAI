@@ -269,10 +269,27 @@ class SecretaryBot(Bot):
             return
         logger.info("Secretary startup — cache warm, waiting for candle close")
 
+    async def _maybe_drain_learning_jobs(self) -> None:
+        """Process at most one queued AI Strategy learning job per tick."""
+        try:
+            from brokerai.ai_strategy.learning import drain_queued_learning_jobs
+
+            summary = await drain_queued_learning_jobs(limit=1)
+            if summary.get("completed") or summary.get("failed"):
+                logger.info(
+                    "Secretary — learning drain completed=%s failed=%s considered=%s",
+                    summary.get("completed"),
+                    summary.get("failed"),
+                    summary.get("considered"),
+                )
+        except Exception:
+            logger.exception("Secretary — learning job drain failed")
+
     async def tick(self) -> None:
         await self._maybe_fetch_account_summary()
         await self._maybe_run_scheduled_research()
         await self._maybe_run_daily_ai_strategy_backtests()
+        await self._maybe_drain_learning_jobs()
 
         if not self._startup_done:
             await self.run_startup_pass()

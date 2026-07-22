@@ -10,6 +10,7 @@ import pytest
 from brokerai.ai_strategy.learning import (
     MIN_NEW_OUTCOMES_FOR_LEARN,
     build_stratified_evidence,
+    drain_queued_learning_jobs,
     format_digest_for_prompt,
     parse_learning_response,
     queue_learning_job,
@@ -333,6 +334,40 @@ async def test_close_shadow_lot_queues_but_does_not_run_llm():
     assert closed["state"] == "closed"
     open_jobs = await LearningJobsRepository().list_queued()
     assert any(j["strategy_id"] == sid for j in open_jobs)
+
+
+@pytest.mark.asyncio
+async def test_drain_queued_learning_jobs_runs_one():
+    sid = "s-drain"
+    strategies = AsyncMock()
+    strategies.get_by_id = AsyncMock(return_value=_strategy_doc(sid, learn_enabled=True))
+    models = AsyncMock()
+    models.find_enabled_by_id = AsyncMock(return_value=_enabled_model())
+    await _seed_outcomes(sid, n_wins=3, n_losses=2)
+    job = await queue_learning_job(sid, strategies_repo=strategies, force=True)
+    assert job is not None
+
+    with (
+        patch(
+            "brokerai.ai_strategy.learning.StrategiesRepository",
+            return_value=strategies,
+        ),
+        patch(
+            "brokerai.ai_strategy.learning.AiModelsRepository",
+            return_value=models,
+        ),
+        patch(
+            "brokerai.ai_strategy.learning.analyze_with_model",
+            new_callable=AsyncMock,
+            return_value='{"standing_rules":["r1"],"anti_rules":[],"summary":"ok"}',
+        ),
+    ):
+        summary = await drain_queued_learning_jobs(limit=1)
+
+    assert summary["completed"] == 1
+    assert summary["failed"] == 0
+    digest = await StrategyMemoryDigestsRepository().get_latest(sid)
+    assert digest is not None
 
 
 @pytest.mark.asyncio

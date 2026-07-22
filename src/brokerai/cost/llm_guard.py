@@ -200,7 +200,14 @@ async def should_call_llm(
                 if existing.status == "reserved" and existing.expires_at > stamp:
                     return LlmBudgetDecision(False, "in_flight", day, existing.id)
 
-            day_row = await session.get(LlmBudgetDayRow, day)
+            # Row lock so concurrent reservations cannot oversubscribe the daily cap.
+            day_row = (
+                await session.execute(
+                    select(LlmBudgetDayRow)
+                    .where(LlmBudgetDayRow.day_et == day)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
             if day_row is None:
                 day_row = LlmBudgetDayRow(
                     day_et=day,
@@ -212,6 +219,13 @@ async def should_call_llm(
                 )
                 session.add(day_row)
                 await session.flush()
+                day_row = (
+                    await session.execute(
+                        select(LlmBudgetDayRow)
+                        .where(LlmBudgetDayRow.day_et == day)
+                        .with_for_update()
+                    )
+                ).scalar_one()
 
             limit = float(settings.get("daily_limit_usd") or DEFAULT_DAILY_LIMIT_USD)
             projected = float(day_row.spent_usd) + float(day_row.reserved_usd) + estimate

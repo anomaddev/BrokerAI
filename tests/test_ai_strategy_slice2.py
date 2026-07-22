@@ -256,3 +256,69 @@ async def test_sync_evaluate_never_calls_llm_even_when_mode_on():
 
     assert result.direction is None
     assert result.metadata.get("llm_called") is False
+
+
+@pytest.mark.asyncio
+async def test_per_symbol_call_cap_survives_cache_overwrite():
+    """Caps must use a counter, not the single-slot decision cache."""
+    ensure_trading_registries()
+    evaluator = ModelSignalRuntime()
+    params = _ai_params(
+        llm_mode="interval",
+        model_id="model-1",
+        min_llm_interval_minutes=15,
+        max_llm_calls_per_symbol_per_day=2,
+        max_llm_calls_per_day=100,
+    )
+    candles = generate_mock_candles(80)
+    cache = IndicatorCache().warm("EUR/USD", "M15", candles, [params])
+    decision_json = (
+        '{"action":"enter","direction":"long","confidence":0.7,'
+        '"thesis":"t","invalidation":"i"}'
+    )
+    # Advance monotonic clock past the interval between calls so cache doesn't short-circuit.
+    clock = {"t": 1_000_000.0}
+
+    def _mono() -> float:
+        return clock["t"]
+
+    with (
+        patch(
+            "brokerai.trading.presets.ai_strategy.runtime.AiModelsRepository"
+        ) as mock_repo_cls,
+        patch(
+            "brokerai.trading.presets.ai_strategy.runtime.StrategyGuidanceRepository"
+        ) as mock_guidance_cls,
+        patch(
+            "brokerai.trading.presets.ai_strategy.runtime.analyze_with_model",
+            new_callable=AsyncMock,
+            return_value=decision_json,
+        ) as mock_llm,
+        patch("brokerai.trading.presets.ai_strategy.runtime.time.monotonic", side_effect=_mono),
+    ):
+        mock_repo_cls.return_value.find_enabled_by_id = AsyncMock(
+            return_value=_enabled_model()
+        )
+        mock_guidance_cls.return_value.get_for_symbol = AsyncMock(return_value=None)
+
+        for _ in range(2):
+            result = await evaluator.evaluate_async(
+                candles,
+                params,
+                cache,
+                strategy_id="s-cap",
+                pair="EUR/USD",
+            )
+            assert result.metadata.get("llm_called") is True
+            clock["t"] += 16 * 60
+
+        blocked = await evaluator.evaluate_async(
+            candles,
+            params,
+            cache,
+            strategy_id="s-cap",
+            pair="EUR/USD",
+        )
+        assert blocked.direction is None
+        assert blocked.metadata.get("reason") == "max_llm_calls_per_symbol_per_day"
+        assert mock_llm.await_count == 2

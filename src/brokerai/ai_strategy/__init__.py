@@ -16,6 +16,7 @@ from brokerai.ai_strategy.lifecycle import (
 )
 from brokerai.ai_strategy.learning import (
     MIN_NEW_OUTCOMES_FOR_LEARN,
+    drain_queued_learning_jobs,
     format_digest_for_prompt,
     queue_learning_job,
     run_learning_job,
@@ -28,6 +29,7 @@ __all__ = [
     "PHASE_READY",
     "PHASE_WARMING",
     "default_warmup_doc",
+    "drain_queued_learning_jobs",
     "ensure_lifecycle_on_create",
     "format_digest_for_prompt",
     "get_execution_phase",

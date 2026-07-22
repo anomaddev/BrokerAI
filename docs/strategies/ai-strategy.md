@@ -57,7 +57,7 @@ Knobs under `params.ai` (validated in `strategies/params/ai_section.py`):
 | `max_llm_calls_per_day` | `12` | Strategy-level cap |
 | `max_llm_calls_per_symbol_per_day` | `4` | Per-symbol cap |
 | `max_context_bars` | `64` | Bars sent as context (16–500) |
-| `learn_enabled` | `false` | Outcome → memory digest learning |
+| `learn_enabled` | `true` | Outcome → memory digest learning + daily improve eligibility |
 
 Signal block: `signal.type = "ai_strategy"` (runtime: `ModelSignalRuntime`). Sync `evaluate()` is always fail-closed (no LLM); live analysis uses `evaluate_async()`.
 
@@ -95,10 +95,13 @@ When outcomes close (shadow or live) and learning is enabled:
 
 1. Outcomes land in `trade_outcome_records`
 2. `learning_jobs` queue digests work
-3. Digests persist in `strategy_memory_digests`
-4. Digests feed the next decision prompt and daily playbook compile
+3. Secretary drains queued jobs (at most one per tick) via `drain_queued_learning_jobs`
+4. Digests persist in `strategy_memory_digests`
+5. Digests feed the next decision prompt and daily playbook compile
 
 Research guidance snapshots live in `strategy_guidance` (bias only — not executable rules).
+
+Warm-up clocks advance in the Data Analyst worker on **realtime** closed bars (never catchup).
 
 ## Daily improve (compiled backtests)
 

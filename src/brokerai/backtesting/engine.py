@@ -387,13 +387,17 @@ async def run_backtest_engine(
                 last_stop_exit_time = through_time
 
         # 2) Live-parity analysis on the prefix window.
+        # AI Strategy live LLM must never run inside historical bar loops —
+        # catchup=True fail-closes ModelSignalRuntime (compiled_playbook is unaffected).
+        signal_type = str((params.get("signal") or {}).get("type") or "")
+        analysis_catchup = signal_type == "ai_strategy"
         analysis = await run_strategy_analysis(
             strategy,
             pair,
             window,
             indicators,
             timeframe=timeframe,
-            catchup=False,
+            catchup=analysis_catchup,
         )
 
         open_pairs = {pair} if sim.has_open_position() else set()

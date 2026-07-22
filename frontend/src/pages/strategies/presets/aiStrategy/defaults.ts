@@ -12,8 +12,11 @@ export type AiStrategyParams = {
   useDailyReport: boolean;
   useWeeklyBrief: boolean;
   useWeeklyDebrief: boolean;
-  /** Slice 1 always persists Off; UI shows it disabled. */
+  /** Bound model id from Settings → Models (null until selected). */
+  modelId: string | null;
   llmMode: AiLlmMode;
+  /** Outcome → memory digest learning + daily improve eligibility. */
+  learnEnabled: boolean;
   sessions: string[];
   riskPerTrade: number;
   maxTradesPerDay: number;
@@ -23,6 +26,13 @@ export type AiStrategyParams = {
 export const AI_LOOKBACK_MIN = 16;
 export const AI_LOOKBACK_MAX = 500;
 
+export const LLM_MODE_OPTIONS: { value: AiLlmMode; label: string }[] = [
+  { value: "off", label: "Off" },
+  { value: "interval", label: "Interval (throttled)" },
+  { value: "on_signal_change", label: "On signal change" },
+  { value: "manual", label: "Manual" },
+];
+
 export const DEFAULT_AI_STRATEGY_PARAMS: AiStrategyParams = {
   timeframe: "M15",
   minCandles: 64,
@@ -30,7 +40,9 @@ export const DEFAULT_AI_STRATEGY_PARAMS: AiStrategyParams = {
   useDailyReport: true,
   useWeeklyBrief: true,
   useWeeklyDebrief: true,
+  modelId: null,
   llmMode: "off",
+  learnEnabled: true,
   sessions: ["London", "NY"],
   riskPerTrade: 1.0,
   maxTradesPerDay: 3,

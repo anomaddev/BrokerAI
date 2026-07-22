@@ -223,3 +223,98 @@ def reset_warmup_episode(
     out["warmup"] = default_warmup_doc(target_days=None)
     out["_warmup_default_days"] = max(1, int(default_warmup_trading_days))
     return out
+
+
+def _parse_candle_time(raw: Any) -> datetime | None:
+    if isinstance(raw, datetime):
+        stamp = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            stamp = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp
+
+
+async def advance_ai_strategy_warmups_for_bar(
+    strategies: list[dict[str, Any]],
+    *,
+    candle_time: datetime | str | None,
+    catchup: bool,
+    forex_open: bool | None = None,
+    global_default_days: int | None = None,
+) -> int:
+    """Advance warm-up on realtime bars for AI strategies in ``strategies``.
+
+    Persists lifecycle via ``StrategiesRepository.save_lifecycle`` and mutates
+    the in-memory strategy dicts so downstream Broker sees the updated phase.
+
+    Returns the number of strategies whose lifecycle was persisted.
+    """
+    if catchup or not strategies:
+        return 0
+
+    stamp = _parse_candle_time(candle_time)
+    if stamp is None:
+        return 0
+
+    from brokerai.trading.data.market_calendar import is_forex_open
+
+    open_now = is_forex_open(stamp) if forex_open is None else bool(forex_open)
+    default_days = DEFAULT_WARMUP_TRADING_DAYS
+    if global_default_days is None:
+        try:
+            from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+
+            forex = await AssetSettingsRepository().get("forex")
+            default_days = int(forex.get("default_warmup_trading_days") or DEFAULT_WARMUP_TRADING_DAYS)
+        except Exception:
+            default_days = DEFAULT_WARMUP_TRADING_DAYS
+    else:
+        default_days = max(1, int(global_default_days))
+
+    from brokerai.db.repositories.strategies import StrategiesRepository
+
+    repo = StrategiesRepository()
+    advanced = 0
+    for strategy in strategies:
+        if not is_ai_strategy_doc(strategy):
+            continue
+        if get_execution_phase(strategy) != PHASE_WARMING:
+            continue
+        before_phase = get_execution_phase(strategy)
+        before_days = int((strategy.get("warmup") or {}).get("completed_days") or 0)
+        updated = advance_warmup_on_realtime_bar(
+            strategy,
+            candle_time=stamp,
+            catchup=False,
+            global_default_days=default_days,
+            forex_open=open_now,
+        )
+        after_phase = get_execution_phase(updated)
+        after_days = int((updated.get("warmup") or {}).get("completed_days") or 0)
+        if after_phase == before_phase and after_days == before_days:
+            # Still refresh bars_today / ticker fields when they moved.
+            before_bars = int((strategy.get("warmup") or {}).get("bars_today_et") or 0)
+            after_bars = int((updated.get("warmup") or {}).get("bars_today_et") or 0)
+            if after_bars == before_bars:
+                continue
+        strategy_id = str(strategy.get("id") or "")
+        if not strategy_id:
+            continue
+        saved = await repo.save_lifecycle(
+            strategy_id,
+            {
+                "execution_phase": updated["execution_phase"],
+                "warmup": updated["warmup"],
+            },
+        )
+        if saved:
+            strategy["execution_phase"] = saved.get("execution_phase", updated["execution_phase"])
+            strategy["warmup"] = saved.get("warmup", updated["warmup"])
+            advanced += 1
+    return advanced

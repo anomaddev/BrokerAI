@@ -172,3 +172,19 @@ def test_priority_prefers_live_over_warming_ai():
     )
     assert len(winners) == 1
     assert winners[0][0].strategy_id == "ema1"
+
+
+def test_broker_gates_module_imports():
+    """Regression: gates.py must stay importable (SyntaxError blocks all execution)."""
+    from brokerai.bots.broker import gates
+    from brokerai.trading import broker_execution
+
+    assert callable(gates.apply_execution_gates)
+    assert callable(broker_execution.run_broker_execution)
+
+
+def test_learn_enabled_defaults_true():
+    preset = get_preset("ai_strategy")
+    assert preset is not None
+    params = prepare_params(preset, {"schema_version": 1, "timeframe": "M15"})
+    assert params["ai"]["learn_enabled"] is True

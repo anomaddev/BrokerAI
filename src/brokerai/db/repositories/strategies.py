@@ -176,7 +176,15 @@ def serialize_strategy(doc: dict[str, Any]) -> dict[str, Any]:
     if is_ai_strategy_doc(doc):
         lifecycle = normalize_lifecycle(doc)
         payload["execution_phase"] = lifecycle["execution_phase"]
-        payload["warmup"] = lifecycle["warmup"]
+        warmup = dict(lifecycle["warmup"])
+        # Surface effective target when null so UI can show completed/target.
+        if warmup.get("target_days") is None:
+            try:
+                default_days = int(doc.get("_warmup_default_days") or 5)
+            except (TypeError, ValueError):
+                default_days = 5
+            warmup["target_days"] = max(1, default_days)
+        payload["warmup"] = warmup
         if doc.get("ai_improve"):
             payload["ai_improve"] = doc["ai_improve"]
     return payload
@@ -300,6 +308,16 @@ class StrategiesRepository:
         definition_changed = any(
             value is not None for value in (name, description, params, instrument_selection)
         )
+        warmup_default_days = 5
+        if enabled is True:
+            try:
+                from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+
+                forex = await AssetSettingsRepository().get("forex")
+                warmup_default_days = int(forex.get("default_warmup_trading_days") or 5)
+            except Exception:
+                warmup_default_days = 5
+
         async with session_scope() as session:
             row = await session.get(StrategyRow, strategy_id)
             if not row:
@@ -314,7 +332,22 @@ class StrategiesRepository:
             if description is not None:
                 updates["description"] = description.strip()
             if enabled is not None:
+                was_enabled = bool(existing.get("enabled"))
                 updates["enabled"] = enabled
+                # Re-enable always starts a new warm-up episode — never resume live.
+                if enabled and not was_enabled:
+                    from brokerai.ai_strategy.lifecycle import (
+                        is_ai_strategy_doc,
+                        reset_warmup_episode,
+                    )
+
+                    if is_ai_strategy_doc(existing):
+                        reset = reset_warmup_episode(
+                            {**existing, **updates},
+                            default_warmup_trading_days=warmup_default_days,
+                        )
+                        updates["execution_phase"] = reset["execution_phase"]
+                        updates["warmup"] = reset["warmup"]
 
             if params is not None:
                 preset_id = existing.get("preset_id")

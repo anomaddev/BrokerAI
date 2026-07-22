@@ -37,6 +37,9 @@ _DIRECTIONS = frozenset({"long", "short"})
 
 # Module-level throttle/cache: strategy_scope -> CachedDecision
 _DECISION_CACHE: dict[str, "CachedDecision"] = {}
+# Separate call counters so caps survive cache overwrites (one entry per key).
+# Keys: (cache_key, et_day) for per-symbol; (strategy_scope, et_day) for strategy-day.
+_LLM_CALL_COUNTS: dict[tuple[str, str], int] = {}
 
 
 @dataclass
@@ -50,6 +53,7 @@ class CachedDecision:
 def clear_decision_cache() -> None:
     """Clear the in-process decision cache (tests / process restart semantics)."""
     _DECISION_CACHE.clear()
+    _LLM_CALL_COUNTS.clear()
 
 
 def _et_day(now: datetime | None = None) -> str:
@@ -372,22 +376,10 @@ class ModelSignalRuntime:
         max_per_day = int(ai.get("max_llm_calls_per_day") or 12)
         max_per_symbol = int(ai.get("max_llm_calls_per_symbol_per_day") or 4)
         et_day = _et_day()
+        scope = key.rsplit("|", 1)[0]
         if max_per_day > 0 or max_per_symbol > 0:
-            # Per-symbol: count only this exact key's LLM calls today.
-            symbol_calls = sum(
-                1
-                for k, c in _DECISION_CACHE.items()
-                if k == key and c.decided_at_et_day == et_day and c.llm_called
-            )
-            # Strategy-wide day count: any pair under same strategy/model prefix.
-            scope = key.rsplit("|", 1)[0]
-            strategy_day_calls = sum(
-                1
-                for k, c in _DECISION_CACHE.items()
-                if k.startswith(scope)
-                and c.decided_at_et_day == et_day
-                and c.llm_called
-            )
+            symbol_calls = int(_LLM_CALL_COUNTS.get((key, et_day), 0))
+            strategy_day_calls = int(_LLM_CALL_COUNTS.get((f"{scope}|*", et_day), 0))
             if max_per_symbol > 0 and symbol_calls >= max_per_symbol:
                 return _fail_closed(
                     params,
@@ -497,6 +489,12 @@ class ModelSignalRuntime:
             return _fail_closed(
                 params, reason="llm_error", llm_mode=llm_mode, extra=base_extra
             )
+
+        # Count spend after a successful HTTP call, even if parse fails later.
+        _LLM_CALL_COUNTS[(key, et_day)] = int(_LLM_CALL_COUNTS.get((key, et_day), 0)) + 1
+        _LLM_CALL_COUNTS[(f"{scope}|*", et_day)] = (
+            int(_LLM_CALL_COUNTS.get((f"{scope}|*", et_day), 0)) + 1
+        )
 
         try:
             decision = _parse_decision(raw)

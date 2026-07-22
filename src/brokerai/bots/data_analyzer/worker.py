@@ -131,6 +131,30 @@ class ForexDataAnalystWorker(EphemeralBot[PipelineContext, list[AnalysisResult]]
             log_analysis_result(analysis)
             results.append(analysis)
 
+        # Advance AI Strategy shadow warm-up on realtime closed bars only.
+        try:
+            from brokerai.ai_strategy.lifecycle import advance_ai_strategy_warmups_for_bar
+
+            advanced = await advance_ai_strategy_warmups_for_bar(
+                unit.strategies,
+                candle_time=latest_time,
+                catchup=bool(request.catchup),
+            )
+            if advanced:
+                logger.info(
+                    "Data Analyst — advanced AI Strategy warm-up for %d strateg%s on %s %s",
+                    advanced,
+                    "y" if advanced == 1 else "ies",
+                    unit.pair,
+                    unit.timeframe,
+                )
+        except Exception:
+            logger.exception(
+                "Data Analyst — failed to advance AI Strategy warm-up for %s %s",
+                unit.pair,
+                unit.timeframe,
+            )
+
         return WorkerResult(
             ok=True,
             data=results,

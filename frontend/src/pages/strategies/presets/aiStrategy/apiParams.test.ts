@@ -7,6 +7,7 @@ describe("aiStrategy apiParams", () => {
     const v1 = aiStrategyParamsToV1(DEFAULT_AI_STRATEGY_PARAMS);
     expect(v1.signal.type).toBe("ai_strategy");
     expect(v1.ai?.llm_mode).toBe("off");
+    expect(v1.ai?.learn_enabled).toBe(true);
     expect(v1.ai?.use_daily_report).toBe(true);
     expect(v1.min_candles).toBe(64);
     expect(v1.ai?.max_context_bars).toBe(64);
@@ -15,20 +16,30 @@ describe("aiStrategy apiParams", () => {
     expect(back.timeframe).toBe("M15");
     expect(back.useDailyReport).toBe(true);
     expect(back.llmMode).toBe("off");
+    expect(back.learnEnabled).toBe(true);
     expect(back.maxContextBars).toBe(64);
   });
 
-  it("forces llm_mode off on save even if UI had another mode", () => {
+  it("persists llm_mode, model_id, and learn_enabled from UI", () => {
     const v1 = aiStrategyParamsToV1({
       ...DEFAULT_AI_STRATEGY_PARAMS,
       llmMode: "interval",
+      modelId: "model-abc",
+      learnEnabled: true,
       useWeeklyBrief: false,
       maxContextBars: 120,
       minCandles: 120,
     });
-    expect(v1.ai?.llm_mode).toBe("off");
+    expect(v1.ai?.llm_mode).toBe("interval");
+    expect(v1.ai?.model_id).toBe("model-abc");
+    expect(v1.ai?.learn_enabled).toBe(true);
     expect(v1.ai?.use_weekly_brief).toBe(false);
     expect(v1.ai?.max_context_bars).toBe(120);
     expect(v1.min_candles).toBe(120);
+
+    const back = v1ToAiStrategyParams(v1);
+    expect(back.llmMode).toBe("interval");
+    expect(back.modelId).toBe("model-abc");
+    expect(back.learnEnabled).toBe(true);
   });
 });

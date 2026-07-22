@@ -79,6 +79,18 @@ function executionPhaseLabel(phase: StrategyExecutionPhase): string {
   return "Live";
 }
 
+function warmupProgressLabel(strategy: Strategy): string | null {
+  if (strategy.preset_id !== "ai_strategy") return null;
+  if (strategy.execution_phase !== "warming" && strategy.execution_phase !== "ready") {
+    return null;
+  }
+  const completed = Number(strategy.warmup?.completed_days ?? 0);
+  const targetRaw = strategy.warmup?.target_days;
+  const target =
+    targetRaw == null || Number(targetRaw) <= 0 ? "?" : String(Math.max(1, Number(targetRaw)));
+  return `${completed}/${target} ET days`;
+}
+
 function normalizeStrategies(apiStrategies: Strategy[]): Strategy[] {
   return apiStrategies.map((strategy) => ({
     ...strategy,
@@ -726,8 +738,16 @@ export default function Strategies() {
                           {strategy.execution_phase ? (
                             <span
                               className={`research-tag strategy-phase--${strategy.execution_phase}`}
+                              title={
+                                warmupProgressLabel(strategy)
+                                  ? `Warm-up ${warmupProgressLabel(strategy)}`
+                                  : undefined
+                              }
                             >
                               {executionPhaseLabel(strategy.execution_phase)}
+                              {warmupProgressLabel(strategy)
+                                ? ` · ${warmupProgressLabel(strategy)}`
+                                : ""}
                             </span>
                           ) : null}
                           {strategy.execution_phase === "ready" ? (

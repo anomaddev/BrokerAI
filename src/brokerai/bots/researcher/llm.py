@@ -802,14 +802,17 @@ async def analyze_with_model(
 
     reservation_id: str | None = None
     if not skip_gate:
+        import hashlib
+
         payload_material = repr(messages)[:8000]
+        payload_hash = hashlib.sha256(payload_material.encode("utf-8")).hexdigest()
         cache_key = build_cache_key(
             operation=operation,
             provider_type=model_type,
             model_name=model_name,
             entity_scope=str(ctx.get("strategy_id") or ctx.get("source") or "global"),
             asof_id=str(ctx.get("asof_id") or ctx.get("backtest_run_id") or ctx.get("report_date") or "na"),
-            payload_hash=str(hash(payload_material)),
+            payload_hash=payload_hash,
         )
         # Conservative pre-estimate: unknown pricing uses guard floor.
         estimate, _ = estimate_llm_cost_usd(

@@ -467,3 +467,30 @@ async def run_learning_job(
         logger.exception("Learning job %s failed for strategy=%s", job_id, strategy_id)
         await jobs_repo.mark_failed(job_id, error=str(exc))
         raise
+
+
+async def drain_queued_learning_jobs(
+    *,
+    limit: int = 1,
+    jobs_repo: LearningJobsRepository | None = None,
+) -> dict[str, Any]:
+    """Run up to ``limit`` queued learning jobs (Secretary slow drain).
+
+    Failures on individual jobs are logged; remaining jobs stay queued/failed
+    independently so one bad strategy cannot block the queue forever.
+    """
+    jobs_repo = jobs_repo or LearningJobsRepository()
+    queued = await jobs_repo.list_queued(limit=max(1, min(int(limit), 10)))
+    completed = 0
+    failed = 0
+    for job in queued:
+        job_id = str(job.get("id") or "")
+        if not job_id:
+            continue
+        try:
+            await run_learning_job(job_id, jobs_repo=jobs_repo)
+            completed += 1
+        except Exception:
+            failed += 1
+            logger.exception("drain_queued_learning_jobs: job %s failed", job_id)
+    return {"considered": len(queued), "completed": completed, "failed": failed}
