@@ -18,7 +18,7 @@ DEFAULT_AI_SECTION: dict[str, Any] = {
     "min_llm_interval_minutes": 240,
     "max_llm_calls_per_day": 12,
     "max_llm_calls_per_symbol_per_day": 4,
-    "max_context_bars": 65,
+    "max_context_bars": 200,
     # Default on so daily improve / memory loops work for newly created strategies.
     "learn_enabled": True,
 }
@@ -76,7 +76,7 @@ def validate_ai_section(raw: Any) -> dict[str, Any]:
     out["max_llm_calls_per_symbol_per_day"] = _bound_int(
         "max_llm_calls_per_symbol_per_day", 0, 100, 4
     )
-    max_context_bars = _bound_int("max_context_bars", 15, 500, 65)
+    max_context_bars = _bound_int("max_context_bars", 15, 500, 200)
     if max_context_bars % 5 != 0:
         raise ParamsValidationError(
             "ai.max_context_bars must be a multiple of 5",

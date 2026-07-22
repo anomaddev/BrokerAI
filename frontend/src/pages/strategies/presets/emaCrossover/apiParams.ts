@@ -229,7 +229,7 @@ export function v1ToEmaCrossoverParams(v1: StrategyParamsV1): EmaCrossoverParams
     fastEma,
     slowEma,
     timeframe: normalizeTimeframe(v1),
-    minCandles: roundUpMinCandles(v1.min_candles ?? 63),
+    minCandles: roundUpMinCandles(v1.min_candles ?? 200),
     adxFilter: adx?.type === "adx" ? adx.enabled : true,
     adxPeriod: adx?.type === "adx" ? adx.period : 14,
     adxThreshold: adx?.type === "adx" ? adx.threshold : 25,

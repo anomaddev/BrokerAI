@@ -38,8 +38,8 @@ export const LLM_MODE_OPTIONS: { value: AiLlmMode; label: string }[] = [
 
 export const DEFAULT_AI_STRATEGY_PARAMS: AiStrategyParams = {
   timeframe: "M15",
-  minCandles: 65,
-  maxContextBars: 65,
+  minCandles: 200,
+  maxContextBars: 200,
   useDailyReport: true,
   useWeeklyBrief: true,
   useWeeklyDebrief: true,

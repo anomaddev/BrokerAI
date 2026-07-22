@@ -9,15 +9,15 @@ describe("aiStrategy apiParams", () => {
     expect(v1.ai?.llm_mode).toBe("off");
     expect(v1.ai?.learn_enabled).toBe(true);
     expect(v1.ai?.use_daily_report).toBe(true);
-    expect(v1.min_candles).toBe(65);
-    expect(v1.ai?.max_context_bars).toBe(65);
+    expect(v1.min_candles).toBe(200);
+    expect(v1.ai?.max_context_bars).toBe(200);
 
     const back = v1ToAiStrategyParams(v1);
     expect(back.timeframe).toBe("M15");
     expect(back.useDailyReport).toBe(true);
     expect(back.llmMode).toBe("off");
     expect(back.learnEnabled).toBe(true);
-    expect(back.maxContextBars).toBe(65);
+    expect(back.maxContextBars).toBe(200);
   });
 
   it("snaps lookback to multiples of 5", () => {
