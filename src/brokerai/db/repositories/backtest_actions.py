@@ -78,10 +78,13 @@ class BacktestActionsRepository:
                 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
                 for action in actions:
+                    # Use index_elements (not ON CONSTRAINT): ensure_indexes() creates a
+                    # unique INDEX named uq_backtest_actions_run_sequence; existing DBs
+                    # may lack a matching table CONSTRAINT of that name.
                     stmt = (
                         pg_insert(BacktestActionRow)
                         .values(**_action_values(run_id, action))
-                        .on_conflict_do_nothing(constraint="uq_backtest_actions_run_sequence")
+                        .on_conflict_do_nothing(index_elements=["run_id", "sequence"])
                     )
                     result = await session.execute(stmt)
                     inserted += int(result.rowcount or 0)
