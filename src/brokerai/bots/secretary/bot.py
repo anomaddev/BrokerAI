@@ -103,6 +103,7 @@ class SecretaryBot(Bot):
                 "max_backlog_seen": self._max_backlog_seen,
                 "avg_pipeline_duration_ms": avg_ms,
                 "next_candle_fetches": self._timeline.snapshot_next_fetches(),
+                "analysis_candle_timeframes": self._timeline.snapshot_analysis_timeframes(),
                 "worker_pool": get_worker_pool().status(),
             }
         )

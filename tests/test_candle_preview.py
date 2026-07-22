@@ -80,6 +80,39 @@ async def test_preview_next_candle_watch_returns_m15_symbols():
 
 
 @pytest.mark.asyncio
+async def test_preview_prefers_work_plan_m15_over_htf_h4_on_tie():
+    now = datetime(2026, 7, 22, 12, 0, 0, tzinfo=timezone.utc)
+    close_at = "2026-07-22T16:00:03+00:00"
+    fetches = {"H4": close_at, "M15": close_at}
+    strategies = [({"id": "s1", "timeframe": "M15"}, ["EUR/USD"])]
+
+    with (
+        patch(
+            "brokerai.bots.secretary.candle_preview.load_runnable_forex_strategies",
+            new=AsyncMock(return_value=ForexStrategyLoadResult(strategies)),
+        ),
+        patch(
+            "brokerai.bots.secretary.candle_preview.build_work_plan",
+            return_value=WorkPlan(
+                units=(
+                    WorkUnit(
+                        pair="EUR/USD",
+                        asset_class="forex",
+                        timeframe="M15",
+                        bar_count=100,
+                        strategies=({"id": "s1"},),
+                    ),
+                ),
+                timeframes=("M15",),
+            ),
+        ),
+    ):
+        payload = await preview_next_candle_watch(next_candle_fetches=fetches, now=now)
+
+    assert payload["timeframe"] == "M15"
+
+
+@pytest.mark.asyncio
 async def test_preview_next_candle_watch_uses_cache():
     now = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
     load_mock = AsyncMock(return_value=ForexStrategyLoadResult([({"id": "s1"}, ["EUR/USD"])]))

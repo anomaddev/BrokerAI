@@ -322,6 +322,7 @@ export default function OverallBotStatus() {
       marketServerTime: marketStatus?.server_time,
       now: new Date(now),
       nextCandleFetches: secretary?.next_candle_fetches,
+      analysisCandleTimeframes: secretary?.analysis_candle_timeframes,
     });
   }
 

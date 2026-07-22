@@ -31,6 +31,8 @@ class CandleTimeline:
 
     def __init__(self) -> None:
         self._next_fetch_at: dict[str, datetime] = {}
+        # Primary strategy timeframes only (excludes HTF bias / additional_timeframes).
+        self._analysis_timeframes: tuple[str, ...] = ()
         self._pipeline_idle_reason: str | None = None
         self._pipeline_idle_until: datetime | None = None
 
@@ -47,6 +49,10 @@ class CandleTimeline:
                 if tf:
                     fetches[tf] = next_candle_close_at(now, tf)
         return {tf: when.isoformat() for tf, when in sorted(fetches.items())}
+
+    def snapshot_analysis_timeframes(self) -> list[str]:
+        """Primary analysis TFs for UI 'next candle' (not HTF cache warmups)."""
+        return list(self._analysis_timeframes)
 
     def _schedule_next_fetch(self, timeframe: str, *, now: datetime | None = None) -> datetime:
         when = now or datetime.now(timezone.utc)
@@ -89,8 +95,12 @@ class CandleTimeline:
 
         if result.skip_reason:
             requirements: list[CandleRequirement] = []
+            self._analysis_timeframes = ()
         else:
             requirements, warnings = collect_candle_requirements(result.strategies)
+            self._analysis_timeframes = build_work_plan(
+                result.strategies, asset_class="forex"
+            ).timeframes
 
         all_requirements = list(requirements) + list(watch_requirements)
         for symbol, timeframe, _source, bar_count in service.registered_demand():
@@ -228,6 +238,7 @@ class CandleTimeline:
             return []
 
         work_plan = runtime.build_work_plan(result.strategies)
+        self._analysis_timeframes = work_plan.timeframes
         when = datetime.now(timezone.utc)
         jobs: list[CandleJob] = []
         timeframes: set[str] = set()

@@ -56,3 +56,50 @@ describe("resolveNextActionTooltipExplainer", () => {
     expect(text).toContain("London");
   });
 });
+
+describe("computeNextAction candle preference", () => {
+  it("prefers analysis M15 over H4 when both close at the same time", async () => {
+    const { computeNextAction } = await import("./nextAction");
+    const closeAt = "2026-07-22T12:00:03.000Z";
+    const action = computeNextAction({
+      status: "running",
+      orchestratorRunning: true,
+      researchSettings: null,
+      marketSessions: [],
+      enabledTradingSessions: {
+        sydney: false,
+        tokyo: false,
+        london: true,
+        new_york: true,
+      },
+      marketAvailable: true,
+      now: new Date("2026-07-22T11:50:00.000Z"),
+      nextCandleFetches: { H4: closeAt, M15: closeAt },
+      analysisCandleTimeframes: ["M15"],
+    });
+    expect(action?.kind).toBe("candle_update");
+    expect(action?.timeframe).toBe("M15");
+    expect(action?.label).toBe("Next candle (15m)");
+  });
+
+  it("prefers shorter TF on ties even without analysis list", async () => {
+    const { computeNextAction } = await import("./nextAction");
+    const closeAt = "2026-07-22T12:00:03.000Z";
+    const action = computeNextAction({
+      status: "running",
+      orchestratorRunning: true,
+      researchSettings: null,
+      marketSessions: [],
+      enabledTradingSessions: {
+        sydney: false,
+        tokyo: false,
+        london: true,
+        new_york: true,
+      },
+      marketAvailable: true,
+      now: new Date("2026-07-22T11:50:00.000Z"),
+      nextCandleFetches: { H4: closeAt, M15: closeAt },
+    });
+    expect(action?.timeframe).toBe("M15");
+  });
+});

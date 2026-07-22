@@ -20,6 +20,7 @@ export type BotStatusItem = {
   started_at?: string | null;
   last_error?: string | null;
   next_candle_fetches?: Record<string, string>;
+  analysis_candle_timeframes?: string[];
 };
 
 export function formatBotName(name: string): string {
