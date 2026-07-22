@@ -138,14 +138,26 @@ export default function CandleAnalysisRunsTable({
                   />
                 </label>
               </th>
-              <th scope="col">Pair</th>
-              <th scope="col">Asset</th>
+              <th scope="col" className="col-sticky">
+                Pair
+              </th>
+              <th scope="col" className="col-hide-sm">
+                Asset
+              </th>
               <th scope="col">Strategy</th>
-              <th scope="col">TF</th>
-              <th scope="col">Source</th>
+              <th scope="col" className="col-hide-sm">
+                TF
+              </th>
+              <th scope="col" className="col-hide-sm">
+                Source
+              </th>
               <th scope="col">Direction</th>
-              <th scope="col">Signal</th>
-              <th scope="col">Conf.</th>
+              <th scope="col" className="col-hide-sm">
+                Signal
+              </th>
+              <th scope="col" className="col-hide-sm">
+                Conf.
+              </th>
               <th scope="col">Outcome</th>
             </tr>
           </thead>
@@ -191,7 +203,7 @@ export default function CandleAnalysisRunsTable({
                         />
                       </label>
                     </td>
-                    <td>
+                    <td className="col-sticky">
                       <span className="analysis-pair-cell">
                         <span>{run.pair}</span>
                         {recency !== "historical" ? (
@@ -199,12 +211,12 @@ export default function CandleAnalysisRunsTable({
                         ) : null}
                       </span>
                     </td>
-                    <td className="settings-muted">
+                    <td className="settings-muted col-hide-sm">
                       {strategiesById.get(run.strategy_id)?.asset_class_label ?? "—"}
                     </td>
                     <td>{run.strategy_name}</td>
-                    <td className="settings-muted">{timeframeLabel(run.timeframe)}</td>
-                    <td>
+                    <td className="settings-muted col-hide-sm">{timeframeLabel(run.timeframe)}</td>
+                    <td className="col-hide-sm">
                       <span className={runSourceClassName(run)}>
                         {runSourceLabel(run)}
                       </span>
@@ -214,8 +226,8 @@ export default function CandleAnalysisRunsTable({
                         {directionLabel(run.direction)}
                       </span>
                     </td>
-                    <td>{signalLabel(run)}</td>
-                    <td>{confidencePercent(run.confidence)}</td>
+                    <td className="col-hide-sm">{signalLabel(run)}</td>
+                    <td className="col-hide-sm">{confidencePercent(run.confidence)}</td>
                     <td>
                       <span className={executionOutcomeClassName(run)}>
                         {executionOutcomeLabel(run)}

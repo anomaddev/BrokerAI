@@ -13,6 +13,7 @@ import {
   type Strategy,
 } from "../api/client";
 import ExploreCandleChart from "../components/explore/ExploreCandleChart";
+import MobileSheetAside from "../components/MobileSheetAside";
 import StrategyOverlay from "../components/strategies/StrategyOverlay";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import { decomposeStrategyToLayers } from "../lib/chart/chartOverlayState";
@@ -1163,7 +1164,7 @@ export default function BacktestRunView() {
           )}
         </div>
 
-        <aside className="analysis-run-panel-col backtest-panel-col">
+        <MobileSheetAside className="analysis-run-panel-col backtest-panel-col" fabLabel="Overview">
           <div
             className={`backtest-panel-tabs research-signals-tabs${
               showFeedbackTab ? " backtest-panel-tabs--with-feedback" : ""
@@ -1737,7 +1738,7 @@ export default function BacktestRunView() {
               ) : null}
             </div>
           ) : null}
-        </aside>
+        </MobileSheetAside>
       </div>
 
       {logsExpanded ? (
