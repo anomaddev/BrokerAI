@@ -138,6 +138,23 @@ def test_delete_backtest_run(
     repo.delete_by_id.assert_awaited_once_with("run-1")
 
 
+def test_slice_candles_around_centers_window() -> None:
+    from brokerai.web.routes.backtest_runs import slice_candles_around
+
+    candles = [
+        {"time": f"2024-01-01T{hour:02d}:00:00+00:00", "close": float(hour)}
+        for hour in range(24)
+    ]
+    window = slice_candles_around(
+        candles,
+        around_iso="2024-01-01T12:00:00+00:00",
+        limit=6,
+    )
+    assert len(window) == 6
+    assert window[0]["time"].startswith("2024-01-01T09:")
+    assert window[-1]["time"].startswith("2024-01-01T14:")
+
+
 @patch("brokerai.web.routes.backtest_runs.CandleCache")
 @patch("brokerai.web.routes.backtest_runs.BacktestRunsRepository")
 def test_get_backtest_run_candles_reads_cache(
@@ -181,6 +198,60 @@ def test_get_backtest_run_candles_reads_cache(
     kwargs = cache.read_candles.await_args.kwargs
     assert kwargs["since"] == "2026-01-18T00:00:00+00:00"
     assert kwargs["until"] == "2026-07-19T00:00:00+00:00"
+
+
+@patch("brokerai.web.routes.backtest_runs.CandleCache")
+@patch("brokerai.web.routes.backtest_runs.BacktestRunsRepository")
+def test_get_backtest_run_candles_around_centers_truncated_window(
+    mock_repo_cls,
+    mock_cache_cls,
+    client: TestClient,
+) -> None:
+    from brokerai.web.routes import backtest_runs as routes
+
+    repo = AsyncMock()
+    mock_repo_cls.return_value = repo
+    repo.get_by_id.return_value = {
+        "id": "run-1",
+        "instrument": "USD/JPY",
+        "instruments": ["USD/JPY"],
+        "timeframe": "M15",
+        "period": "2y",
+        "period_start": "2024-01-01T00:00:00+00:00",
+        "period_end": "2026-01-01T00:00:00+00:00",
+        "status": "completed",
+    }
+
+    original_limit = routes.BACKTEST_CANDLE_LIMIT_MAX
+    routes.BACKTEST_CANDLE_LIMIT_MAX = 10
+    try:
+        cache = AsyncMock()
+        mock_cache_cls.return_value = cache
+        cache.read_candles.return_value = [
+            {
+                "time": f"2024-06-01T{hour:02d}:00:00.000000000Z",
+                "open": 150.0,
+                "high": 150.1,
+                "low": 149.9,
+                "close": 150.0,
+                "volume": 1,
+            }
+            for hour in range(24)
+        ]
+
+        response = client.get(
+            "/api/backtest-runs/run-1/candles",
+            params={"around": "2024-06-01T12:00:00+00:00"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["candles"]) == 10
+        assert body["around"] == "2024-06-01T12:00:00+00:00"
+        times = [row["time"] for row in body["candles"]]
+        assert any("T12:" in time or "T11:" in time for time in times)
+        assert times[0] < times[-1]
+    finally:
+        routes.BACKTEST_CANDLE_LIMIT_MAX = original_limit
 
 
 @patch("brokerai.web.routes.strategies.BacktestRunsRepository")

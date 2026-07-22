@@ -2,6 +2,10 @@
   "mcpServers": {
     "supabase": {
       "url": "http://127.0.0.1:3000/api/mcp"
+    },
+    "safari": {
+      "command": "/Applications/Safari Technology Preview.app/Contents/MacOS/safaridriver",
+      "args": ["--mcp"]
     }
   }
 }

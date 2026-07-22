@@ -3,9 +3,11 @@ import type { CandleBar } from "../../api/client";
 import {
   FOCUS_VISIBLE_BARS,
   buildCenteredBarFocusWindow,
+  buildSpanBarFocusWindow,
   chartFocusVisibleLogicalRange,
   extendCandlesForWarmup,
   findCandleIndexNearUnix,
+  focusWindowVisibleBars,
   sliceCandlesAroundUnix,
 } from "./chartFocusWindow";
 
@@ -116,5 +118,26 @@ describe("chartFocusVisibleLogicalRange", () => {
     expect(logical).not.toBeNull();
     expect(logical!.to - logical!.from).toBe(80);
     expect(Math.round((logical!.from + logical!.to) / 2)).toBe(anchorIdx);
+  });
+});
+
+describe("buildSpanBarFocusWindow", () => {
+  it("spans from→to with padding and at least the default visible bars", () => {
+    const from = "2026-07-20T12:00:00.000Z";
+    const to = "2026-07-20T15:00:00.000Z";
+    const fromMs = Date.parse(from);
+    const window = buildSpanBarFocusWindow({
+      fromIso: from,
+      toIso: to,
+      timeframe: "M15",
+      displaySinceMs: fromMs - 7 * 86_400_000,
+      displayUntilMs: fromMs + 86_400_000,
+      padBars: 8,
+    });
+    expect(window).not.toBeNull();
+    const bars = focusWindowVisibleBars(window!, "M15");
+    expect(bars).toBeGreaterThanOrEqual(FOCUS_VISIBLE_BARS);
+    expect(window!.visibleFromTime).toBeLessThan(Math.floor(fromMs / 1000));
+    expect(window!.visibleToTime).toBeGreaterThan(Math.floor(Date.parse(to) / 1000));
   });
 });

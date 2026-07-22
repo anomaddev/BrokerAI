@@ -721,10 +721,14 @@ export const api = {
   getBacktestRun: (runId: string) =>
     request<BacktestRun>(`/api/backtest-runs/${encodeURIComponent(runId)}`),
 
-  getBacktestRunCandles: (runId: string) =>
-    request<CandlesResponse>(
-      `/api/backtest-runs/${encodeURIComponent(runId)}/candles`,
-    ),
+  getBacktestRunCandles: (runId: string, params?: { around?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.around) search.set("around", params.around);
+    const query = search.toString();
+    return request<CandlesResponse>(
+      `/api/backtest-runs/${encodeURIComponent(runId)}/candles${query ? `?${query}` : ""}`,
+    );
+  },
 
   startBacktestRun: (runId: string) =>
     request<BacktestRun>(`/api/backtest-runs/${encodeURIComponent(runId)}/start`, {

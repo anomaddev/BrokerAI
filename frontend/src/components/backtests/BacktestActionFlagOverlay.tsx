@@ -23,6 +23,9 @@ type BacktestActionFlagOverlayProps = {
   paneRef: RefObject<HTMLDivElement | null>;
   candles: ChartCandle[];
   markers: BacktestChartMarker[];
+  /** Sequences to highlight (single action or full trade group). */
+  selectedSequences?: number[] | null;
+  /** @deprecated Use ``selectedSequences``. */
   selectedSequence?: number | null;
   chartReady: boolean;
   layoutRevision: number;
@@ -36,15 +39,27 @@ function candleAnchorPrice(
   role: BacktestChartMarker["role"],
 ): number | null {
   if (!candle) return null;
-  if (role === "entry") return direction === "long" ? candle.low : candle.high;
+  if (role === "entry" || role === "signal") return direction === "long" ? candle.low : candle.high;
   if (role === "exit") return direction === "long" ? candle.high : candle.low;
   return direction === "long" ? candle.low : candle.high;
 }
 
 function roleClass(role: BacktestChartMarker["role"], direction: "long" | "short"): string {
   if (role === "skipped") return "skipped";
+  if (role === "signal") return direction === "long" ? "signal-long" : "signal-short";
   if (role === "entry") return direction === "long" ? "entry-long" : "entry-short";
   return direction === "long" ? "exit-long" : "exit-short";
+}
+
+function resolveSelectedSet(
+  selectedSequences: number[] | null | undefined,
+  selectedSequence: number | null | undefined,
+): Set<number> {
+  if (selectedSequences != null && selectedSequences.length > 0) {
+    return new Set(selectedSequences);
+  }
+  if (selectedSequence != null) return new Set([selectedSequence]);
+  return new Set();
 }
 
 export function computeBacktestActionFlagLayouts(
@@ -52,10 +67,12 @@ export function computeBacktestActionFlagLayouts(
   series: ISeriesApi<"Candlestick">,
   candles: ChartCandle[],
   markers: BacktestChartMarker[],
-  selectedSequence: number | null | undefined,
+  selectedSequences: number[] | null | undefined,
+  selectedSequence?: number | null,
 ): Layout[] {
   if (markers.length === 0 || candles.length === 0) return [];
   const candleByTime = new Map(candles.map((candle) => [candle.time, candle]));
+  const selected = resolveSelectedSet(selectedSequences, selectedSequence);
   const layouts: Layout[] = [];
 
   for (const marker of markers) {
@@ -76,7 +93,7 @@ export function computeBacktestActionFlagLayouts(
       role: marker.role,
       direction: marker.direction,
       label: marker.label,
-      active: selectedSequence != null && marker.sequence === selectedSequence,
+      active: selected.has(marker.sequence),
     });
   }
 
@@ -89,6 +106,7 @@ export default function BacktestActionFlagOverlay({
   paneRef,
   candles,
   markers,
+  selectedSequences = null,
   selectedSequence = null,
   chartReady,
   layoutRevision,
@@ -114,6 +132,7 @@ export default function BacktestActionFlagOverlay({
             series,
             candles,
             markers,
+            selectedSequences,
             selectedSequence,
           ),
         );
@@ -141,6 +160,7 @@ export default function BacktestActionFlagOverlay({
     paneRef,
     candles,
     markers,
+    selectedSequences,
     selectedSequence,
     chartReady,
     layoutRevision,

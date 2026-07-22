@@ -186,6 +186,69 @@ export function buildCenteredBarFocusWindow(options: {
 }
 
 /**
+ * Build a focus window that keeps ``fromIso``…``toIso`` visible with bar padding.
+ *
+ * Used when selecting a trade group so entry and exit both fit in the viewport.
+ * Falls back to a centered window on ``fromIso`` when the end time is missing/invalid.
+ */
+export function buildSpanBarFocusWindow(options: {
+  fromIso: string;
+  toIso: string;
+  timeframe: Timeframe;
+  displaySinceMs: number;
+  displayUntilMs: number;
+  padBars?: number;
+  minVisibleBars?: number;
+}): ChartFocusWindow | null {
+  const fromMs = parseInstant(options.fromIso);
+  const toMs = parseInstant(options.toIso);
+  if (fromMs == null) return null;
+  if (toMs == null || toMs < fromMs) {
+    return buildCenteredBarFocusWindow({
+      anchorIso: options.fromIso,
+      timeframe: options.timeframe,
+      displaySinceMs: options.displaySinceMs,
+      displayUntilMs: options.displayUntilMs,
+      visibleBars: options.minVisibleBars,
+    });
+  }
+  if (!Number.isFinite(options.displaySinceMs) || !Number.isFinite(options.displayUntilMs)) {
+    return null;
+  }
+
+  const barMs = timeframeToMs(options.timeframe);
+  const padBars = Math.max(4, options.padBars ?? 8);
+  const minVisibleBars = Math.max(10, options.minVisibleBars ?? FOCUS_VISIBLE_BARS);
+  // Wall-clock span in bars (exclusive of pads). Avoid +1 here — pads restore the
+  // target visible count without an off-by-one when converting through unix seconds.
+  const spanBars = Math.max(1, Math.round((toMs - fromMs) / barMs));
+  const totalBars = Math.max(minVisibleBars, spanBars + padBars * 2);
+  const extra = totalBars - spanBars;
+  const padBefore = Math.floor(extra / 2);
+  const padAfter = extra - padBefore;
+
+  return {
+    since: new Date(options.displaySinceMs).toISOString(),
+    until: new Date(options.displayUntilMs).toISOString(),
+    displaySince: new Date(options.displaySinceMs).toISOString(),
+    displayUntil: new Date(options.displayUntilMs).toISOString(),
+    visibleFromTime: Math.floor((fromMs - padBefore * barMs) / 1000),
+    visibleToTime: Math.floor((toMs + padAfter * barMs) / 1000),
+  };
+}
+
+/** Visible bar count implied by a focus window for the given timeframe. */
+export function focusWindowVisibleBars(
+  focusWindow: Pick<ChartFocusWindow, "visibleFromTime" | "visibleToTime">,
+  timeframe: Timeframe,
+): number {
+  const barMs = timeframeToMs(timeframe);
+  if (barMs <= 0) return FOCUS_VISIBLE_BARS;
+  const spanSec = Math.max(0, focusWindow.visibleToTime - focusWindow.visibleFromTime);
+  return Math.max(10, Math.round((spanSec * 1000) / barMs));
+}
+
+/**
  * Logical range centered on the bar nearest the focus window midpoint.
  *
  * Prefer this over ``setVisibleRange`` so the viewport always shows a fixed
