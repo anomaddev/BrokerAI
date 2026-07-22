@@ -12,8 +12,10 @@ export type AiStrategyParams = {
   useDailyReport: boolean;
   useWeeklyBrief: boolean;
   useWeeklyDebrief: boolean;
-  /** Bound model id from Settings → Models (null until selected). */
+  /** Bound API source id from Settings → Models (null until selected). */
   modelId: string | null;
+  /** Catalog model name from the selected source (null until selected). */
+  modelName: string | null;
   llmMode: AiLlmMode;
   /** Outcome → memory digest learning + daily improve eligibility. */
   learnEnabled: boolean;
@@ -23,8 +25,9 @@ export type AiStrategyParams = {
   minConfidence: number;
 };
 
-export const AI_LOOKBACK_MIN = 16;
+export const AI_LOOKBACK_MIN = 15;
 export const AI_LOOKBACK_MAX = 500;
+export const AI_LOOKBACK_STEP = 5;
 
 export const LLM_MODE_OPTIONS: { value: AiLlmMode; label: string }[] = [
   { value: "off", label: "Off" },
@@ -35,12 +38,13 @@ export const LLM_MODE_OPTIONS: { value: AiLlmMode; label: string }[] = [
 
 export const DEFAULT_AI_STRATEGY_PARAMS: AiStrategyParams = {
   timeframe: "M15",
-  minCandles: 64,
-  maxContextBars: 64,
+  minCandles: 65,
+  maxContextBars: 65,
   useDailyReport: true,
   useWeeklyBrief: true,
   useWeeklyDebrief: true,
   modelId: null,
+  modelName: null,
   llmMode: "off",
   learnEnabled: true,
   sessions: ["London", "NY"],

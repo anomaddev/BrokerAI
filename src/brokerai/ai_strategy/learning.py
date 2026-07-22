@@ -369,7 +369,10 @@ async def run_learning_job(
         source = await models_repo.find_enabled_by_id(str(model_id))
         if source is None:
             raise ValueError(f"model missing or disabled: {model_id}")
-        bound = bind_source_model(source)
+        chosen_name = ai.get("model_name")
+        bound = bind_source_model(
+            source, str(chosen_name).strip() if chosen_name else None
+        )
         model_type = str(bound.get("type") or "")
         base_url = str(bound.get("base_url") or "")
         model_name = str(bound.get("model_name") or "")

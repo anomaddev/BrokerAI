@@ -7,6 +7,7 @@ import {
 import {
   AI_LOOKBACK_MAX,
   AI_LOOKBACK_MIN,
+  AI_LOOKBACK_STEP,
   DEFAULT_AI_STRATEGY_PARAMS,
   type AiLlmMode,
   type AiStrategyParams,
@@ -21,8 +22,10 @@ function normalizeTimeframe(v1: StrategyParamsV1): Timeframe {
 
 function clampLookback(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
-  const rounded = Math.round(value);
-  return Math.min(AI_LOOKBACK_MAX, Math.max(AI_LOOKBACK_MIN, rounded));
+  const snapped =
+    AI_LOOKBACK_MIN +
+    Math.round((Math.round(value) - AI_LOOKBACK_MIN) / AI_LOOKBACK_STEP) * AI_LOOKBACK_STEP;
+  return Math.min(AI_LOOKBACK_MAX, Math.max(AI_LOOKBACK_MIN, snapped));
 }
 
 function normalizeLlmMode(raw: unknown): AiLlmMode {
@@ -79,6 +82,7 @@ export function aiStrategyParamsToV1(params: AiStrategyParams): StrategyParamsV1
     },
     ai: {
       model_id: params.modelId?.trim() || null,
+      model_name: params.modelName?.trim() || null,
       use_daily_report: params.useDailyReport,
       use_weekly_brief: params.useWeeklyBrief,
       use_weekly_debrief: params.useWeeklyDebrief,
@@ -106,6 +110,9 @@ export function v1ToAiStrategyParams(v1: StrategyParamsV1): AiStrategyParams {
   const modelRaw = ai?.model_id;
   const modelId =
     typeof modelRaw === "string" && modelRaw.trim() ? modelRaw.trim() : null;
+  const modelNameRaw = ai?.model_name;
+  const modelName =
+    typeof modelNameRaw === "string" && modelNameRaw.trim() ? modelNameRaw.trim() : null;
 
   return {
     timeframe: normalizeTimeframe(v1),
@@ -115,6 +122,7 @@ export function v1ToAiStrategyParams(v1: StrategyParamsV1): AiStrategyParams {
     useWeeklyBrief: ai?.use_weekly_brief ?? DEFAULT_AI_STRATEGY_PARAMS.useWeeklyBrief,
     useWeeklyDebrief: ai?.use_weekly_debrief ?? DEFAULT_AI_STRATEGY_PARAMS.useWeeklyDebrief,
     modelId,
+    modelName,
     llmMode: normalizeLlmMode(ai?.llm_mode),
     learnEnabled: ai?.learn_enabled ?? DEFAULT_AI_STRATEGY_PARAMS.learnEnabled,
     sessions:

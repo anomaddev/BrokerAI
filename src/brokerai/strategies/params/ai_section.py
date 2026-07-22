@@ -10,6 +10,7 @@ LLM_MODES = frozenset({"off", "on_signal_change", "interval", "manual"})
 
 DEFAULT_AI_SECTION: dict[str, Any] = {
     "model_id": None,
+    "model_name": None,
     "use_daily_report": True,
     "use_weekly_brief": True,
     "use_weekly_debrief": True,
@@ -17,7 +18,7 @@ DEFAULT_AI_SECTION: dict[str, Any] = {
     "min_llm_interval_minutes": 240,
     "max_llm_calls_per_day": 12,
     "max_llm_calls_per_symbol_per_day": 4,
-    "max_context_bars": 64,
+    "max_context_bars": 65,
     # Default on so daily improve / memory loops work for newly created strategies.
     "learn_enabled": True,
 }
@@ -33,6 +34,17 @@ def validate_ai_section(raw: Any) -> dict[str, Any]:
         out["model_id"] = None
     else:
         out["model_id"] = str(model_id).strip() or None
+
+    model_name = data.get("model_name", out["model_name"])
+    if model_name is None or model_name == "":
+        out["model_name"] = None
+    elif isinstance(model_name, str):
+        out["model_name"] = model_name.strip() or None
+    else:
+        raise ParamsValidationError(
+            "ai.model_name must be a string or null",
+            field="ai.model_name",
+        )
 
     for flag in ("use_daily_report", "use_weekly_brief", "use_weekly_debrief", "learn_enabled"):
         if flag in data:
@@ -64,7 +76,13 @@ def validate_ai_section(raw: Any) -> dict[str, Any]:
     out["max_llm_calls_per_symbol_per_day"] = _bound_int(
         "max_llm_calls_per_symbol_per_day", 0, 100, 4
     )
-    out["max_context_bars"] = _bound_int("max_context_bars", 16, 500, 64)
+    max_context_bars = _bound_int("max_context_bars", 15, 500, 65)
+    if max_context_bars % 5 != 0:
+        raise ParamsValidationError(
+            "ai.max_context_bars must be a multiple of 5",
+            field="ai.max_context_bars",
+        )
+    out["max_context_bars"] = max_context_bars
     return out
 
 

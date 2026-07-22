@@ -182,6 +182,8 @@ export type AiStrategySignalSpec = {
 
 export type AiSectionSpec = {
   model_id?: string | null;
+  /** Provider catalog model id/name bound to model_id (Settings → Models source). */
+  model_name?: string | null;
   use_daily_report?: boolean;
   use_weekly_brief?: boolean;
   use_weekly_debrief?: boolean;

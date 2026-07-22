@@ -40,11 +40,11 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
   },
 ];
 
-/** Presets shown in the Build Strategy overlay (Custom always first). */
+/** Presets shown in the Build Strategy overlay (AI Strategy first). */
 export function getBuildStrategyPresets(): StrategyPreset[] {
-  const custom = STRATEGY_PRESETS.find((p) => p.id === "custom");
-  const rest = STRATEGY_PRESETS.filter((p) => p.id !== "custom");
-  return custom ? [custom, ...rest] : [...STRATEGY_PRESETS];
+  const ai = STRATEGY_PRESETS.find((p) => p.id === "ai_strategy");
+  const rest = STRATEGY_PRESETS.filter((p) => p.id !== "ai_strategy");
+  return ai ? [ai, ...rest] : [...STRATEGY_PRESETS];
 }
 
 export function getPresetById(id: string): StrategyPreset | undefined {

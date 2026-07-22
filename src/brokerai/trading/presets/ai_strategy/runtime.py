@@ -244,7 +244,7 @@ def _build_messages(
     guidance: dict[str, Any] | None,
     digest: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
-    max_bars = int(ai.get("max_context_bars") or 64)
+    max_bars = int(ai.get("max_context_bars") or 65)
     summary = _candle_summary(candles, max_bars=max_bars)
     last = summary[-1] if summary else {}
     system = (
@@ -410,7 +410,10 @@ class ModelSignalRuntime:
                 extra=base_extra,
             )
 
-        bound = bind_source_model(source)
+        chosen_name = ai.get("model_name")
+        bound = bind_source_model(
+            source, str(chosen_name).strip() if chosen_name else None
+        )
         model_type = str(bound.get("type") or "")
         base_url = str(bound.get("base_url") or "")
         model_name = str(bound.get("model_name") or "")
