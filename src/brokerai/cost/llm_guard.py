@@ -181,6 +181,13 @@ async def should_call_llm(
         if estimate <= 0:
             estimate = float(settings.get("unknown_model_reserve_usd") or DEFAULT_UNKNOWN_MODEL_RESERVE_USD)
 
+        # Drop expired holds so a crashed caller cannot block the same cache_key
+        # (or inflate reserved_usd) until an unrelated reclaim job runs.
+        try:
+            await reclaim_expired_reservations(now=stamp)
+        except Exception:
+            logger.debug("Expired LLM reservation reclaim failed", exc_info=True)
+
         async with session_scope() as session:
             existing = (
                 await session.execute(

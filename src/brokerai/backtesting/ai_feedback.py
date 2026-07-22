@@ -1120,6 +1120,58 @@ async def mark_ai_feedback_running(
     return await BacktestRunsRepository().update_ai_feedback(run_id, feedback)
 
 
+async def claim_ai_feedback_run(
+    run_id: str,
+    *,
+    model_id: str,
+    model_name: str,
+    reasoning_effort: str,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Atomically claim feedback for a completed run.
+
+    Returns ``(run, claimed)``. When ``claimed`` is False another drain/worker
+    already owns or finished feedback — caller must not call the LLM again.
+    """
+    from brokerai.db.pg.client import session_scope
+    from brokerai.db.pg.models import BacktestRunRow
+    from brokerai.db.repositories.backtest_runs import (
+        BACKTEST_RUN_STATUS_COMPLETED,
+        serialize_backtest_run,
+        _sync_row_columns,
+    )
+
+    async with session_scope() as session:
+        row = await session.get(BacktestRunRow, run_id, with_for_update=True)
+        if row is None:
+            return None, False
+        doc = dict(row.doc)
+        if str(doc.get("status") or row.status) != BACKTEST_RUN_STATUS_COMPLETED:
+            return serialize_backtest_run(doc, row=row), False
+        existing = normalize_ai_feedback(doc.get("ai_feedback"))
+        if existing and existing.get("status") in {
+            AI_FEEDBACK_STATUS_RUNNING,
+            AI_FEEDBACK_STATUS_COMPLETED,
+        }:
+            return serialize_backtest_run(doc, row=row), False
+        feedback = {
+            "status": AI_FEEDBACK_STATUS_RUNNING,
+            "model_id": model_id,
+            "model_name": model_name,
+            "reasoning_effort": reasoning_effort,
+            "markdown": None,
+            "suggestions": [],
+            "memory_notes": [],
+            "error": None,
+            "started_at": _now_iso(),
+            "finished_at": None,
+            "usage": None,
+        }
+        doc["ai_feedback"] = normalize_ai_feedback(feedback)
+        row.doc = doc
+        _sync_row_columns(row, doc)
+        return serialize_backtest_run(doc, row=row), True
+
+
 async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
     """Build context, call the configured model, and persist ``ai_feedback``.
 
@@ -1149,12 +1201,15 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
     resolved_name = str(bound.get("model_name") or model_name)
 
     started_at = _now_iso()
-    await mark_ai_feedback_running(
+    claimed_run, claimed = await claim_ai_feedback_run(
         run_id,
         model_id=str(model_id),
         model_name=resolved_name,
         reasoning_effort=str(effort),
     )
+    if not claimed:
+        # Another API/secretary drain (or auto-analyze) owns this feedback.
+        return claimed_run or {"id": run_id}
 
     try:
         # Prefer raw doc so origin / cadence / loop_mode metadata is available.
@@ -1365,8 +1420,18 @@ async def maybe_auto_analyze_backtest(run_id: str) -> None:
             return
         if not ai_feedback_settings_ready(settings):
             return
-        run = await BacktestRunsRepository().get_by_id(run_id)
+        # Prefer raw doc so origin is available for startup skip.
+        runs_repo = BacktestRunsRepository()
+        run = await runs_repo.get_raw_doc(run_id)
+        if run is None:
+            run = await runs_repo.get_by_id(run_id)
         if run is None or run.get("status") != BACKTEST_RUN_STATUS_COMPLETED:
+            return
+        # Create-time startup runs feedback synchronously in the drain loop.
+        # Auto-analyze would race it and surface LLM budget ``in_flight`` errors.
+        from brokerai.ai_strategy.startup import ORIGIN_AI_STRATEGY_STARTUP
+
+        if str(run.get("origin") or "") == ORIGIN_AI_STRATEGY_STARTUP:
             return
         existing = normalize_ai_feedback(
             run.get("ai_feedback") if isinstance(run.get("ai_feedback"), dict) else None

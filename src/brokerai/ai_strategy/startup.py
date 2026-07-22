@@ -771,35 +771,121 @@ async def _loop_phase(job: dict[str, Any]) -> dict[str, Any]:
                 str(job["id"]), error=f"startup backtest {status}: {current_run_id}"
             ) or job
         if status == BACKTEST_RUN_STATUS_COMPLETED:
-            await jobs_repo.patch_doc(
-                str(job["id"]),
-                {
-                    **_progress_fields(
-                        {**job, "phase": STARTUP_PHASE_LOOPING},
-                        status_message=(
-                            f"{loop_label} — writing "
-                            f"{'pattern' if mode == LOOP_MODE_EXPLORE else 'trade'} "
-                            "lessons to memory"
-                        ),
-                    ),
-                },
+            from brokerai.backtesting.ai_feedback import (
+                AI_FEEDBACK_STATUS_COMPLETED,
+                AI_FEEDBACK_STATUS_FAILED,
+                AI_FEEDBACK_STATUS_RUNNING,
+                normalize_ai_feedback,
+                run_backtest_ai_feedback,
             )
-            # Synchronous memory feedback for this loop.
-            try:
-                from brokerai.backtesting.ai_feedback import run_backtest_ai_feedback
 
-                await run_backtest_ai_feedback(str(current_run_id))
-            except Exception as exc:
-                logger.exception(
-                    "Startup memory feedback failed run=%s strategy=%s",
-                    current_run_id,
-                    strategy_id,
+            feedback = normalize_ai_feedback(
+                run.get("ai_feedback") if isinstance(run.get("ai_feedback"), dict) else None
+            )
+            fb_status = str((feedback or {}).get("status") or "")
+
+            # Another drain may already own / have finished memory feedback.
+            if fb_status == AI_FEEDBACK_STATUS_RUNNING:
+                return (
+                    await jobs_repo.patch_doc(
+                        str(job["id"]),
+                        {
+                            **_progress_fields(
+                                {**job, "phase": STARTUP_PHASE_LOOPING},
+                                status_message=(
+                                    f"{loop_label} — waiting on memory feedback "
+                                    "(another LLM call is in flight)"
+                                ),
+                            ),
+                        },
+                    )
+                    or job
                 )
-                # Soft-fail feedback: still count the loop so startup can finish.
+
+            if fb_status not in {AI_FEEDBACK_STATUS_COMPLETED, AI_FEEDBACK_STATUS_FAILED}:
                 await jobs_repo.patch_doc(
                     str(job["id"]),
-                    {"last_feedback_error": str(exc)[:1000]},
+                    {
+                        **_progress_fields(
+                            {**job, "phase": STARTUP_PHASE_LOOPING},
+                            status_message=(
+                                f"{loop_label} — writing "
+                                f"{'pattern' if mode == LOOP_MODE_EXPLORE else 'trade'} "
+                                "lessons to memory"
+                            ),
+                        ),
+                    },
                 )
+                try:
+                    await run_backtest_ai_feedback(str(current_run_id))
+                except LlmBudgetExceeded as exc:
+                    reason = str(getattr(exc, "reason", "") or exc)
+                    if reason == "in_flight" or "in_flight" in reason.lower():
+                        logger.info(
+                            "Startup feedback waiting on LLM in_flight run=%s",
+                            current_run_id,
+                        )
+                        return (
+                            await jobs_repo.patch_doc(
+                                str(job["id"]),
+                                {
+                                    "last_feedback_error": f"budget_exceeded: {reason}",
+                                    **_progress_fields(
+                                        {**job, "phase": STARTUP_PHASE_LOOPING},
+                                        status_message=(
+                                            f"{loop_label} — memory feedback paused "
+                                            "(LLM in flight); retrying soon"
+                                        ),
+                                    ),
+                                },
+                            )
+                            or job
+                        )
+                    logger.exception(
+                        "Startup memory feedback budget denied run=%s strategy=%s",
+                        current_run_id,
+                        strategy_id,
+                    )
+                    await jobs_repo.patch_doc(
+                        str(job["id"]),
+                        {"last_feedback_error": f"budget_exceeded: {reason}"[:1000]},
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Startup memory feedback failed run=%s strategy=%s",
+                        current_run_id,
+                        strategy_id,
+                    )
+                    # Soft-fail feedback: still count the loop so startup can finish.
+                    await jobs_repo.patch_doc(
+                        str(job["id"]),
+                        {"last_feedback_error": str(exc)[:1000]},
+                    )
+
+                # Re-check: peer drain may still own the LLM call.
+                refreshed = await runs_repo.get_by_id(str(current_run_id))
+                feedback_after = normalize_ai_feedback(
+                    refreshed.get("ai_feedback")
+                    if isinstance((refreshed or {}).get("ai_feedback"), dict)
+                    else None
+                )
+                after_status = str((feedback_after or {}).get("status") or "")
+                if after_status == AI_FEEDBACK_STATUS_RUNNING:
+                    return (
+                        await jobs_repo.patch_doc(
+                            str(job["id"]),
+                            {
+                                **_progress_fields(
+                                    {**job, "phase": STARTUP_PHASE_LOOPING},
+                                    status_message=(
+                                        f"{loop_label} — waiting on memory feedback"
+                                    ),
+                                ),
+                            },
+                        )
+                        or job
+                    )
+
             next_index = loop_index + 1
             patched = await jobs_repo.advance_loop_after_run(
                 str(job["id"]),

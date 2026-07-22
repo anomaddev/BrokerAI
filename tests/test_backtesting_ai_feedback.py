@@ -275,6 +275,12 @@ async def test_maybe_auto_analyze_respects_toggles():
         ) as mock_runs_cls:
             mock_runs = AsyncMock()
             mock_runs_cls.return_value = mock_runs
+            mock_runs.get_raw_doc.return_value = {
+                "id": "r1",
+                "status": "completed",
+                "ai_feedback": None,
+                "origin": None,
+            }
             mock_runs.get_by_id.return_value = {
                 "id": "r1",
                 "status": "completed",
@@ -282,6 +288,40 @@ async def test_maybe_auto_analyze_respects_toggles():
             }
             await maybe_auto_analyze_backtest("r1")
             mock_begin.assert_awaited_once_with("r1")
+
+
+@pytest.mark.asyncio
+async def test_maybe_auto_analyze_skips_startup_origin():
+    with (
+        patch(
+            "brokerai.backtesting.ai_feedback.BacktestSettingsRepository"
+        ) as mock_settings_cls,
+        patch(
+            "brokerai.backtesting.ai_feedback.begin_ai_feedback_job",
+            new_callable=AsyncMock,
+        ) as mock_begin,
+        patch(
+            "brokerai.backtesting.ai_feedback.BacktestRunsRepository"
+        ) as mock_runs_cls,
+    ):
+        mock_settings = AsyncMock()
+        mock_settings_cls.return_value = mock_settings
+        mock_settings.get.return_value = {
+            "ai_feedback_enabled": True,
+            "ai_feedback_auto_on_complete": True,
+            "ai_feedback_model_id": "m1",
+            "ai_feedback_model_name": "gpt",
+        }
+        mock_runs = AsyncMock()
+        mock_runs_cls.return_value = mock_runs
+        mock_runs.get_raw_doc.return_value = {
+            "id": "r-startup",
+            "status": "completed",
+            "origin": "ai_strategy_startup",
+            "ai_feedback": None,
+        }
+        await maybe_auto_analyze_backtest("r-startup")
+        mock_begin.assert_not_awaited()
 
 
 def test_context_json_roundtrip_for_messages():
