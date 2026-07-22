@@ -5,8 +5,10 @@ import { ROUTES } from "../../lib/routes";
 import { clearBacktestAiDraft, loadBacktestAiDraft } from "../../lib/backtests/applyAiSuggestions";
 import EmaCrossoverBuilder from "./presets/emaCrossover/EmaCrossoverBuilder";
 import CustomBuilder from "./presets/custom/CustomBuilder";
+import AiStrategyBuilder from "./presets/aiStrategy/AiStrategyBuilder";
 import { v1ToEmaCrossoverParams } from "./presets/emaCrossover/apiParams";
 import { v1ToCustomBuilderParams } from "./presets/custom/defaults";
+import { v1ToAiStrategyParams } from "./presets/aiStrategy/apiParams";
 
 export default function StrategyEditPage() {
   const { id } = useParams<{ id: string }>();
@@ -89,6 +91,19 @@ export default function StrategyEditPage() {
         <CustomBuilder
           {...commonProps}
           initialParams={v1ToCustomBuilderParams(params)}
+          initialParamsV1={params}
+        />
+      </>
+    );
+  }
+
+  if (strategy.preset_id === "ai_strategy" && params) {
+    return (
+      <>
+        {banner}
+        <AiStrategyBuilder
+          {...commonProps}
+          initialParams={v1ToAiStrategyParams(params)}
           initialParamsV1={params}
         />
       </>

@@ -6238,6 +6238,44 @@
   font-size: 0.9rem;
 }
 
+.strategy-builder-ai-intro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.65rem;
+  min-height: 16rem;
+  margin: 1rem;
+  padding: 1.25rem 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+}
+
+.strategy-builder-ai-intro-icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.strategy-builder-ai-intro-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.strategy-builder-ai-intro-body {
+  margin: 0;
+  max-width: 36rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.strategy-builder-ai-intro-note {
+  margin: 0;
+  max-width: 36rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
 .backtest-overview-hero {
   padding: 0.9rem 1rem;
   border: 1px solid var(--border);

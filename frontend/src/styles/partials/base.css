@@ -4977,6 +4977,34 @@ input {
   color: var(--muted);
 }
 
+.strategy-status-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.research-tag.strategy-phase--warming {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.research-tag.strategy-phase--ready {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, var(--border));
+}
+
+.research-tag.strategy-phase--live {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 28%, var(--border));
+}
+
+.strategy-promote-btn {
+  padding: 0.15rem 0.55rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
 .research-tag.strategy-backtest--not_run {
   color: var(--muted);
 }

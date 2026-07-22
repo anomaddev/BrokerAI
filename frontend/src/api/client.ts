@@ -659,6 +659,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  promoteStrategy: (id: string) =>
+    request<Strategy>(`/api/strategies/${encodeURIComponent(id)}/promote`, {
+      method: "POST",
+    }),
   deleteStrategy: (id: string) =>
     request<{ status: string; id: string }>(`/api/strategies/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -1738,6 +1742,29 @@ export type StrategyStats = {
   last_trade_at: string | null;
 };
 
+/** AI Strategy lifecycle phase (strategy doc, not params). */
+export type StrategyExecutionPhase = "warming" | "ready" | "live";
+
+export type StrategyWarmup = {
+  unit?: string;
+  target_days?: number | null;
+  min_closed_bars_per_day?: number;
+  episode_id?: string;
+  started_at?: string | null;
+  eligible_trading_days?: string[];
+  completed_days?: number;
+  bars_today_et?: number;
+  current_trading_day_et?: string | null;
+  ready_at?: string | null;
+  live_at?: string | null;
+};
+
+export type StrategyAiImprove = {
+  enabled?: boolean;
+  last_queued_et_date?: string | null;
+  skip_reason?: string | null;
+};
+
 export type Strategy = {
   id: string;
   name: string;
@@ -1757,6 +1784,10 @@ export type Strategy = {
   route?: string | null;
   params?: StrategyParamsV1;
   params_schema_version?: number;
+  /** Present on AI Strategy docs after create. */
+  execution_phase?: StrategyExecutionPhase;
+  warmup?: StrategyWarmup;
+  ai_improve?: StrategyAiImprove;
 };
 
 export type StrategyInstrumentSelection = Partial<Record<AssetClass, string[]>>;

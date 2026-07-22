@@ -1,4 +1,4 @@
-import { LineChart, SlidersHorizontal } from "lucide-react";
+import { Brain, LineChart, SlidersHorizontal } from "lucide-react";
 import { ROUTES } from "../../../lib/routes";
 import { ALL_ASSET_CLASSES } from "../../../lib/strategies/instruments";
 import type { StrategyPreset } from "./types";
@@ -24,6 +24,18 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     route: ROUTES.research.strategyNew("ema-crossover"),
     icon: LineChart,
     tags: ["Trend"],
+    locked: true,
+  },
+  {
+    id: "ai_strategy",
+    label: "AI Strategy",
+    description:
+      "Model-derived strategy that learns from research bias and trade outcomes. Starts in a shadow warm-up period before you promote it to live.",
+    assetClasses: ["forex"],
+    enabledPills: [{ label: "Forex", assetClass: "forex" }],
+    route: ROUTES.research.strategyNew("ai-strategy"),
+    icon: Brain,
+    tags: ["AI"],
     locked: true,
   },
 ];

@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, History, Minus, Plus, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api, type AssetClass, type Strategy } from "../api/client";
+import {
+  api,
+  type AssetClass,
+  type Strategy,
+  type StrategyExecutionPhase,
+} from "../api/client";
 import { ROUTES } from "../lib/routes";
 import AssetClassFilterSelect from "../components/AssetClassFilterSelect";
 import CreateStrategyOverlay from "../components/strategies/CreateStrategyOverlay";
@@ -68,6 +73,12 @@ function pnlClass(value: number): string {
   return "strategy-stat--neutral";
 }
 
+function executionPhaseLabel(phase: StrategyExecutionPhase): string {
+  if (phase === "warming") return "Warming";
+  if (phase === "ready") return "Ready";
+  return "Live";
+}
+
 function normalizeStrategies(apiStrategies: Strategy[]): Strategy[] {
   return apiStrategies.map((strategy) => ({
     ...strategy,
@@ -124,6 +135,7 @@ export default function Strategies() {
   const [backtestOverlayError, setBacktestOverlayError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<StrategySortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [promotingId, setPromotingId] = useState<string | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
@@ -386,6 +398,22 @@ export default function Strategies() {
 
   function openStrategy(strategy: Strategy) {
     navigate(ROUTES.research.strategyEdit(strategy.id));
+  }
+
+  async function promoteStrategy(strategy: Strategy) {
+    if (strategy.execution_phase !== "ready" || promotingId) return;
+    setPromotingId(strategy.id);
+    setBulkError(null);
+    try {
+      const updated = await api.promoteStrategy(strategy.id);
+      setStrategies((current) =>
+        current.map((row) => (row.id === updated.id ? { ...row, ...updated } : row)),
+      );
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "Could not promote strategy");
+    } finally {
+      setPromotingId(null);
+    }
   }
 
   const hasFilteredResults = filtered.length > 0;
@@ -687,13 +715,35 @@ export default function Strategies() {
                       </td>
                       <td>{strategy.asset_class_label}</td>
                       <td>
-                        <span
-                          className={`research-tag strategy-status--${
-                            strategy.enabled ? "enabled" : "disabled"
-                          }`}
-                        >
-                          {strategy.enabled ? "Enabled" : "Disabled"}
-                        </span>
+                        <div className="strategy-status-cell">
+                          <span
+                            className={`research-tag strategy-status--${
+                              strategy.enabled ? "enabled" : "disabled"
+                            }`}
+                          >
+                            {strategy.enabled ? "Enabled" : "Disabled"}
+                          </span>
+                          {strategy.execution_phase ? (
+                            <span
+                              className={`research-tag strategy-phase--${strategy.execution_phase}`}
+                            >
+                              {executionPhaseLabel(strategy.execution_phase)}
+                            </span>
+                          ) : null}
+                          {strategy.execution_phase === "ready" ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm strategy-promote-btn"
+                              disabled={promotingId === strategy.id || bulkPending}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void promoteStrategy(strategy);
+                              }}
+                            >
+                              {promotingId === strategy.id ? "Promoting…" : "Promote"}
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                       <td>
                         <span className={`research-tag strategy-backtest--${backtestStatus}`}>

@@ -174,7 +174,30 @@ export type EmaCrossoverSignalSpec = {
   approaching?: EmaCrossoverApproachingSpec;
 };
 
-export type SignalSpec = EmaCrossoverSignalSpec | MonthlyHighSignalSpec | MonthlyLowSignalSpec;
+export type AiStrategySignalSpec = {
+  type: "ai_strategy";
+  /** Scaffold / future modes; Slice 1 always uses scaffold. */
+  mode?: string;
+};
+
+export type AiSectionSpec = {
+  model_id?: string | null;
+  use_daily_report?: boolean;
+  use_weekly_brief?: boolean;
+  use_weekly_debrief?: boolean;
+  llm_mode?: "off" | "on_signal_change" | "interval" | "manual";
+  min_llm_interval_minutes?: number;
+  max_llm_calls_per_day?: number;
+  max_llm_calls_per_symbol_per_day?: number;
+  max_context_bars?: number;
+  learn_enabled?: boolean;
+};
+
+export type SignalSpec =
+  | EmaCrossoverSignalSpec
+  | MonthlyHighSignalSpec
+  | MonthlyLowSignalSpec
+  | AiStrategySignalSpec;
 
 export type StopLossSpec = {
   /** When false, no stop-loss order is placed. Defaults to true when omitted. */
@@ -243,6 +266,8 @@ export type StrategyParamsV1 = {
   exits: ExitsSpec;
   risk: RiskSpec;
   execution: ExecutionSpec;
+  /** AI Strategy knobs only; required/persisted for `ai_strategy` preset. */
+  ai?: AiSectionSpec;
 };
 
 export type StrategyPresetMeta = {
