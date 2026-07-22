@@ -47,7 +47,7 @@ def format_analysis_log(result: AnalysisResult) -> str:
     )
 
 
-def run_strategy_analysis(
+async def run_strategy_analysis(
     strategy: dict[str, Any],
     pair: str,
     candles: list[dict[str, Any]],
@@ -99,7 +99,17 @@ def run_strategy_analysis(
             analyzed_at=datetime.now(timezone.utc),
         )
 
-    if catchup and signal_type == "ema_crossover":
+    evaluate_async = getattr(evaluator, "evaluate_async", None)
+    if callable(evaluate_async):
+        signal_result = await evaluate_async(
+            candles,
+            params,
+            indicators,
+            catchup=catchup,
+            strategy_id=strategy_id,
+            pair=pair,
+        )
+    elif catchup and signal_type == "ema_crossover":
         signal_result = evaluator.evaluate(candles, params, indicators, catchup=True)
     else:
         signal_result = evaluator.evaluate(candles, params, indicators)

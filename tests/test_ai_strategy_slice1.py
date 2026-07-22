@@ -56,7 +56,7 @@ def test_ai_params_round_trip():
     assert "ai" in params
 
 
-def test_stub_evaluator_never_trades_and_no_llm():
+async def test_stub_evaluator_never_trades_and_no_llm():
     ensure_trading_registries()
     evaluator = get_signal_evaluator("ai_strategy")
     assert evaluator is not None
@@ -68,9 +68,9 @@ def test_stub_evaluator_never_trades_and_no_llm():
     assert result.direction is None
     assert result.confidence == 0.0
     assert result.metadata.get("llm_called") is False
-    assert result.metadata.get("stub") is True
+    assert result.metadata.get("llm_mode") == "off"
 
-    analysis = run_strategy_analysis(
+    analysis = await run_strategy_analysis(
         {"id": "s1", "name": "AI", "params": params, "preset_id": "ai_strategy"},
         "EUR/USD",
         [],

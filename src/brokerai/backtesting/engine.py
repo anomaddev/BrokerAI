@@ -387,7 +387,7 @@ async def run_backtest_engine(
                 last_stop_exit_time = through_time
 
         # 2) Live-parity analysis on the prefix window.
-        analysis = run_strategy_analysis(
+        analysis = await run_strategy_analysis(
             strategy,
             pair,
             window,

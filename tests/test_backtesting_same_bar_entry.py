@@ -111,7 +111,7 @@ async def test_approaching_signal_does_not_open_position(monkeypatch):
     raw = await BacktestRunsRepository().get_raw_doc(run_id)
     assert raw is not None
 
-    def approaching_only(strategy_doc, pair, window, indicators, **kwargs):
+    async def approaching_only(strategy_doc, pair, window, indicators, **kwargs):
         _ = strategy_doc, window, indicators, kwargs
         return AnalysisResult(
             strategy_id="strategy-bt-approach",
@@ -200,7 +200,7 @@ async def test_reverse_crossover_exit_does_not_open_same_bar(monkeypatch):
             reason="reverse_crossover",
         )
 
-    def always_long_signal(strategy_doc, pair, window, indicators, **kwargs):
+    async def always_long_signal(strategy_doc, pair, window, indicators, **kwargs):
         _ = strategy_doc, window, indicators, kwargs
         return AnalysisResult(
             strategy_id="strategy-bt-no-flip",

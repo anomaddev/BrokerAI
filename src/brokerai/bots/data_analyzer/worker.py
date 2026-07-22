@@ -115,7 +115,7 @@ class ForexDataAnalystWorker(EphemeralBot[PipelineContext, list[AnalysisResult]]
 
         results: list[AnalysisResult] = []
         for strategy in unit.strategies:
-            analysis = run_strategy_analysis(
+            analysis = await run_strategy_analysis(
                 strategy,
                 unit.pair,
                 candles,
