@@ -187,6 +187,7 @@ def serialize_backtest_run(doc: dict[str, Any], *, row: BacktestRunRow | None = 
         "origin": doc.get("origin"),
         "cadence_key": doc.get("cadence_key"),
         "digest_version": doc.get("digest_version"),
+        "loop_mode": doc.get("loop_mode"),
     }
 
 
@@ -203,11 +204,13 @@ def build_queued_run_document(
     origin: str | None = None,
     cadence_key: str | None = None,
     digest_version: str | None = None,
+    loop_mode: str | None = None,
 ) -> dict[str, Any]:
     """Build a denormalized queued run document from a serialized strategy.
 
     Optional ``origin`` / ``cadence_key`` / ``digest_version`` metadata is used by
     AI Strategy daily self-backtests (idempotent ET cadence + digest skip).
+    ``loop_mode`` is ``explore`` (pattern pass, no fills) or ``trade`` (live-parity).
     """
     params = strategy.get("params") or {}
     timeframe = strategy.get("timeframe") or params.get("timeframe")
@@ -218,6 +221,9 @@ def build_queued_run_document(
     origin_text = (origin or "").strip() or None
     cadence_text = (cadence_key or "").strip() or None
     digest_text = (digest_version or "").strip() or None
+    mode_text = (loop_mode or "").strip().lower() or None
+    if mode_text not in {None, "explore", "trade"}:
+        mode_text = None
     return {
         "id": str(uuid4()),
         "name": run_name,
@@ -250,6 +256,7 @@ def build_queued_run_document(
         "origin": origin_text,
         "cadence_key": cadence_text,
         "digest_version": digest_text,
+        "loop_mode": mode_text,
     }
 
 
@@ -285,6 +292,7 @@ class BacktestRunsRepository:
         origin: str | None = None,
         cadence_key: str | None = None,
         digest_version: str | None = None,
+        loop_mode: str | None = None,
     ) -> list[dict[str, Any]]:
         """Persist one queued run per strategy. Returns serialized run documents."""
         if not strategies:
@@ -307,6 +315,7 @@ class BacktestRunsRepository:
                     origin=origin,
                     cadence_key=cadence_key,
                     digest_version=digest_version,
+                    loop_mode=loop_mode,
                 )
                 row = BacktestRunRow(id=doc["id"], doc=doc)
                 _sync_row_columns(row, doc)
@@ -587,6 +596,30 @@ class BacktestRunsRepository:
                 BacktestRunRow.cancel_requested.is_(False),
             )
             return [str(rid) for rid in (await session.execute(stmt)).scalars().all()]
+
+    async def finish_orphaned_cancel_requests(self) -> list[str]:
+        """Terminalize running runs with cancel_requested and no active worker.
+
+        When startup drain marks a run running in a process without a live
+        coordinator, a later cancel leaves ``cancel_requested`` forever. Finish
+        those as cancelled so startup can unblock.
+        """
+        finished: list[str] = []
+        async with session_scope() as session:
+            stmt = select(BacktestRunRow).where(
+                BacktestRunRow.status == BACKTEST_RUN_STATUS_RUNNING,
+                BacktestRunRow.cancel_requested.is_(True),
+            )
+            rows = list((await session.execute(stmt)).scalars().all())
+            for row in rows:
+                doc = dict(row.doc)
+                doc["status"] = BACKTEST_RUN_STATUS_CANCELLED
+                doc["finished_at"] = _now_iso()
+                doc["status_message"] = "Cancelled before worker start"
+                doc["cancel_requested"] = True
+                _sync_row_columns(row, doc)
+                finished.append(str(row.id))
+        return finished
 
     async def update_ai_feedback(
         self,

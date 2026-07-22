@@ -115,7 +115,12 @@ def ensure_lifecycle_on_create(
     *,
     default_warmup_trading_days: int = DEFAULT_WARMUP_TRADING_DAYS,
 ) -> dict[str, Any]:
-    """Attach warming lifecycle when creating an AI Strategy."""
+    """Attach warming lifecycle when creating an AI Strategy.
+
+    New AI Strategies begin in ``warming`` (shadow-only). They are expected to
+    be enabled on create so startup reports/backtests and shadow learning can
+    run; live dispatch still waits for explicit promote.
+    """
     if not is_ai_strategy_doc(doc):
         return doc
     out = dict(doc)

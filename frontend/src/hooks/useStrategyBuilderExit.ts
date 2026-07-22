@@ -3,13 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { ROUTES } from "../lib/routes";
 
 /** Close the strategy builder, confirming first when there are unsaved changes. */
-export function useStrategyBuilderExit(isDirty: boolean) {
+export function useStrategyBuilderExit(
+  isDirty: boolean,
+  exitTo: string = ROUTES.research.strategies,
+) {
   const navigate = useNavigate();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const leave = useCallback(() => {
-    navigate(ROUTES.research.strategies);
-  }, [navigate]);
+    navigate(exitTo);
+  }, [navigate, exitTo]);
 
   const requestClose = useCallback(() => {
     if (isDirty) {

@@ -111,6 +111,31 @@ async def _trade_sync_loop() -> None:
         await asyncio.sleep(interval)
 
 
+async def _ai_strategy_startup_drain_loop() -> None:
+    """Advance create-time AI Strategy startup jobs even if the orchestrator is stale.
+
+    Secretary also drains these on its tick; this loop covers the common case where
+    the API was reloaded (uvicorn --reload) but ``brokerai run orchestrator`` was not.
+    """
+    while True:
+        try:
+            from brokerai.ai_strategy.startup import drain_queued_startup_jobs
+
+            summary = await drain_queued_startup_jobs(limit=2)
+            if summary.get("advanced"):
+                logger.info(
+                    "API — AI startup drain advanced=%s completed=%s failed=%s",
+                    summary.get("advanced"),
+                    summary.get("completed"),
+                    summary.get("failed"),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("AI Strategy startup drain loop failed", exc_info=True)
+        await asyncio.sleep(15)
+
+
 async def _backup_schedule_loop() -> None:
     """Create scheduled full backups when due."""
     from brokerai.config_backup.service import ConfigBackupService
@@ -164,6 +189,7 @@ async def _app_lifespan(_app: FastAPI):
         logger.warning("Background task reconciliation failed", exc_info=True)
     trade_sync_task = asyncio.create_task(_trade_sync_loop())
     backup_schedule_task = asyncio.create_task(_backup_schedule_loop())
+    ai_startup_drain_task = asyncio.create_task(_ai_strategy_startup_drain_loop())
     backtest_coordinator = None
     try:
         from brokerai.backtesting.coordinator import get_backtest_coordinator
@@ -175,12 +201,18 @@ async def _app_lifespan(_app: FastAPI):
     yield
     trade_sync_task.cancel()
     backup_schedule_task.cancel()
+    ai_startup_drain_task.cancel()
     if backtest_coordinator is not None:
         try:
             await backtest_coordinator.stop()
         except Exception:
             logger.warning("Backtest coordinator stop failed", exc_info=True)
-    await asyncio.gather(trade_sync_task, backup_schedule_task, return_exceptions=True)
+    await asyncio.gather(
+        trade_sync_task,
+        backup_schedule_task,
+        ai_startup_drain_task,
+        return_exceptions=True,
+    )
     from brokerai.integrations.oanda_client import close_oanda_client
 
     await close_oanda_client()

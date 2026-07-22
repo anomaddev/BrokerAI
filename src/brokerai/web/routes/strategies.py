@@ -181,6 +181,8 @@ async def create_strategy(
         )
     except ParamsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Create-time AI Strategy bootstrap (reports → seed digest → improve loops).
     try:
@@ -278,6 +280,24 @@ async def promote_ai_strategy(
     return JSONResponse(doc)
 
 
+@router.get("/{strategy_id}/activity")
+async def get_strategy_activity(
+    strategy_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    """Newest-first activity log for an AI Strategy (startup, backtests, learning, digests)."""
+    from brokerai.ai_strategy.activity import build_ai_strategy_activity
+
+    try:
+        payload = await build_ai_strategy_activity(strategy_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    return JSONResponse(payload)
+
+
 @router.get("/{strategy_id}/startup")
 async def get_strategy_startup(
     strategy_id: str,
@@ -308,6 +328,23 @@ async def retry_strategy_startup(
     job = await enqueue_ai_strategy_startup(strategy_id, force=True)
     if job is None:
         raise HTTPException(status_code=400, detail="Startup is disabled in Settings → AI Strategies")
+    return JSONResponse({"job": job})
+
+
+@router.post("/{strategy_id}/startup/cancel")
+async def cancel_strategy_startup(
+    strategy_id: str,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    """Stop the create-time startup pipeline so it can be restarted cleanly."""
+    from brokerai.ai_strategy.startup import cancel_ai_strategy_startup
+
+    if not await StrategiesRepository().get_by_id(strategy_id):
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    try:
+        job = await cancel_ai_strategy_startup(strategy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return JSONResponse({"job": job})
 
 

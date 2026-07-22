@@ -69,6 +69,10 @@ input {
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
   border: none;
   border-radius: 8px;
   padding: 0.65rem 1rem;
@@ -76,6 +80,12 @@ input {
   background: var(--accent);
   color: white;
   font-weight: 500;
+  line-height: 1.2;
+}
+
+.btn svg {
+  flex-shrink: 0;
+  display: block;
 }
 
 .btn:disabled {
@@ -6277,6 +6287,12 @@ button.research-back-link {
 .forex-pair-checkbox:has(input:checked) .forex-pair-label {
   color: var(--text);
   font-weight: 500;
+}
+
+.forex-pair-checkbox--disabled,
+.forex-pair-checkbox:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .trading-session-grid {

@@ -86,7 +86,7 @@ export default function AiStrategiesTab() {
   return (
     <div className="settings-panel">
       <SettingsPanelHeader
-        title="AI Strategies"
+        title="AI Startup"
         description="Configure the create-time startup sequence that seeds memory and runs improve loops for new AI Strategies."
         error={loadError || saveError}
         message={

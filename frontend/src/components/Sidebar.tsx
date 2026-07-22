@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BarChart3,
+  Brain,
   CalendarClock,
   CircleDollarSign,
   Coins,
@@ -49,6 +50,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: ROUTES.research.reports, label: "Reports", icon: FileText },
       { to: ROUTES.research.strategies, label: "Strategies", icon: LineChart },
+      { to: ROUTES.research.aiStrategies, label: "AI Strategies", icon: Brain },
       { to: ROUTES.research.analysis, label: "Analysis", icon: Zap },
       { to: ROUTES.research.backtest, label: "Backtest", icon: History },
     ],

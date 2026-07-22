@@ -104,6 +104,31 @@ class AiStrategyStartupJobsRepository:
             ).scalar_one_or_none()
             return row is not None
 
+    async def list_open_for_strategy(
+        self,
+        strategy_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return open (queued/running) startup jobs for one strategy, oldest first."""
+        sid = (strategy_id or "").strip()
+        if not sid:
+            return []
+        limit = max(1, min(int(limit), 100))
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(AiStrategyStartupJobRow)
+                    .where(
+                        AiStrategyStartupJobRow.strategy_id == sid,
+                        AiStrategyStartupJobRow.status.in_(tuple(STARTUP_OPEN_STATUSES)),
+                    )
+                    .order_by(AiStrategyStartupJobRow.created_at.asc())
+                    .limit(limit)
+                )
+            ).scalars().all()
+            return [self._serialize(row) for row in rows]
+
     async def list_open(self, *, limit: int = 20) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 100))
         async with session_scope() as session:
@@ -112,6 +137,28 @@ class AiStrategyStartupJobsRepository:
                     select(AiStrategyStartupJobRow)
                     .where(AiStrategyStartupJobRow.status.in_(tuple(STARTUP_OPEN_STATUSES)))
                     .order_by(AiStrategyStartupJobRow.created_at.asc())
+                    .limit(limit)
+                )
+            ).scalars().all()
+            return [self._serialize(row) for row in rows]
+
+    async def list_for_strategy(
+        self,
+        strategy_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return startup jobs for a strategy (newest first)."""
+        sid = (strategy_id or "").strip()
+        if not sid:
+            return []
+        limit = max(1, min(int(limit), 100))
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(AiStrategyStartupJobRow)
+                    .where(AiStrategyStartupJobRow.strategy_id == sid)
+                    .order_by(AiStrategyStartupJobRow.created_at.desc())
                     .limit(limit)
                 )
             ).scalars().all()
@@ -179,6 +226,28 @@ class AiStrategyStartupJobsRepository:
             doc["finished_at"] = finished.isoformat()
             doc["error"] = (error or "unknown")[:2000]
             row.status = STARTUP_STATUS_FAILED
+            row.finished_at = finished
+            row.doc = doc
+            return self._serialize(row)
+
+    async def mark_cancelled(self, job_id: str, *, reason: str | None = None) -> dict[str, Any] | None:
+        """Terminal cancel for an open startup job. Idempotent if already terminal."""
+        async with session_scope() as session:
+            row = await session.get(AiStrategyStartupJobRow, job_id)
+            if row is None:
+                return None
+            if row.status not in STARTUP_OPEN_STATUSES:
+                return self._serialize(row)
+            finished = _now()
+            doc = dict(row.doc)
+            doc["status"] = STARTUP_STATUS_CANCELLED
+            doc["finished_at"] = finished.isoformat()
+            doc["pending_reports"] = []
+            if reason:
+                doc["error"] = (reason or "")[:2000]
+            else:
+                doc["error"] = None
+            row.status = STARTUP_STATUS_CANCELLED
             row.finished_at = finished
             row.doc = doc
             return self._serialize(row)

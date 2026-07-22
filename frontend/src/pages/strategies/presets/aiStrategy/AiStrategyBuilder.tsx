@@ -18,11 +18,17 @@ import { useGeneralSettings } from "../../../../hooks/useGeneralSettings";
 import { useStrategyBuilderExit } from "../../../../hooks/useStrategyBuilderExit";
 import { formatAppInstant } from "../../../../lib/formatTime";
 import { normalizeVersionSnapshotForBuilder } from "../../../../lib/strategyBuilder/loadVersion";
+import {
+  defaultAiStrategyName,
+  isAutoAiStrategyTitle,
+  selectedAiStrategySymbol,
+} from "../../../../lib/aiStrategy/defaultName";
 import { clampStrategyTitle } from "../../../../lib/strategyBuilder/components";
 import { strategyBuilderDirtySnapshot } from "../../../../lib/strategyBuilder/unsavedChanges";
+import { ROUTES } from "../../../../lib/routes";
 import {
+  countSelectedInstruments,
   emptyInstrumentSelection,
-  hasInstrumentSelection,
   type StrategyInstrumentSelection,
 } from "../../../../lib/strategies/instruments";
 import {
@@ -141,9 +147,12 @@ function createInitialState(
   editInstrumentSelection: StrategyInstrumentSelection | undefined,
 ) {
   const params = { ...DEFAULT_AI_STRATEGY_PARAMS, ...(initialParams ?? {}) };
-  const title = clampStrategyTitle(editName ?? "AI Strategy");
-  const notes = editDescription ?? "";
   const instrumentSelection = editInstrumentSelection ?? emptyInstrumentSelection();
+  const symbol = selectedAiStrategySymbol(instrumentSelection);
+  const title = clampStrategyTitle(
+    editName ?? (symbol ? defaultAiStrategyName(symbol) : "AI Strategy"),
+  );
+  const notes = editDescription ?? "";
   return {
     params,
     title,
@@ -364,8 +373,37 @@ export default function AiStrategyBuilder({
       components: [],
       params: params as unknown as Record<string, unknown>,
     }) !== initial.baselineSnapshot;
+  const exitTo = editStrategyId
+    ? ROUTES.research.aiStrategyView(editStrategyId)
+    : ROUTES.research.aiStrategies;
   const { requestClose, discardConfirmOpen, confirmDiscard, cancelDiscard } =
-    useStrategyBuilderExit(isDirty);
+    useStrategyBuilderExit(isDirty, exitTo);
+
+  const [occupiedInstruments, setOccupiedInstruments] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listStrategies()
+      .then((data) => {
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const strategy of data.strategies) {
+          if (strategy.preset_id !== "ai_strategy") continue;
+          if (editStrategyId && strategy.id === editStrategyId) continue;
+          for (const symbol of strategy.instruments ?? []) {
+            if (symbol) next[symbol] = strategy.name;
+          }
+        }
+        setOccupiedInstruments(next);
+      })
+      .catch(() => {
+        if (!cancelled) setOccupiedInstruments({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editStrategyId]);
 
   const toggleSection = useCallback((key: SectionKey) => {
     setSections((prev) => {
@@ -485,7 +523,7 @@ export default function AiStrategyBuilder({
     Boolean(params.timeframe) &&
     params.sessions.length > 0 &&
     title.trim().length > 0 &&
-    hasInstrumentSelection(instrumentSelection) &&
+    countSelectedInstruments(instrumentSelection) === 1 &&
     !lookbackInvalid;
 
   const saveParams = useMemo(() => aiStrategyParamsToV1(params), [params]);
@@ -518,8 +556,17 @@ export default function AiStrategyBuilder({
           title={title}
           onTitleChange={setTitle}
           instrumentSelection={instrumentSelection}
-          onInstrumentSelectionChange={setInstrumentSelection}
+          onInstrumentSelectionChange={(next) => {
+            const prevSymbol = selectedAiStrategySymbol(instrumentSelection);
+            const nextSymbol = selectedAiStrategySymbol(next);
+            setInstrumentSelection(next);
+            if (nextSymbol && isAutoAiStrategyTitle(title, prevSymbol)) {
+              setTitle(defaultAiStrategyName(nextSymbol));
+            }
+          }}
           supportedAssetClasses={[...supportedAssetClasses]}
+          singleInstrument
+          occupiedInstruments={occupiedInstruments}
           onClose={requestClose}
           currentVersion={currentVersion}
         />
@@ -532,13 +579,20 @@ export default function AiStrategyBuilder({
               </div>
               <h3 className="strategy-builder-ai-intro-title">AI Strategy</h3>
               <p className="strategy-builder-ai-intro-body">
-                Model-derived entries guided by daily reports and weekly briefs. New strategies
-                begin in a shadow warm-up period; promote to live from the Strategies list when
-                ready.
+                Created enabled: runs required reports, improve backtests, then learns in shadow
+                mode until you promote it to live from the strategy log.
               </p>
               <p className="strategy-builder-ai-intro-note settings-muted">
-                Name and description are set when you save. Forex instruments only in this release.
+                Exactly one instrument per AI Strategy. Each pair can have only one AI Strategy so
+                learning stays focused.
               </p>
+              {editStrategyId ? (
+                <p className="strategy-builder-ai-intro-note">
+                  <Link to={ROUTES.research.aiStrategyView(editStrategyId)}>
+                    View activity log
+                  </Link>
+                </p>
+              ) : null}
             </div>
           </div>
 

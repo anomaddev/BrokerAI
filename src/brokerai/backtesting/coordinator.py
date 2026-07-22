@@ -39,6 +39,11 @@ class BacktestCoordinator:
         # Tracks runs submitted via manual start when auto_start is false.
         self._manual_ready: set[str] = set()
 
+    @property
+    def is_started(self) -> bool:
+        """True when the claim loop is running in *this* process."""
+        return self._task is not None and not self._task.done()
+
     def notify_manual_start(self, run_id: str) -> None:
         self._manual_ready.add(run_id)
 
@@ -159,6 +164,25 @@ class BacktestCoordinator:
             )
         logger.info("Backtest coordinator stopped")
 
+    async def _reclaim_orphaned_runs(self, runs_repo: BacktestRunsRepository) -> None:
+        """Pick up running runs that were marked outside this process.
+
+        Startup drain can run in the orchestrator/secretary process, which may
+        call ``mark_running`` + ``notify_manual_start`` on a coordinator that was
+        never ``start()``-ed. The API coordinator must reclaim those orphans.
+        Also finish cancel-requested runs that never got a worker.
+        """
+        try:
+            cancelled = await runs_repo.finish_orphaned_cancel_requests()
+            for rid in cancelled:
+                self._manual_ready.discard(rid)
+                logger.info("Finished orphaned cancel-requested backtest %s", rid)
+            for rid in await runs_repo.list_claimable_manual_starts():
+                if rid not in self._inflight:
+                    self._manual_ready.add(rid)
+        except Exception:
+            logger.warning("Failed to reclaim orphaned backtest runs", exc_info=True)
+
     async def _loop(self) -> None:
         runs_repo = BacktestRunsRepository()
         settings_repo = BacktestSettingsRepository()
@@ -197,6 +221,8 @@ class BacktestCoordinator:
                                 exc_info=True,
                             )
 
+                await self._reclaim_orphaned_runs(runs_repo)
+
                 settings = await settings_repo.get()
                 max_concurrent = int(settings["max_concurrent"])
                 auto_start = bool(settings["auto_start"])
@@ -210,6 +236,9 @@ class BacktestCoordinator:
                             continue
                         doc = await runs_repo.get_by_id(rid)
                         if doc and doc.get("status") == BACKTEST_RUN_STATUS_RUNNING:
+                            if doc.get("cancel_requested"):
+                                self._manual_ready.discard(rid)
+                                continue
                             run = doc
                             self._manual_ready.discard(rid)
                             break

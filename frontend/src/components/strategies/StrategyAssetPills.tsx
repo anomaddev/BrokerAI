@@ -27,6 +27,10 @@ type StrategyAssetPillsProps = {
   value: StrategyInstrumentSelection;
   onChange: (selection: StrategyInstrumentSelection) => void;
   supportedAssetClasses?: AssetClass[];
+  /** ``single`` replaces the selection with one symbol (AI Strategies). */
+  selectionMode?: "multi" | "single";
+  /** Symbols claimed by another AI Strategy → owner name (shown disabled). */
+  occupiedInstruments?: Record<string, string>;
 };
 
 function isCatalogClass(assetClass: AssetClass): boolean {
@@ -44,7 +48,11 @@ export default function StrategyAssetPills({
   value,
   onChange,
   supportedAssetClasses = ALL_ASSET_CLASSES,
+  selectionMode = "multi",
+  occupiedInstruments,
 }: StrategyAssetPillsProps) {
+  const singleMode = selectionMode === "single";
+  const occupied = occupiedInstruments ?? {};
   const rootRef = useRef<HTMLDivElement>(null);
   const [openClass, setOpenClass] = useState<AssetClass | null>(null);
   const [catalogByClass, setCatalogByClass] = useState<Partial<Record<AssetClass, string[]>>>({});
@@ -132,7 +140,19 @@ export default function StrategyAssetPills({
   }
 
   function toggleSymbol(assetClass: AssetClass, symbol: string) {
+    if (occupied[symbol] && !specificSymbols(value[assetClass]).includes(symbol)) {
+      return;
+    }
     const current = specificSymbols(value[assetClass]);
+    if (singleMode) {
+      if (current.includes(symbol)) {
+        setClassSelection(assetClass, []);
+      } else {
+        // Single-instrument strategies clear other asset classes too.
+        onChange({ [assetClass]: [symbol] } as StrategyInstrumentSelection);
+      }
+      return;
+    }
     const next = current.includes(symbol)
       ? current.filter((item) => item !== symbol)
       : [...current, symbol];
@@ -140,6 +160,7 @@ export default function StrategyAssetPills({
   }
 
   function selectAll(assetClass: AssetClass) {
+    if (singleMode) return;
     const catalog = catalogByClass[assetClass] ?? [];
     if (catalog.length === 0) return;
     setClassSelection(assetClass, [...catalog]);
@@ -269,28 +290,34 @@ export default function StrategyAssetPills({
 
                   {openIsCatalog ? (
                     <>
-                      <div className="strategy-asset-pill-dropdown-toolbar">
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-secondary"
-                          disabled={
-                            openCatalog.length === 0 ||
-                            (openCatalog.length > 0 &&
-                              openCatalog.every((symbol) => openSelected.includes(symbol)))
-                          }
-                          onClick={() => selectAll(assetClass)}
-                        >
-                          Select all
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-secondary"
-                          disabled={openSelected.length === 0}
-                          onClick={() => clearAll(assetClass)}
-                        >
-                          Clear all
-                        </button>
-                      </div>
+                      {singleMode ? (
+                        <p className="settings-muted strategy-asset-pill-dropdown-status">
+                          Select exactly one instrument. Each pair can have only one AI Strategy.
+                        </p>
+                      ) : (
+                        <div className="strategy-asset-pill-dropdown-toolbar">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            disabled={
+                              openCatalog.length === 0 ||
+                              (openCatalog.length > 0 &&
+                                openCatalog.every((symbol) => openSelected.includes(symbol)))
+                            }
+                            onClick={() => selectAll(assetClass)}
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            disabled={openSelected.length === 0}
+                            onClick={() => clearAll(assetClass)}
+                          >
+                            Clear all
+                          </button>
+                        </div>
+                      )}
                       {openCatalog.length === 0 && !catalogLoading ? (
                         <p className="settings-muted strategy-asset-pill-dropdown-status">
                           No instruments available.
@@ -299,17 +326,30 @@ export default function StrategyAssetPills({
                         <div className="strategy-asset-pill-dropdown-grid">
                           {openCatalog.map((symbol) => {
                             const checked = openSelected.includes(symbol);
+                            const owner = occupied[symbol];
+                            const blocked = Boolean(owner) && !checked;
                             return (
                               <label
                                 key={symbol}
                                 className={`forex-pair-checkbox strategy-instrument-checkbox${
                                   checked ? " forex-pair-checkbox--checked" : ""
-                                }`}
+                                }${blocked ? " forex-pair-checkbox--disabled" : ""}`}
+                                title={
+                                  blocked
+                                    ? `Already used by AI Strategy “${owner}”`
+                                    : undefined
+                                }
                               >
                                 <input
-                                  type="checkbox"
+                                  type={singleMode ? "radio" : "checkbox"}
+                                  name={
+                                    singleMode
+                                      ? `strategy-instrument-${assetClass}`
+                                      : undefined
+                                  }
                                   className="ui-checkbox-input"
                                   checked={checked}
+                                  disabled={blocked}
                                   onChange={() => toggleSymbol(assetClass, symbol)}
                                 />
                                 <span className="forex-pair-label">{symbol}</span>

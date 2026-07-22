@@ -68,8 +68,9 @@ AI_STRATEGY_PRESET = StrategyPreset(
     id="ai_strategy",
     name="AI Strategy",
     description=(
-        "Model-derived strategy that learns from research bias and trade outcomes. "
-        "Starts in a shadow warm-up period before you promote it to live."
+        "Model-derived strategy for a single forex pair. Created enabled: runs required "
+        "reports and improve backtests, then learns in shadow until you promote it to live. "
+        "Only one AI Strategy is allowed per instrument."
     ),
     asset_classes=["forex"],
     route="/research/strategies/new/ai-strategy",

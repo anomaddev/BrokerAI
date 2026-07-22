@@ -30,7 +30,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     id: "ai_strategy",
     label: "AI Strategy",
     description:
-      "Model-derived strategy that learns from research bias and trade outcomes. Starts in a shadow warm-up period before you promote it to live.",
+      "Model-derived strategy for a single forex pair. Created enabled — runs reports and improve backtests, then learns in shadow until you promote it to live. One AI Strategy per instrument.",
     assetClasses: ["forex"],
     enabledPills: [{ label: "Forex", assetClass: "forex" }],
     route: ROUTES.research.strategyNew("ai-strategy"),
@@ -40,11 +40,9 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
   },
 ];
 
-/** Presets shown in the Build Strategy overlay (AI Strategy first). */
+/** Presets shown in the Build Strategy overlay (standard strategies only). */
 export function getBuildStrategyPresets(): StrategyPreset[] {
-  const ai = STRATEGY_PRESETS.find((p) => p.id === "ai_strategy");
-  const rest = STRATEGY_PRESETS.filter((p) => p.id !== "ai_strategy");
-  return ai ? [ai, ...rest] : [...STRATEGY_PRESETS];
+  return STRATEGY_PRESETS.filter((p) => p.id !== "ai_strategy");
 }
 
 export function getPresetById(id: string): StrategyPreset | undefined {

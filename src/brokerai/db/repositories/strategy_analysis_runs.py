@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from brokerai.db.pg.client import session_scope
@@ -20,16 +21,28 @@ def _normalize_trade_id(trade_id: str | None) -> str:
     return str(trade_id or "")
 
 
+def _candle_time_for_db(value: datetime | str | None) -> datetime | None:
+    """Normalize candle keys to UTC-aware datetimes for ``timestamptz`` columns.
+
+    ``normalize_candle_time`` returns naive UTC for in-memory candle math. Postgres
+    stores aware timestamps; comparing naive vs aware made ``_find_existing`` miss
+    rows and then INSERT hit ``uq_strategy_analysis_runs_natural``.
+    """
+    when = normalize_candle_time(value)
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        return when.replace(tzinfo=timezone.utc)
+    return when.astimezone(timezone.utc)
+
+
 def _sync_row_columns(row: StrategyAnalysisRunRow, doc: dict[str, Any]) -> None:
     row.strategy_id = str(doc.get("strategy_id") or "")
     row.pair = str(doc.get("pair") or "")
-    candle_dt = doc.get("candle_time")
-    if isinstance(candle_dt, datetime):
-        row.candle_time = (
-            candle_dt.astimezone(timezone.utc)
-            if candle_dt.tzinfo
-            else candle_dt.replace(tzinfo=timezone.utc)
-        )
+    candle_dt = _candle_time_for_db(doc.get("candle_time"))
+    if candle_dt is not None:
+        row.candle_time = candle_dt
+        doc["candle_time"] = candle_dt
     row.analysis_purpose = str(doc.get("analysis_purpose") or "entry")
     row.trade_id = _normalize_trade_id(doc.get("trade_id"))
     analyzed_at = doc.get("analyzed_at")
@@ -55,10 +68,13 @@ class StrategyAnalysisRunsRepository:
         trade_id: str | None = None,
     ) -> dict[str, Any]:
         purpose = analysis_purpose if analysis_purpose in {"entry", "exit"} else "entry"
+        when = _candle_time_for_db(candle_time)
+        if when is None:
+            raise ValueError("candle_time is required for analysis-run dedupe")
         filt: dict[str, Any] = {
             "strategy_id": strategy_id,
             "pair": pair,
-            "candle_time": candle_time,
+            "candle_time": when,
             "analysis_purpose": purpose,
         }
         if purpose == "exit" and trade_id:
@@ -110,7 +126,7 @@ class StrategyAnalysisRunsRepository:
         candle_time: datetime | str,
     ) -> dict[str, Any] | None:
         """Return an existing run for the same strategy, pair, and analyzed candle."""
-        when = normalize_candle_time(candle_time)
+        when = _candle_time_for_db(candle_time)
         if when is None:
             return None
         existing = await self._find_existing(
@@ -139,12 +155,14 @@ class StrategyAnalysisRunsRepository:
         return merged
 
     async def _upsert_document(self, doc: dict[str, Any]) -> dict[str, Any]:
-        candle_dt = doc.get("candle_time")
+        candle_dt = _candle_time_for_db(doc.get("candle_time"))
         strategy_id = str(doc.get("strategy_id") or "")
         pair = str(doc.get("pair") or "")
         purpose = str(doc.get("analysis_purpose") or "entry")
         trade_id = _normalize_trade_id(doc.get("trade_id"))
         doc["trade_id"] = trade_id if purpose == "exit" and trade_id else (trade_id or "")
+        if candle_dt is not None:
+            doc["candle_time"] = candle_dt
 
         if candle_dt is not None and strategy_id and pair:
             filter_doc = self._dedupe_filter(
@@ -161,15 +179,50 @@ class StrategyAnalysisRunsRepository:
 
             try:
                 async with session_scope() as session:
-                    row = StrategyAnalysisRunRow(id=doc["id"], doc=doc)
-                    _sync_row_columns(row, doc)
-                    session.add(row)
+                    bind = session.get_bind()
+                    dialect = bind.dialect.name if bind is not None else "postgresql"
+                    if dialect == "postgresql":
+                        # Race-safe: concurrent pipeline retries must not crash Secretary.
+                        values = {
+                            "id": doc["id"],
+                            "strategy_id": strategy_id,
+                            "pair": pair,
+                            "candle_time": candle_dt,
+                            "analysis_purpose": purpose
+                            if purpose in {"entry", "exit"}
+                            else "entry",
+                            "trade_id": doc["trade_id"],
+                            "analyzed_at": (
+                                doc["analyzed_at"]
+                                if isinstance(doc.get("analyzed_at"), datetime)
+                                else datetime.now(timezone.utc)
+                            ),
+                            "doc": doc,
+                        }
+                        if isinstance(values["analyzed_at"], datetime):
+                            analyzed = values["analyzed_at"]
+                            values["analyzed_at"] = (
+                                analyzed.astimezone(timezone.utc)
+                                if analyzed.tzinfo
+                                else analyzed.replace(tzinfo=timezone.utc)
+                            )
+                        stmt = pg_insert(StrategyAnalysisRunRow).values(values)
+                        stmt = stmt.on_conflict_do_nothing(
+                            constraint="uq_strategy_analysis_runs_natural"
+                        )
+                        await session.execute(stmt)
+                    else:
+                        row = StrategyAnalysisRunRow(id=doc["id"], doc=doc)
+                        _sync_row_columns(row, doc)
+                        session.add(row)
             except IntegrityError:
-                existing = await self._find_existing(filter_doc)
-                if existing is None:
-                    raise
+                pass
+
+            existing = await self._find_existing(filter_doc)
+            if existing is not None:
                 merged = await self._merge_existing(existing, doc)
                 return serialize_analysis_run(merged)
+            # Insert won the race (no prior row, conflict did nothing because we inserted).
             return serialize_analysis_run(doc)
 
         async with session_scope() as session:

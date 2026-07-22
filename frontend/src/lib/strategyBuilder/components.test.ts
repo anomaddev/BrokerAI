@@ -214,13 +214,10 @@ describe("strategy builder components", () => {
 });
 
 describe("build strategy presets", () => {
-  it("lists AI Strategy first, then Custom and EMA Crossover", () => {
+  it("lists standard templates only (AI Strategies have a dedicated page)", () => {
     const presets = getBuildStrategyPresets();
-    expect(presets[0]?.id).toBe("ai_strategy");
+    expect(presets.some((p) => p.id === "ai_strategy")).toBe(false);
     expect(presets.some((p) => p.id === "custom")).toBe(true);
     expect(presets.some((p) => p.id === "ema_crossover")).toBe(true);
-    expect(presets.findIndex((p) => p.id === "ai_strategy")).toBeLessThan(
-      presets.findIndex((p) => p.id === "custom"),
-    );
   });
 });

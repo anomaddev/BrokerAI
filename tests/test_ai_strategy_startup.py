@@ -9,9 +9,11 @@ import pytest
 from brokerai.ai_strategy.startup import (
     ORIGIN_AI_STRATEGY_STARTUP,
     advance_startup_job,
+    cancel_ai_strategy_startup,
     enqueue_ai_strategy_startup,
     required_reports_for_strategy,
     seed_digest_from_research,
+    startup_loop_mode,
 )
 from brokerai.backtesting.ai_feedback import is_ai_strategy_daily_run
 from brokerai.db.repositories.ai_strategy_settings import (
@@ -21,6 +23,7 @@ from brokerai.db.repositories.ai_strategy_settings import (
 from brokerai.db.repositories.ai_strategy_startup import (
     STARTUP_PHASE_LOOPING,
     STARTUP_PHASE_SEEDING_DIGEST,
+    STARTUP_STATUS_CANCELLED,
     STARTUP_STATUS_COMPLETED,
     STARTUP_STATUS_FAILED,
     STARTUP_STATUS_QUEUED,
@@ -83,6 +86,12 @@ def _enabled_model(*, model_id: str = "model-1") -> dict:
         "api_key": "sk-test",
         "title": "Test Model",
     }
+
+
+def test_startup_loop_mode_explore_then_trade():
+    assert startup_loop_mode(0) == "explore"
+    assert startup_loop_mode(1) == "trade"
+    assert startup_loop_mode(2) == "trade"
 
 
 def test_normalize_ai_strategy_settings_clamps():
@@ -257,7 +266,9 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
         "status": "queued",
         "strategy_id": "strat-startup",
         "origin": ORIGIN_AI_STRATEGY_STARTUP,
+        "loop_mode": "explore",
     }
+    create_mock = AsyncMock(return_value=[fake_run])
     with (
         patch(
             "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
@@ -265,7 +276,7 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
         ),
         patch(
             "brokerai.ai_strategy.startup.BacktestRunsRepository.create_queued_runs",
-            new=AsyncMock(return_value=[fake_run]),
+            new=create_mock,
         ),
         patch(
             "brokerai.ai_strategy.startup._start_backtest_if_needed",
@@ -276,6 +287,8 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
     assert job is not None
     assert job["current_backtest_run_id"] == "run-1"
     assert job["loop_index"] == 0
+    assert create_mock.await_args.kwargs.get("loop_mode") == "explore"
+    assert "Explore" in (job.get("status_message") or "")
 
     completed_run = {**fake_run, "status": "completed"}
     with (
@@ -294,7 +307,8 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
     assert job["current_backtest_run_id"] is None
 
     # Second loop queue + complete → job completed.
-    fake_run_2 = {**fake_run, "id": "run-2"}
+    fake_run_2 = {**fake_run, "id": "run-2", "loop_mode": "trade"}
+    create_mock_2 = AsyncMock(return_value=[fake_run_2])
     with (
         patch(
             "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
@@ -302,7 +316,7 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
         ),
         patch(
             "brokerai.ai_strategy.startup.BacktestRunsRepository.create_queued_runs",
-            new=AsyncMock(return_value=[fake_run_2]),
+            new=create_mock_2,
         ),
         patch(
             "brokerai.ai_strategy.startup._start_backtest_if_needed",
@@ -311,6 +325,8 @@ async def test_advance_startup_skips_reports_and_seeds_then_loops():
     ):
         job = await advance_startup_job(job["id"])
     assert job["current_backtest_run_id"] == "run-2"
+    assert create_mock_2.await_args.kwargs.get("loop_mode") == "trade"
+    assert "Trade" in (job.get("status_message") or "")
 
     with (
         patch(
@@ -336,3 +352,211 @@ async def test_startup_job_repo_mark_failed():
     assert failed is not None
     assert failed["status"] == STARTUP_STATUS_FAILED
     assert failed["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_seed_waits_when_llm_budget_in_flight():
+    from brokerai.cost.llm_guard import LlmBudgetExceeded
+
+    settings = AiStrategySettingsRepository()
+    await settings.update(startup_enabled=True, startup_loop_count=1)
+    strategy = _strategy_doc(use_daily=False, use_brief=False, use_debrief=False)
+    with patch(
+        "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+        new=AsyncMock(return_value=strategy),
+    ):
+        job = await enqueue_ai_strategy_startup("strat-startup")
+    job = await advance_startup_job(job["id"])
+    assert job["phase"] == STARTUP_PHASE_SEEDING_DIGEST
+
+    with (
+        patch(
+            "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+            new=AsyncMock(return_value=strategy),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.seed_digest_from_research",
+            new=AsyncMock(side_effect=LlmBudgetExceeded("in_flight")),
+        ),
+    ):
+        job = await advance_startup_job(job["id"])
+    assert job is not None
+    assert job["status"] == "running"
+    assert job["phase"] == STARTUP_PHASE_SEEDING_DIGEST
+    assert "in_flight" in str(job.get("last_seed_wait") or "")
+
+
+@pytest.mark.asyncio
+async def test_ensure_reports_skips_brief_when_no_model_selected():
+    """Missing weekly model must not leave startup queued forever."""
+    settings = AiStrategySettingsRepository()
+    await settings.update(startup_enabled=True, startup_loop_count=1)
+
+    strategy = _strategy_doc(use_daily=True, use_brief=True, use_debrief=True)
+    with patch(
+        "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+        new=AsyncMock(return_value=strategy),
+    ):
+        job = await enqueue_ai_strategy_startup("strat-startup")
+    assert job is not None
+    assert "weekly_brief" in job["required_reports"]
+
+    with (
+        patch(
+            "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+            new=AsyncMock(return_value=strategy),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.ResearchSettingsRepository.get",
+            new=AsyncMock(
+                return_value={
+                    "last_daily_run_date": "2026-07-22",
+                    "contributor_models": [{"enabled": True}],
+                }
+            ),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.daily_report_exists",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.preview_weekly_brief_skip_reason",
+            new=AsyncMock(return_value="No model selected for weekly_brief_model_id"),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.preview_weekly_debrief_skip_reason",
+            new=AsyncMock(return_value="No model selected for weekly_debrief_model_id"),
+        ),
+    ):
+        job = await advance_startup_job(job["id"])
+
+    assert job is not None
+    assert job["status"] == "running"
+    assert job["phase"] == STARTUP_PHASE_SEEDING_DIGEST
+    assert "weekly_brief" in (job.get("skipped_reports") or [])
+    assert "weekly_debrief" in (job.get("skipped_reports") or [])
+    assert job.get("pending_reports") == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_reports_starts_weeklies_with_relaxed_daily_prereqs():
+    """Models selected + recent dailies → start weeklies even without open-day file."""
+    settings = AiStrategySettingsRepository()
+    await settings.update(startup_enabled=True, startup_loop_count=1)
+
+    strategy = _strategy_doc(use_daily=True, use_brief=True, use_debrief=True)
+    with patch(
+        "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+        new=AsyncMock(return_value=strategy),
+    ):
+        job = await enqueue_ai_strategy_startup("strat-startup")
+    assert job is not None
+
+    brief_start = AsyncMock(return_value=("task-brief", None))
+    debrief_start = AsyncMock(return_value=("task-debrief", None))
+    with (
+        patch(
+            "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+            new=AsyncMock(return_value=strategy),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.ResearchSettingsRepository.get",
+            new=AsyncMock(
+                return_value={
+                    "last_daily_run_date": "2026-07-22",
+                    "contributor_models": [{"enabled": True}],
+                    "weekly_brief_model_id": "m1",
+                    "weekly_debrief_model_id": "m1",
+                }
+            ),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.daily_report_exists",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.preview_weekly_brief_skip_reason",
+            new=AsyncMock(return_value=None),
+        ) as brief_preview,
+        patch(
+            "brokerai.ai_strategy.startup.preview_weekly_debrief_skip_reason",
+            new=AsyncMock(return_value=None),
+        ) as debrief_preview,
+        patch(
+            "brokerai.ai_strategy.startup.start_weekly_brief_task",
+            new=brief_start,
+        ),
+        patch(
+            "brokerai.ai_strategy.startup.start_weekly_debrief_task",
+            new=debrief_start,
+        ),
+    ):
+        job = await advance_startup_job(job["id"])
+
+    assert job is not None
+    assert "weekly_brief" in (job.get("pending_reports") or [])
+    assert "weekly_debrief" in (job.get("pending_reports") or [])
+    brief_preview.assert_awaited()
+    assert brief_preview.await_args.kwargs.get("relax_daily_prereqs") is True
+    debrief_preview.assert_awaited()
+    assert debrief_preview.await_args.kwargs.get("relax_daily_prereqs") is True
+    brief_start.assert_awaited()
+    assert brief_start.await_args.kwargs.get("relax_daily_prereqs") is True
+    debrief_start.assert_awaited()
+    assert debrief_start.await_args.kwargs.get("relax_daily_prereqs") is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_startup_marks_open_job_cancelled():
+    settings = AiStrategySettingsRepository()
+    await settings.update(startup_enabled=True, startup_loop_count=1)
+
+    strategy = _strategy_doc()
+    with patch(
+        "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+        new=AsyncMock(return_value=strategy),
+    ):
+        job = await enqueue_ai_strategy_startup("strat-startup")
+        assert job is not None
+        assert job["status"] == STARTUP_STATUS_QUEUED
+
+        cancelled = await cancel_ai_strategy_startup("strat-startup")
+
+    assert cancelled is not None
+    assert cancelled["id"] == job["id"]
+    assert cancelled["status"] == STARTUP_STATUS_CANCELLED
+    assert cancelled.get("error") == "Cancelled by user"
+    assert await AiStrategyStartupJobsRepository().has_open_job("strat-startup") is False
+
+    # Drain must not resurrect a cancelled job.
+    advanced = await advance_startup_job(job["id"])
+    assert advanced is not None
+    assert advanced["status"] == STARTUP_STATUS_CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_force_enqueue_cancels_open_job_then_restarts():
+    settings = AiStrategySettingsRepository()
+    await settings.update(startup_enabled=True, startup_loop_count=2)
+
+    strategy = _strategy_doc()
+    with patch(
+        "brokerai.ai_strategy.startup.StrategiesRepository.get_by_id",
+        new=AsyncMock(return_value=strategy),
+    ):
+        first = await enqueue_ai_strategy_startup("strat-startup")
+        assert first is not None
+        second = await enqueue_ai_strategy_startup("strat-startup", force=True)
+
+    assert second is not None
+    assert second["id"] != first["id"]
+    assert second["status"] == STARTUP_STATUS_QUEUED
+
+    first_after = await AiStrategyStartupJobsRepository().get_by_id(first["id"])
+    assert first_after is not None
+    assert first_after["status"] == STARTUP_STATUS_CANCELLED
+    assert first_after.get("error") == "Superseded by restart"
+
+    open_jobs = await AiStrategyStartupJobsRepository().list_open_for_strategy("strat-startup")
+    assert len(open_jobs) == 1
+    assert open_jobs[0]["id"] == second["id"]

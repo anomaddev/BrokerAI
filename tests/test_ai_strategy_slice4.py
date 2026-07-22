@@ -283,8 +283,14 @@ async def test_feedback_fork_memory_not_ema_allowlist():
     assert not is_ai_strategy_daily_run({"origin": None})
 
     messages = build_backtest_feedback_messages({"run": {"id": "x"}}, memory_oriented=True)
-    assert "memory digest" in messages[0]["content"].lower()
-    assert "filters.atr" not in messages[0]["content"]
+    system = messages[0]["content"].lower()
+    user = messages[1]["content"].lower()
+    assert "memory digest" in system
+    assert "instrument trend" in system
+    assert "should have traded" in system
+    assert "trade count" in system  # explicitly told NOT to judge by it
+    assert "filters.atr" not in system
+    assert "signal" in user and "p&l" in user
 
     markdown = (
         "## Summary\nPlaybook learned.\n\n"

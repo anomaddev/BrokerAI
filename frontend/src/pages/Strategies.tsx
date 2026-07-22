@@ -15,6 +15,7 @@ import QueueBacktestOverlay, {
   type QueueBacktestParams,
 } from "../components/strategies/QueueBacktestOverlay";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import { startupStatusLabel } from "../lib/aiStrategy/activityLabels";
 import {
   backtestStatusLabel,
   normalizeBacktestStatus,
@@ -80,19 +81,6 @@ function executionPhaseLabel(phase: StrategyExecutionPhase): string {
   return "Live";
 }
 
-function startupStatusLabel(job: AiStrategyStartupJob): string {
-  if (job.status === "failed") return "Startup failed";
-  if (job.status === "completed") return "Startup done";
-  if (job.status === "cancelled") return "Startup cancelled";
-  const loopIndex = Number(job.loop_index || 0);
-  const loopTarget = Number(job.loop_target || 0);
-  if (job.phase === "ensuring_reports") return "Startup · reports";
-  if (job.phase === "seeding_digest") return "Startup · seeding";
-  if (job.phase === "looping" && loopTarget > 0) {
-    return `Startup · ${Math.min(loopIndex + 1, loopTarget)}/${loopTarget}`;
-  }
-  return "Starting up…";
-}
 
 function isAiStrategy(strategy: Strategy): boolean {
   return strategy.preset_id === "ai_strategy";
@@ -148,9 +136,16 @@ function SortableHeader({ label, sortKey, activeKey, direction, onSort }: Sortab
   );
 }
 
-export default function Strategies() {
+export type StrategiesListVariant = "standard" | "ai";
+
+type StrategiesProps = {
+  variant?: StrategiesListVariant;
+};
+
+export default function Strategies({ variant = "standard" }: StrategiesProps) {
   const navigate = useNavigate();
   const { formatInstant } = useGeneralSettings();
+  const isAiList = variant === "ai";
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,15 +169,24 @@ export default function Strategies() {
   useEffect(() => {
     api
       .listStrategies()
-      .then((data) => setStrategies(normalizeStrategies(data.strategies)))
+      .then((data) => {
+        const all = normalizeStrategies(data.strategies);
+        setStrategies(
+          isAiList ? all.filter(isAiStrategy) : all.filter((strategy) => !isAiStrategy(strategy)),
+        );
+      })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Failed to load strategies");
         setStrategies([]);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [isAiList]);
 
   useEffect(() => {
+    if (!isAiList) {
+      setStartupJobs({});
+      return;
+    }
     const aiIds = strategies.filter(isAiStrategy).map((strategy) => strategy.id);
     if (aiIds.length === 0) {
       setStartupJobs({});
@@ -219,7 +223,7 @@ export default function Strategies() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [strategies]);
+  }, [strategies, isAiList]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -241,6 +245,14 @@ export default function Strategies() {
     });
     return sortStrategies(matched, sortKey, sortDirection);
   }, [strategies, query, assetClassFilter, sortKey, sortDirection]);
+
+  function handleBuildClick() {
+    if (isAiList) {
+      navigate(ROUTES.research.strategyNew("ai-strategy"));
+      return;
+    }
+    setCreateOpen(true);
+  }
 
   const filteredIds = useMemo(() => filtered.map((strategy) => strategy.id), [filtered]);
   const selectedFilteredCount = useMemo(
@@ -468,6 +480,10 @@ export default function Strategies() {
   }
 
   function openStrategy(strategy: Strategy) {
+    if (isAiStrategy(strategy)) {
+      navigate(ROUTES.research.aiStrategyView(strategy.id));
+      return;
+    }
     navigate(ROUTES.research.strategyEdit(strategy.id));
   }
 
@@ -490,20 +506,24 @@ export default function Strategies() {
   const hasFilteredResults = filtered.length > 0;
   const hasSelection = selectedFilteredCount > 0;
   const emptyMessage = loading
-    ? "Loading strategies…"
+    ? isAiList
+      ? "Loading AI strategies…"
+      : "Loading strategies…"
     : error
       ? error
       : strategies.length === 0
-        ? "No strategies yet. Use Build Strategy to create your first one."
+        ? isAiList
+          ? "No AI Strategies yet. Build one for a single forex pair — it starts enabled, runs reports and backtests, then learns in shadow until you promote it."
+          : "No strategies yet. Use Build Strategy to create your first one."
         : "No strategies match your filters.";
 
   return (
     <div>
       <div className="strategy-list-header">
-        <h1 className="page-title">Strategies</h1>
-        <button type="button" className="btn" onClick={() => setCreateOpen(true)}>
+        <h1 className="page-title">{isAiList ? "AI Strategies" : "Strategies"}</h1>
+        <button type="button" className="btn" onClick={handleBuildClick}>
           <Plus size={16} aria-hidden />
-          Build Strategy
+          {isAiList ? "Build AI Strategy" : "Build Strategy"}
         </button>
       </div>
 

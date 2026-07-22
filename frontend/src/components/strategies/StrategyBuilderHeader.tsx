@@ -14,6 +14,10 @@ type StrategyBuilderHeaderProps = {
   instrumentSelection: StrategyInstrumentSelection;
   onInstrumentSelectionChange: (selection: StrategyInstrumentSelection) => void;
   supportedAssetClasses?: AssetClass[];
+  /** When true, only one instrument may be selected (AI Strategies). */
+  singleInstrument?: boolean;
+  /** Map of symbol → owner label for instruments already claimed by another AI Strategy. */
+  occupiedInstruments?: Record<string, string>;
   onClose: () => void;
   currentVersion?: number | null;
 };
@@ -24,6 +28,8 @@ export default function StrategyBuilderHeader({
   instrumentSelection,
   onInstrumentSelectionChange,
   supportedAssetClasses = ALL_ASSET_CLASSES,
+  singleInstrument = false,
+  occupiedInstruments,
   onClose,
   currentVersion = null,
 }: StrategyBuilderHeaderProps) {
@@ -67,6 +73,8 @@ export default function StrategyBuilderHeader({
             value={instrumentSelection}
             onChange={onInstrumentSelectionChange}
             supportedAssetClasses={supportedAssetClasses}
+            selectionMode={singleInstrument ? "single" : "multi"}
+            occupiedInstruments={occupiedInstruments}
           />
         </div>
       </div>

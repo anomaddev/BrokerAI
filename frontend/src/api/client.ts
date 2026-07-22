@@ -795,9 +795,24 @@ export const api = {
       `/api/strategies/${encodeURIComponent(strategyId)}/startup`,
     ),
 
+  getStrategyActivity: (strategyId: string, params?: { limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const qs = search.toString();
+    return request<AiStrategyActivityResponse>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/activity${qs ? `?${qs}` : ""}`,
+    );
+  },
+
   retryStrategyStartup: (strategyId: string) =>
     request<{ job: AiStrategyStartupJob }>(
       `/api/strategies/${encodeURIComponent(strategyId)}/startup`,
+      { method: "POST" },
+    ),
+
+  cancelStrategyStartup: (strategyId: string) =>
+    request<{ job: AiStrategyStartupJob | null }>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/startup/cancel`,
       { method: "POST" },
     ),
 
@@ -1793,10 +1808,52 @@ export type AiStrategyStartupJob = {
   pending_reports?: string[];
   current_backtest_run_id?: string | null;
   seed_digest_version?: number | null;
+  status_message?: string | null;
+  last_seed_wait?: string | null;
   error?: string | null;
   created_at?: string | null;
   started_at?: string | null;
+  updated_at?: string | null;
   finished_at?: string | null;
+};
+
+export type AiStrategyActivityKind =
+  | "startup"
+  | "backtest"
+  | "digest"
+  | "learning"
+  | "lifecycle"
+  | "version";
+
+export type AiStrategyActivityEvent = {
+  id: string;
+  kind: AiStrategyActivityKind | string;
+  status: string;
+  title: string;
+  detail?: string | null;
+  occurred_at: string;
+  href?: string | null;
+  meta?: Record<string, unknown>;
+};
+
+export type AiStrategyDigestSummary = {
+  id?: string;
+  version?: number | null;
+  created_at?: string | null;
+  source?: string | null;
+  summary?: string | null;
+  standing_rule_count?: number;
+  anti_rule_count?: number;
+  standing_rules?: string[];
+  anti_rules?: string[];
+};
+
+export type AiStrategyActivityResponse = {
+  strategy: Strategy;
+  startup_job: AiStrategyStartupJob | null;
+  latest_digest: AiStrategyDigestSummary | null;
+  events: AiStrategyActivityEvent[];
+  active: boolean;
 };
 
 export type BacktestRunsResponse = {

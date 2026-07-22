@@ -303,12 +303,14 @@ async def run_backtest_engine(
     total_bars = max(1, len(all_candles) - period_start_idx)
     last_stop_exit_time: str | None = None
     cooldown_bars = int((params.get("execution") or {}).get("post_stop_cooldown_bars") or 0)
+    # Explore loops (AI Strategy startup loop 0) emit signals only — no fills.
+    signal_only = str(run_doc.get("loop_mode") or "").strip().lower() == "explore"
 
     # Seed live stats so the UI shows 0s instead of blanks while the bar loop runs.
     await runs_repo.update_progress(
         run_id,
         progress_pct=2,
-        status_message="Simulating",
+        status_message="Exploring patterns" if signal_only else "Simulating",
         stats=compute_stats([], equity_curve=[], initial_equity=account_margin),
     )
 
@@ -443,8 +445,10 @@ async def run_backtest_engine(
         # Live-parity: approaching / none signals are watch-only and must not enter.
         # Without this gate, backtests opened trades with no preceding SIGNAL action,
         # so the next real crossover looked "out of order" after an orphan ENTRY.
+        # Explore loops skip fills entirely (pattern pass / signal_only).
         if (
-            gate_passed
+            not signal_only
+            and gate_passed
             and is_executor_eligible(analysis)
             and not sim.has_open_position()
         ):
@@ -498,7 +502,7 @@ async def run_backtest_engine(
             last_heartbeat = now
 
     # Force-close any open position at the last bar close.
-    if sim.has_open_position() and all_candles:
+    if (not signal_only) and sim.has_open_position() and all_candles:
         last = all_candles[-1]
         closed = sim._close(
             price=float(last["close"]),

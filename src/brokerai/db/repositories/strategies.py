@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from brokerai.db.pg.client import session_scope
 from brokerai.db.pg.models import StrategyRow
@@ -227,6 +228,50 @@ class StrategiesRepository:
                 return None
             return serialize_strategy(dict(row.doc))
 
+    async def find_ai_strategy_for_instrument(
+        self,
+        symbol: str,
+        *,
+        exclude_strategy_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the AI Strategy that owns *symbol*, if any.
+
+        App-level uniqueness: at most one ``ai_strategy`` row may target a given
+        forex pair. Matching uses denormalized ``instruments`` and
+        ``instrument_selection.forex`` in the JSONB doc.
+        """
+        async with session_scope() as session:
+            return await self._find_ai_strategy_for_instrument(
+                session,
+                symbol,
+                exclude_strategy_id=exclude_strategy_id,
+            )
+
+    async def _find_ai_strategy_for_instrument(
+        self,
+        session: AsyncSession,
+        symbol: str,
+        *,
+        exclude_strategy_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        from brokerai.ai_strategy.instruments import ai_strategy_owns_instrument
+        from brokerai.ai_strategy.lifecycle import AI_STRATEGY_PRESET_ID
+
+        needle = (symbol or "").strip()
+        if not needle:
+            return None
+        exclude = (exclude_strategy_id or "").strip() or None
+
+        stmt = select(StrategyRow).where(StrategyRow.preset_id == AI_STRATEGY_PRESET_ID)
+        rows = (await session.execute(stmt)).scalars().all()
+        for row in rows:
+            if exclude and row.id == exclude:
+                continue
+            doc = dict(row.doc)
+            if ai_strategy_owns_instrument(doc, needle):
+                return serialize_strategy(doc)
+        return None
+
     async def create(
         self,
         *,
@@ -267,11 +312,23 @@ class StrategiesRepository:
             "updated_at": now,
         }
         if preset_id == "ai_strategy":
-            if asset_class != "forex" or set(cleaned_selection.keys()) - {"forex"}:
-                raise ValueError("AI Strategy is forex-only in v1")
+            from brokerai.ai_strategy.instruments import (
+                conflict_message,
+                resolve_ai_strategy_name,
+                validate_ai_strategy_instrument_selection,
+            )
             from brokerai.ai_strategy.lifecycle import ensure_lifecycle_on_create
             from brokerai.db.repositories.asset_settings import AssetSettingsRepository
 
+            symbol = validate_ai_strategy_instrument_selection(cleaned_selection)
+            owner = await self.find_ai_strategy_for_instrument(symbol)
+            if owner:
+                raise ValueError(conflict_message(str(owner.get("name") or ""), symbol))
+            doc["name"] = resolve_ai_strategy_name(doc.get("name"), symbol)
+            # AI Strategies start enabled so startup (reports → backtests → seed)
+            # and shadow warm-up can run immediately. Live trading still requires
+            # explicit promote once warm-up reaches ready.
+            doc["enabled"] = True
             forex_settings = await AssetSettingsRepository().get("forex")
             default_days = int(forex_settings.get("default_warmup_trading_days") or 5)
             doc = ensure_lifecycle_on_create(doc, default_warmup_trading_days=default_days)
@@ -368,6 +425,25 @@ class StrategiesRepository:
                 updates["instrument_selection"] = cleaned_selection
                 updates["instruments"] = flatten_instruments(cleaned_selection)
                 updates["asset_class"] = derive_asset_class(cleaned_selection)
+
+                from brokerai.ai_strategy.lifecycle import is_ai_strategy_doc
+
+                if is_ai_strategy_doc({**existing, **updates}):
+                    from brokerai.ai_strategy.instruments import (
+                        conflict_message,
+                        validate_ai_strategy_instrument_selection,
+                    )
+
+                    symbol = validate_ai_strategy_instrument_selection(cleaned_selection)
+                    owner = await self._find_ai_strategy_for_instrument(
+                        session,
+                        symbol,
+                        exclude_strategy_id=strategy_id,
+                    )
+                    if owner:
+                        raise ValueError(conflict_message(str(owner.get("name") or ""), symbol))
+                    updates["instruments"] = [symbol]
+                    updates["asset_class"] = "forex"
 
             existing.update(updates)
             _sync_row_columns(row, existing)

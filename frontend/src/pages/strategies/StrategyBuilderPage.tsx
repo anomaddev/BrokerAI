@@ -10,7 +10,16 @@ export default function StrategyBuilderPage() {
   const preset = presetId ? getPresetByRouteSlug(presetId) : undefined;
 
   if (!preset) {
-    return <Navigate to={ROUTES.research.strategies} replace />;
+    return (
+      <Navigate
+        to={
+          presetId === "ai-strategy"
+            ? ROUTES.research.aiStrategies
+            : ROUTES.research.strategies
+        }
+        replace
+      />
+    );
   }
 
   switch (preset.id) {

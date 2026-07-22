@@ -7,6 +7,8 @@ import Dashboard from "./pages/Dashboard";
 import Research from "./pages/Research";
 import ResearchReportView from "./pages/ResearchReportView";
 import Strategies from "./pages/Strategies";
+import AiStrategies from "./pages/AiStrategies";
+import AiStrategyLogPage from "./pages/AiStrategyLogPage";
 import Explore from "./pages/Explore";
 import Backtesting from "./pages/Backtesting";
 import BacktestRunView from "./pages/BacktestRunView";
@@ -138,6 +140,8 @@ export default function App() {
           <Route path="/research/reports" element={<Research />} />
           <Route path="/research/reports/r/*" element={<ResearchReportView />} />
           <Route path="/research/strategies" element={<Strategies />} />
+          <Route path="/research/ai-strategies" element={<AiStrategies />} />
+          <Route path="/research/ai-strategies/:id" element={<AiStrategyLogPage />} />
           <Route path="/research/strategies/new/:presetId" element={<StrategyBuilderPage />} />
           <Route path="/research/strategies/:id/edit" element={<StrategyEditPage />} />
           <Route path="/research/analysis" element={<StrategyAnalysis />} />

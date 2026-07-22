@@ -87,6 +87,7 @@ def merge_feedback_notes_into_digest(
     notes: list[dict[str, Any]],
     *,
     strategy_id: str = "",
+    source: str = "ai_strategy_daily_feedback",
 ) -> dict[str, Any]:
     """Build a new digest doc payload from prior + structured memory notes.
 
@@ -119,11 +120,12 @@ def merge_feedback_notes_into_digest(
                 extra_notes.append(text)
             summary_bits.append(text)
 
+    source_text = (source or "").strip() or "ai_strategy_daily_feedback"
     return {
         "standing_rules": standing[:24],
         "anti_rules": anti[:24],
         "summary": " ".join(summary_bits)[:400].strip(),
         "notes": extra_notes[:40],
-        "source": "ai_strategy_daily_feedback",
+        "source": source_text,
         "covered_through": out.get("covered_through"),
     }

@@ -54,7 +54,7 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
       { path: "reports", label: "Reports" },
       { path: "data", label: "Data" },
       { path: "backtesting", label: "Backtesting" },
-      { path: "ai-strategies", label: "AI Strategies" },
+      { path: "ai-strategies", label: "AI Startup" },
     ],
   },
   {

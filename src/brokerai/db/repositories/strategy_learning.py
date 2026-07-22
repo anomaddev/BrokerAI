@@ -69,6 +69,40 @@ class StrategyMemoryDigestsRepository:
         """Alias used by daily compiled-playbook backtests (Slice 4)."""
         return await self.get_latest(strategy_id)
 
+    async def list_for_strategy(
+        self,
+        strategy_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return digest versions for a strategy (newest first)."""
+        sid = (strategy_id or "").strip()
+        if not sid:
+            return []
+        limit = max(1, min(int(limit), 100))
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(StrategyMemoryDigestRow)
+                    .where(StrategyMemoryDigestRow.strategy_id == sid)
+                    .order_by(StrategyMemoryDigestRow.version.desc())
+                    .limit(limit)
+                )
+            ).scalars().all()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                out.append(
+                    {
+                        "id": row.id,
+                        "strategy_id": row.strategy_id,
+                        "version": row.version,
+                        "created_at": row.created_at.isoformat(),
+                        **dict(row.doc),
+                        "version": row.version,
+                    }
+                )
+            return out
+
     async def next_version(self, strategy_id: str) -> int:
         async with session_scope() as session:
             current = (
@@ -174,6 +208,28 @@ class LearningJobsRepository:
                     select(LearningJobRow)
                     .where(LearningJobRow.status == LEARNING_JOB_STATUS_QUEUED)
                     .order_by(LearningJobRow.created_at.asc())
+                    .limit(limit)
+                )
+            ).scalars().all()
+            return [self._serialize(row) for row in rows]
+
+    async def list_for_strategy(
+        self,
+        strategy_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return learning jobs for a strategy (newest first)."""
+        sid = (strategy_id or "").strip()
+        if not sid:
+            return []
+        limit = max(1, min(int(limit), 100))
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(LearningJobRow)
+                    .where(LearningJobRow.strategy_id == sid)
+                    .order_by(LearningJobRow.created_at.desc())
                     .limit(limit)
                 )
             ).scalars().all()

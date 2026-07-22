@@ -40,6 +40,12 @@ def build_signal_actions(
 
     if signal and signal != "none" and "approach" not in str(signal):
         conf = _confidence_pct(analysis.confidence)
+        signal_text = str(signal)
+        if signal_text.startswith("playbook_"):
+            direction_label = signal_text.removeprefix("playbook_").replace("_", " ")
+            signal_phrase = f"Playbook {direction_label} signal"
+        else:
+            signal_phrase = "Crossover detected"
         if not filters_passed:
             failed = []
             if isinstance(filters, dict):
@@ -53,7 +59,7 @@ def build_signal_actions(
                 {
                     "sequence": seq,
                     "kind": "filter_fail",
-                    "message": f"Crossover detected, failed {filter_label} filter",
+                    "message": f"{signal_phrase}, failed {filter_label} filter",
                     "bar_time": bar_time,
                     "meta": {**meta_base, "filters": filters},
                     "created_at": datetime.now(timezone.utc),
@@ -69,7 +75,7 @@ def build_signal_actions(
                         "sequence": seq,
                         "kind": "signal",
                         "message": (
-                            f"Crossover detected, confidence {conf}%, "
+                            f"{signal_phrase}, confidence {conf}%, "
                             "skipped — closed prior position on this signal"
                         ),
                         "bar_time": bar_time,
@@ -85,7 +91,7 @@ def build_signal_actions(
                         "sequence": seq,
                         "kind": "signal",
                         "message": (
-                            f"Crossover detected, confidence {conf}% "
+                            f"{signal_phrase}, confidence {conf}% "
                             f"below minimum {min_c}% — skipping trade"
                         ),
                         "bar_time": bar_time,
@@ -99,7 +105,7 @@ def build_signal_actions(
                     {
                         "sequence": seq,
                         "kind": "signal",
-                        "message": f"Crossover detected, blocked by {reason}",
+                        "message": f"{signal_phrase}, blocked by {reason}",
                         "bar_time": bar_time,
                         "meta": {**meta_base, "gate_reasons": gate_reasons},
                         "created_at": datetime.now(timezone.utc),
@@ -112,7 +118,7 @@ def build_signal_actions(
             {
                 "sequence": seq,
                 "kind": "signal",
-                "message": f"Crossover detected, confidence {conf}%, executing trade",
+                "message": f"{signal_phrase}, confidence {conf}%, executing trade",
                 "bar_time": bar_time,
                 "meta": meta_base,
                 "created_at": datetime.now(timezone.utc),

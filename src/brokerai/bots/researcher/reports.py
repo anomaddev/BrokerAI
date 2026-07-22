@@ -344,6 +344,32 @@ async def load_daily_reports_for_week(week_start: date) -> list[DailyReportEntry
     return entries
 
 
+async def load_recent_daily_reports(*, limit: int = 5) -> list[DailyReportEntry]:
+    """Newest-first daily reports available in storage (any week).
+
+    Used when AI Strategy startup needs weekly brief/debrief context but the
+    strict open-day / weekday set for the target week is incomplete.
+    """
+    limit = max(1, min(int(limit), 20))
+    metas = await list_reports(limit=80)
+    entries: list[DailyReportEntry] = []
+    seen: set[str] = set()
+    for meta in metas:
+        if str(getattr(meta, "report_type", "") or "") != "daily":
+            continue
+        day = str(getattr(meta, "date", "") or "").strip()
+        if not day or day in seen:
+            continue
+        content = await load_daily_report_content(day)
+        if not content:
+            continue
+        seen.add(day)
+        entries.append(DailyReportEntry(date=day, content=content.strip()))
+        if len(entries) >= limit:
+            break
+    return entries
+
+
 async def load_weekend_daily_reports_for_week(week_start: date) -> list[DailyReportEntry]:
     """Load Sat/Sun dailies immediately before week_start (prior weekend)."""
     entries: list[DailyReportEntry] = []

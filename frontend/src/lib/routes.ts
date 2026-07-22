@@ -6,6 +6,8 @@ export const ROUTES = {
     reports: "/research/reports",
     reportView: (filename: string) => `/research/reports/r/${filename}`,
     strategies: "/research/strategies",
+    aiStrategies: "/research/ai-strategies",
+    aiStrategyView: (id: string) => `/research/ai-strategies/${encodeURIComponent(id)}`,
     strategyNew: (presetId: string) => `/research/strategies/new/${presetId}`,
     strategyEdit: (id: string) => `/research/strategies/${encodeURIComponent(id)}/edit`,
     analysis: "/research/analysis",

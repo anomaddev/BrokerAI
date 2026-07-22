@@ -53,7 +53,9 @@ export default function StrategyEditPage() {
 
   if (!id) return <Navigate to={ROUTES.research.strategies} replace />;
   if (loading) return <div className="center-page">Loading strategy…</div>;
-  if (error || !strategy) return <Navigate to={ROUTES.research.strategies} replace />;
+  if (error || !strategy) {
+    return <Navigate to={ROUTES.research.strategies} replace />;
+  }
 
   const params = draftParams ?? strategy.params;
 
@@ -110,5 +112,14 @@ export default function StrategyEditPage() {
     );
   }
 
-  return <Navigate to={ROUTES.research.strategies} replace />;
+  return (
+    <Navigate
+      to={
+        strategy.preset_id === "ai_strategy"
+          ? ROUTES.research.aiStrategies
+          : ROUTES.research.strategies
+      }
+      replace
+    />
+  );
 }

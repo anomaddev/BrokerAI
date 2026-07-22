@@ -129,3 +129,55 @@ async def test_run_backtest_engine_walks_reversed_candles_oldest_to_newest():
     assert timed, "expected recorded actions with bar times"
     times = [str(action["bar_time"]) for action in timed]
     assert times == sorted(times), "action bar times must advance oldest → newest"
+
+
+@pytest.mark.asyncio
+async def test_explore_loop_mode_skips_fills():
+    """Startup explore loops must emit signals without opening positions."""
+    candles = _iso_candles(180)
+    strategy = {
+        "id": "strategy-bt-explore",
+        "name": "EMA Explore",
+        "asset_class": "forex",
+        "timeframe": "M15",
+        "instruments": ["EUR/USD"],
+        "params": {
+            **DEFAULT_PARAMS,
+            "filters": [
+                {**DEFAULT_PARAMS["filters"][0], "enabled": False},
+                {**DEFAULT_PARAMS["filters"][1], "enabled": False},
+            ],
+            "execution": {
+                **DEFAULT_PARAMS["execution"],
+                "sessions": ["Sydney", "Asia", "London", "NY"],
+            },
+        },
+    }
+    created = await BacktestRunsRepository().create_queued_runs(
+        [strategy],
+        instrument="EUR/USD",
+        period="1m",
+        period_start=candles[40]["time"],
+        period_end=candles[-1]["time"],
+        loop_mode="explore",
+    )
+    run_id = created[0]["id"]
+    raw = await BacktestRunsRepository().get_raw_doc(run_id)
+    assert raw is not None
+    assert raw.get("loop_mode") == "explore"
+
+    import logging
+
+    result = await run_backtest_engine(
+        raw,
+        log=logging.getLogger("test.backtest.explore"),
+        candles_override=candles,
+    )
+    assert result["status"] == "completed"
+    assert int(result["stats"].get("total_trades") or 0) == 0
+
+    actions = await BacktestActionsRepository().list_for_run(run_id, limit=5000)
+    kinds = {str(a.get("kind") or "") for a in actions}
+    assert "entry" not in kinds
+    assert "exit" not in kinds
+    # Signals may or may not fire depending on candle path; zero fills is the contract.

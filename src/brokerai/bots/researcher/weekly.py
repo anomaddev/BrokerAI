@@ -20,6 +20,7 @@ from brokerai.bots.researcher.reports import (
     load_daily_report_content,
     load_daily_reports_for_week,
     load_historical_weekly_debriefs,
+    load_recent_daily_reports,
     load_weekend_daily_reports_for_week,
     load_weekly_brief_for_week,
     weekly_brief_key,
@@ -138,12 +139,42 @@ def _daily_dicts(entries: list) -> list[dict[str, str]]:
     return [{"date": entry.date, "content": entry.content} for entry in entries]
 
 
+async def _brief_daily_context(week_start: date) -> list[dict[str, str]]:
+    """Dailies for a weekly brief: weekend + open-day, with recent fallbacks."""
+    weekend_dailies = await load_weekend_daily_reports_for_week(week_start)
+    dailies = _daily_dicts(weekend_dailies)
+    open_day = week_start.isoformat()
+    open_daily = await load_daily_report_content(open_day)
+    if open_daily:
+        dailies.append({"date": open_day, "content": open_daily.strip()})
+        return dailies
+
+    recent = await load_recent_daily_reports(limit=5)
+    seen = {row["date"] for row in dailies}
+    for entry in recent:
+        if entry.date in seen:
+            continue
+        dailies.append({"date": entry.date, "content": entry.content})
+        seen.add(entry.date)
+    return dailies
+
+
+async def _debrief_daily_context(week_start: date) -> list[dict[str, str]]:
+    """Weekday dailies for a debrief, falling back to recent reports when empty."""
+    weekday_dailies = await load_daily_reports_for_week(week_start)
+    if weekday_dailies:
+        return _daily_dicts(weekday_dailies)
+    recent = await load_recent_daily_reports(limit=5)
+    return _daily_dicts(recent)
+
+
 async def preview_weekly_brief_skip_reason(
     settings: dict,
     now: datetime,
     *,
     force: bool = False,
     manual: bool = False,
+    relax_daily_prereqs: bool = False,
 ) -> str | None:
     if not manual and not settings.get("weekly_brief_enabled", False):
         return "Weekly brief is disabled"
@@ -180,6 +211,11 @@ async def preview_weekly_brief_skip_reason(
 
     open_day = week_start.isoformat()
     if not await load_daily_report_content(open_day):
+        if relax_daily_prereqs:
+            # AI Strategy startup / manual recovery: use any recent daily context.
+            if await _brief_daily_context(week_start):
+                return None
+            return "No daily reports available to seed weekly brief"
         return f"Open-day daily report missing for {open_day}"
 
     return None
@@ -191,6 +227,7 @@ async def preview_weekly_debrief_skip_reason(
     *,
     force: bool = False,
     manual: bool = False,
+    relax_daily_prereqs: bool = False,
 ) -> str | None:
     if not manual and not settings.get("weekly_debrief_enabled", False):
         return "Weekly debrief is disabled"
@@ -213,6 +250,10 @@ async def preview_weekly_debrief_skip_reason(
 
     weekday_dailies = await load_daily_reports_for_week(week_start)
     if len(weekday_dailies) < MIN_WEEKDAY_DAILIES_FOR_DEBRIEF:
+        if relax_daily_prereqs:
+            if await load_recent_daily_reports(limit=1):
+                return None
+            return "No daily reports available to seed weekly debrief"
         return f"Insufficient weekday dailies for week {week_key}"
 
     return None
@@ -222,6 +263,7 @@ async def run_weekly_brief(
     *,
     force: bool = False,
     manual: bool = False,
+    relax_daily_prereqs: bool = False,
     on_progress: ProgressCallback | None = None,
 ) -> WeeklyRunResult:
     now = datetime.now(timezone.utc)
@@ -233,6 +275,7 @@ async def run_weekly_brief(
         now,
         force=force,
         manual=manual,
+        relax_daily_prereqs=relax_daily_prereqs,
     )
     if skip:
         return WeeklyRunResult(ok=False, skipped_reason=skip)
@@ -242,14 +285,13 @@ async def run_weekly_brief(
     )
     model, _model_skip = await _resolve_weekly_model(settings, "weekly_brief_model_id")
 
-    open_day = week_start.isoformat()
-    open_daily = await load_daily_report_content(open_day)
-    assert open_daily is not None
-
     _emit_progress(on_progress, "load", "Loading daily reports…", 15)
-    weekend_dailies = await load_weekend_daily_reports_for_week(week_start)
-    dailies = _daily_dicts(weekend_dailies)
-    dailies.append({"date": open_day, "content": open_daily.strip()})
+    dailies = await _brief_daily_context(week_start)
+    if not dailies:
+        return WeeklyRunResult(
+            ok=False,
+            skipped_reason=f"Open-day daily report missing for {week_start.isoformat()}",
+        )
 
     conflict = detect_schedule_conflict(
         daily_market_id=settings.get("daily_report_market_id", "london"),
@@ -328,6 +370,7 @@ async def run_weekly_debrief(
     *,
     force: bool = False,
     manual: bool = False,
+    relax_daily_prereqs: bool = False,
     on_progress: ProgressCallback | None = None,
 ) -> WeeklyRunResult:
     now = datetime.now(timezone.utc)
@@ -339,6 +382,7 @@ async def run_weekly_debrief(
         now,
         force=force,
         manual=manual,
+        relax_daily_prereqs=relax_daily_prereqs,
     )
     if skip:
         return WeeklyRunResult(ok=False, skipped_reason=skip)
@@ -349,7 +393,7 @@ async def run_weekly_debrief(
     model, _model_skip = await _resolve_weekly_model(settings, "weekly_debrief_model_id")
 
     _emit_progress(on_progress, "load", "Loading week context…", 15)
-    weekday_dailies = await load_daily_reports_for_week(week_start)
+    dailies = await _debrief_daily_context(week_start)
     missing_dates: list[str] = []
     for offset in range(5):
         day = week_start + timedelta(days=offset)
@@ -362,7 +406,7 @@ async def run_weekly_debrief(
     reasoning = settings.get("weekly_debrief_reasoning_effort") or "high"
     messages = build_weekly_debrief_messages(
         week_start=week_start,
-        dailies=_daily_dicts(weekday_dailies),
+        dailies=dailies,
         weekly_brief=weekly_brief,
         historical_debriefs=historical or None,
         missing_dates=missing_dates or None,

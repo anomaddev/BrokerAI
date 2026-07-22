@@ -142,7 +142,11 @@ export default function SaveStrategyOverlay({
   const missing: string[] = [];
   if (!trimmedName) missing.push("Strategy name");
   if (!params.timeframe) missing.push("Timeframe");
-  if (!hasInstrumentSelection(instrumentSelection)) missing.push("Assets");
+  if (presetId === "ai_strategy") {
+    if (instrumentCount !== 1) missing.push("Exactly one instrument");
+  } else if (!hasInstrumentSelection(instrumentSelection)) {
+    missing.push("Assets");
+  }
   if (sessions.length === 0) missing.push("Trading sessions");
 
   const canSubmit = missing.length === 0 && !submitting;
@@ -161,6 +165,7 @@ export default function SaveStrategyOverlay({
       };
 
       const description = notes.trim();
+      let savedId = strategyId;
       if (mode === "edit" && strategyId) {
         await api.updateStrategy(strategyId, {
           name: trimmedName,
@@ -170,17 +175,24 @@ export default function SaveStrategyOverlay({
           enabled: initialEnabled,
         });
       } else {
-        await api.createStrategy({
+        const created = await api.createStrategy({
           name: trimmedName,
           description,
           preset_id: presetId,
           params: payloadParams,
           instrument_selection: instrumentSelection,
-          enabled: false,
+          // AI Strategies start enabled so startup + shadow warm-up can run.
+          // Manual templates stay disabled until the user turns them on.
+          enabled: presetId === "ai_strategy",
         });
+        savedId = created.id;
       }
       onClose();
-      navigate(ROUTES.research.strategies);
+      if (presetId === "ai_strategy" && savedId) {
+        navigate(ROUTES.research.aiStrategyView(savedId));
+      } else {
+        navigate(ROUTES.research.strategies);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save strategy");
     } finally {
