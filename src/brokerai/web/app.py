@@ -50,6 +50,7 @@ from brokerai.web.routes.rss_feeds_settings import router as rss_feeds_router
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.backtest_runs import router as backtest_runs_router
 from brokerai.web.routes.backtest_settings import router as backtest_settings_router
+from brokerai.web.routes.ai_strategy_settings import router as ai_strategy_settings_router
 from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.strategy_analysis_runs import router as strategy_analysis_runs_router
 from brokerai.web.routes.trades import router as trades_router
@@ -208,6 +209,7 @@ app.include_router(research_router)
 app.include_router(strategies_router)
 app.include_router(backtest_runs_router)
 app.include_router(backtest_settings_router)
+app.include_router(ai_strategy_settings_router)
 app.include_router(strategy_analysis_runs_router)
 app.include_router(trades_router)
 app.include_router(system_router)

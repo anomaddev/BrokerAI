@@ -166,10 +166,19 @@ _inflight_feedback: set[str] = set()
 
 
 def is_ai_strategy_daily_run(run: dict[str, Any] | None) -> bool:
-    """True when the backtest was queued by the AI Strategy daily cadence."""
+    """True when the backtest should use memory-oriented AI feedback.
+
+    Covers daily cadence runs and create-time startup improve loops.
+    """
     if not isinstance(run, dict):
         return False
-    return str(run.get("origin") or "") == ORIGIN_AI_STRATEGY_DAILY
+    origin = str(run.get("origin") or "")
+    if origin == ORIGIN_AI_STRATEGY_DAILY:
+        return True
+    # Late import avoids circular import with startup → ai_feedback.
+    from brokerai.ai_strategy.startup import ORIGIN_AI_STRATEGY_STARTUP
+
+    return origin == ORIGIN_AI_STRATEGY_STARTUP
 
 
 def normalize_memory_notes(raw: Any) -> list[dict[str, Any]]:

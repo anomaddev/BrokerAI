@@ -3,6 +3,7 @@ import { Check, ChevronDown, ChevronUp, History, Minus, Plus, Trash2, X } from "
 import { useNavigate } from "react-router-dom";
 import {
   api,
+  type AiStrategyStartupJob,
   type AssetClass,
   type Strategy,
   type StrategyExecutionPhase,
@@ -79,6 +80,24 @@ function executionPhaseLabel(phase: StrategyExecutionPhase): string {
   return "Live";
 }
 
+function startupStatusLabel(job: AiStrategyStartupJob): string {
+  if (job.status === "failed") return "Startup failed";
+  if (job.status === "completed") return "Startup done";
+  if (job.status === "cancelled") return "Startup cancelled";
+  const loopIndex = Number(job.loop_index || 0);
+  const loopTarget = Number(job.loop_target || 0);
+  if (job.phase === "ensuring_reports") return "Startup · reports";
+  if (job.phase === "seeding_digest") return "Startup · seeding";
+  if (job.phase === "looping" && loopTarget > 0) {
+    return `Startup · ${Math.min(loopIndex + 1, loopTarget)}/${loopTarget}`;
+  }
+  return "Starting up…";
+}
+
+function isAiStrategy(strategy: Strategy): boolean {
+  return strategy.preset_id === "ai_strategy";
+}
+
 function warmupProgressLabel(strategy: Strategy): string | null {
   if (strategy.preset_id !== "ai_strategy") return null;
   if (strategy.execution_phase !== "warming" && strategy.execution_phase !== "ready") {
@@ -148,6 +167,7 @@ export default function Strategies() {
   const [sortKey, setSortKey] = useState<StrategySortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [promotingId, setPromotingId] = useState<string | null>(null);
+  const [startupJobs, setStartupJobs] = useState<Record<string, AiStrategyStartupJob>>({});
   const selectAllRef = useRef<HTMLInputElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
@@ -161,6 +181,45 @@ export default function Strategies() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    const aiIds = strategies.filter(isAiStrategy).map((strategy) => strategy.id);
+    if (aiIds.length === 0) {
+      setStartupJobs({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadStartupJobs() {
+      const entries = await Promise.all(
+        aiIds.map(async (id) => {
+          try {
+            const response = await api.getStrategyStartup(id);
+            return [id, response.job] as const;
+          } catch {
+            return [id, null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const next: Record<string, AiStrategyStartupJob> = {};
+      for (const [id, job] of entries) {
+        if (job) next[id] = job;
+      }
+      setStartupJobs(next);
+    }
+
+    void loadStartupJobs();
+    const timer = window.setInterval(() => {
+      void loadStartupJobs();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [strategies]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -748,6 +807,14 @@ export default function Strategies() {
                               {warmupProgressLabel(strategy)
                                 ? ` · ${warmupProgressLabel(strategy)}`
                                 : ""}
+                            </span>
+                          ) : null}
+                          {startupJobs[strategy.id] ? (
+                            <span
+                              className={`research-tag strategy-startup--${startupJobs[strategy.id].status}`}
+                              title={startupJobs[strategy.id].error || undefined}
+                            >
+                              {startupStatusLabel(startupJobs[strategy.id])}
                             </span>
                           ) : null}
                           {strategy.execution_phase === "ready" ? (

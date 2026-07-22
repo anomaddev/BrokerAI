@@ -19,6 +19,7 @@ import ModelsTab from "./settings/ModelsTab";
 import ReportsTab from "./settings/ReportsTab";
 import ResearchDataTab from "./settings/ResearchDataTab";
 import BacktestingTab from "./settings/BacktestingTab";
+import AiStrategiesTab from "./settings/AiStrategiesTab";
 import SettingsPanelHeader from "../components/SettingsPanelHeader";
 
 type SettingsNavItem = {
@@ -53,6 +54,7 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
       { path: "reports", label: "Reports" },
       { path: "data", label: "Data" },
       { path: "backtesting", label: "Backtesting" },
+      { path: "ai-strategies", label: "AI Strategies" },
     ],
   },
   {
@@ -1184,6 +1186,7 @@ export default function Settings() {
             <Route path="reports" element={<ReportsTab />} />
             <Route path="data" element={<ResearchDataTab />} />
             <Route path="backtesting" element={<BacktestingTab />} />
+            <Route path="ai-strategies" element={<AiStrategiesTab />} />
             <Route path="connections" element={<DataConnectionsTabComponent />} />
             <Route path="broker/general" element={<BrokerGeneralTab />} />
             <Route path="broker/forex" element={<AssetClassTab assetClass="forex" label="Forex" />} />

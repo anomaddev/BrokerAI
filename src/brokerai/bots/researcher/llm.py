@@ -117,6 +117,7 @@ def _operation_label(operation: str) -> str:
         "ai_strategy_daily_feedback": "AI Strategy daily feedback",
         "ai_strategy_decision": "AI Strategy decision",
         "strategy_learn": "AI Strategy learning",
+        "strategy_startup_seed": "AI Strategy startup seed",
         "connection_test": "Connection test",
         "llm_call": "LLM call",
     }

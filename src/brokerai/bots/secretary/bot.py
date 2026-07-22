@@ -285,11 +285,28 @@ class SecretaryBot(Bot):
         except Exception:
             logger.exception("Secretary — learning job drain failed")
 
+    async def _maybe_drain_ai_strategy_startup_jobs(self) -> None:
+        """Advance at most one AI Strategy create-time startup job per tick."""
+        try:
+            from brokerai.ai_strategy.startup import drain_queued_startup_jobs
+
+            summary = await drain_queued_startup_jobs(limit=1)
+            if summary.get("advanced"):
+                logger.info(
+                    "Secretary — AI startup drain advanced=%s completed=%s failed=%s",
+                    summary.get("advanced"),
+                    summary.get("completed"),
+                    summary.get("failed"),
+                )
+        except Exception:
+            logger.exception("Secretary — AI Strategy startup drain failed")
+
     async def tick(self) -> None:
         await self._maybe_fetch_account_summary()
         await self._maybe_run_scheduled_research()
         await self._maybe_run_daily_ai_strategy_backtests()
         await self._maybe_drain_learning_jobs()
+        await self._maybe_drain_ai_strategy_startup_jobs()
 
         if not self._startup_done:
             await self.run_startup_pass()

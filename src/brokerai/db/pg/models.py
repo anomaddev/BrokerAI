@@ -609,6 +609,36 @@ class LearningJobRow(Base):
     doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
 
 
+class AiStrategySettingsRow(Base):
+    """Singleton AI Strategy settings (startup sequence knobs)."""
+
+    __tablename__ = "ai_strategy_settings"
+    __table_args__ = {"schema": "brokerai"}
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default="default")
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class AiStrategyStartupJobRow(Base):
+    """Durable create-time AI Strategy startup workflow (reports → seed → loops)."""
+
+    __tablename__ = "ai_strategy_startup_jobs"
+    __table_args__ = (
+        Index("ix_ai_startup_jobs_strategy_status", "strategy_id", "status"),
+        Index("ix_ai_startup_jobs_status_created", "status", "created_at"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    phase: Mapped[str] = mapped_column(Text, nullable=False, default="ensuring_reports")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
 class StrategyGuidanceRow(Base):
     """Structured research bias for AI Strategy (hot path; no markdown)."""
 

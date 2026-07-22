@@ -4999,6 +4999,23 @@ input {
   border-color: color-mix(in srgb, var(--text) 28%, var(--border));
 }
 
+.research-tag.strategy-startup--queued,
+.research-tag.strategy-startup--running {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.research-tag.strategy-startup--completed {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, var(--border));
+}
+
+.research-tag.strategy-startup--failed,
+.research-tag.strategy-startup--cancelled {
+  color: var(--danger, #c44);
+  border-color: color-mix(in srgb, var(--danger, #c44) 40%, var(--border));
+}
+
 .strategy-promote-btn {
   padding: 0.15rem 0.55rem;
   font-size: 0.75rem;

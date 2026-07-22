@@ -181,6 +181,22 @@ async def create_strategy(
         )
     except ParamsValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Create-time AI Strategy bootstrap (reports → seed digest → improve loops).
+    try:
+        from brokerai.ai_strategy.lifecycle import is_ai_strategy_doc
+        from brokerai.ai_strategy.startup import enqueue_ai_strategy_startup
+
+        if is_ai_strategy_doc(doc):
+            await enqueue_ai_strategy_startup(str(doc.get("id") or ""))
+    except Exception:
+        # Never fail create if startup enqueue has a transient error.
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Failed to enqueue AI Strategy startup for %s", doc.get("id")
+        )
+
     return JSONResponse(doc)
 
 
@@ -260,6 +276,39 @@ async def promote_ai_strategy(
     if not doc:
         raise HTTPException(status_code=404, detail="Strategy not found")
     return JSONResponse(doc)
+
+
+@router.get("/{strategy_id}/startup")
+async def get_strategy_startup(
+    strategy_id: str,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    from brokerai.db.repositories.ai_strategy_startup import AiStrategyStartupJobsRepository
+
+    if not await StrategiesRepository().get_by_id(strategy_id):
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    job = await AiStrategyStartupJobsRepository().get_latest_for_strategy(strategy_id)
+    return JSONResponse({"job": job})
+
+
+@router.post("/{strategy_id}/startup")
+async def retry_strategy_startup(
+    strategy_id: str,
+    _username: str = Depends(require_auth),
+) -> JSONResponse:
+    from brokerai.ai_strategy.lifecycle import is_ai_strategy_doc
+    from brokerai.ai_strategy.startup import enqueue_ai_strategy_startup
+
+    repo = StrategiesRepository()
+    existing = await repo.get_by_id(strategy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if not is_ai_strategy_doc(existing):
+        raise HTTPException(status_code=400, detail="Not an AI Strategy")
+    job = await enqueue_ai_strategy_startup(strategy_id, force=True)
+    if job is None:
+        raise HTTPException(status_code=400, detail="Startup is disabled in Settings → AI Strategies")
+    return JSONResponse({"job": job})
 
 
 @router.delete("/{strategy_id}")

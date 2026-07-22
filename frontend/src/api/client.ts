@@ -782,6 +782,25 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  getAiStrategySettings: () => request<AiStrategySettings>("/api/settings/ai-strategies"),
+
+  updateAiStrategySettings: (data: Partial<AiStrategySettings>) =>
+    request<AiStrategySettings>("/api/settings/ai-strategies", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  getStrategyStartup: (strategyId: string) =>
+    request<{ job: AiStrategyStartupJob | null }>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/startup`,
+    ),
+
+  retryStrategyStartup: (strategyId: string) =>
+    request<{ job: AiStrategyStartupJob }>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/startup`,
+      { method: "POST" },
+    ),
+
   requestBacktestAiFeedback: (runId: string) =>
     request<BacktestRun>(
       `/api/backtest-runs/${encodeURIComponent(runId)}/ai-feedback`,
@@ -1740,6 +1759,44 @@ export type BacktestSettings = {
   ai_feedback_reasoning_effort: ReasoningEffort;
   daily_ai_strategy_backtest_enabled?: boolean;
   daily_ai_strategy_backtest_period?: BacktestPeriod | string;
+};
+
+export type AiStrategySettings = {
+  startup_enabled: boolean;
+  startup_loop_count: number;
+  startup_backtest_period: BacktestPeriod | string;
+  startup_timeout_minutes: number;
+};
+
+export type AiStrategyStartupJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type AiStrategyStartupJobPhase =
+  | "ensuring_reports"
+  | "seeding_digest"
+  | "looping"
+  | "done";
+
+export type AiStrategyStartupJob = {
+  id: string;
+  strategy_id: string;
+  status: AiStrategyStartupJobStatus;
+  phase: AiStrategyStartupJobPhase;
+  loop_index?: number;
+  loop_target?: number;
+  required_reports?: string[];
+  skipped_reports?: string[];
+  pending_reports?: string[];
+  current_backtest_run_id?: string | null;
+  seed_digest_version?: number | null;
+  error?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 };
 
 export type BacktestRunsResponse = {
