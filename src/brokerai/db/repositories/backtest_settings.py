@@ -6,6 +6,7 @@ from typing import Any
 
 from brokerai.db.pg.client import session_scope
 from brokerai.db.pg.models import BacktestSettingsRow
+from brokerai.db.repositories.backtest_runs import BACKTEST_PERIODS, normalize_backtest_period
 from brokerai.research_constants import REASONING_EFFORT_OPTIONS
 
 SINGLETON_ID = "default"
@@ -15,6 +16,8 @@ DEFAULT_AUTO_START = True
 DEFAULT_AI_FEEDBACK_ENABLED = False
 DEFAULT_AI_FEEDBACK_AUTO_ON_COMPLETE = False
 DEFAULT_AI_FEEDBACK_REASONING_EFFORT = "medium"
+DEFAULT_DAILY_AI_STRATEGY_BACKTEST_ENABLED = False
+DEFAULT_DAILY_AI_STRATEGY_BACKTEST_PERIOD = "6m"
 MIN_CONCURRENT = 1
 MAX_CONCURRENT = 10
 
@@ -28,6 +31,8 @@ def default_backtest_settings() -> dict[str, Any]:
         "ai_feedback_model_id": None,
         "ai_feedback_model_name": None,
         "ai_feedback_reasoning_effort": DEFAULT_AI_FEEDBACK_REASONING_EFFORT,
+        "daily_ai_strategy_backtest_enabled": DEFAULT_DAILY_AI_STRATEGY_BACKTEST_ENABLED,
+        "daily_ai_strategy_backtest_period": DEFAULT_DAILY_AI_STRATEGY_BACKTEST_PERIOD,
     }
 
 
@@ -42,6 +47,12 @@ def _normalize_reasoning_effort(raw: Any) -> str:
     if isinstance(raw, str) and raw.strip() in REASONING_EFFORT_OPTIONS:
         return raw.strip()
     return DEFAULT_AI_FEEDBACK_REASONING_EFFORT
+
+
+def _normalize_daily_period(raw: Any) -> str:
+    if isinstance(raw, str) and raw.strip() in BACKTEST_PERIODS:
+        return raw.strip()
+    return DEFAULT_DAILY_AI_STRATEGY_BACKTEST_PERIOD
 
 
 def normalize_backtest_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -66,6 +77,15 @@ def normalize_backtest_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
         "ai_feedback_model_name": _optional_str(raw.get("ai_feedback_model_name")),
         "ai_feedback_reasoning_effort": _normalize_reasoning_effort(
             raw.get("ai_feedback_reasoning_effort")
+        ),
+        "daily_ai_strategy_backtest_enabled": bool(
+            raw.get(
+                "daily_ai_strategy_backtest_enabled",
+                DEFAULT_DAILY_AI_STRATEGY_BACKTEST_ENABLED,
+            )
+        ),
+        "daily_ai_strategy_backtest_period": _normalize_daily_period(
+            raw.get("daily_ai_strategy_backtest_period")
         ),
     }
 
@@ -95,6 +115,8 @@ class BacktestSettingsRepository:
         ai_feedback_model_name: Any = None,
         ai_feedback_reasoning_effort: str | None = None,
         clear_ai_feedback_model: bool = False,
+        daily_ai_strategy_backtest_enabled: bool | None = None,
+        daily_ai_strategy_backtest_period: str | None = None,
     ) -> dict[str, Any]:
         async with session_scope() as session:
             row = await session.get(BacktestSettingsRow, SINGLETON_ID)
@@ -124,6 +146,14 @@ class BacktestSettingsRepository:
             if ai_feedback_reasoning_effort is not None:
                 current["ai_feedback_reasoning_effort"] = _normalize_reasoning_effort(
                     ai_feedback_reasoning_effort
+                )
+            if daily_ai_strategy_backtest_enabled is not None:
+                current["daily_ai_strategy_backtest_enabled"] = bool(
+                    daily_ai_strategy_backtest_enabled
+                )
+            if daily_ai_strategy_backtest_period is not None:
+                current["daily_ai_strategy_backtest_period"] = normalize_backtest_period(
+                    daily_ai_strategy_backtest_period
                 )
             if row is None:
                 session.add(BacktestSettingsRow(id=SINGLETON_ID, doc=current))

@@ -184,6 +184,9 @@ def serialize_backtest_run(doc: dict[str, Any], *, row: BacktestRunRow | None = 
         "equity_curve": list(doc.get("equity_curve") or []),
         "params_snapshot": doc.get("params_snapshot"),
         "ai_feedback": _serialize_ai_feedback(doc.get("ai_feedback")),
+        "origin": doc.get("origin"),
+        "cadence_key": doc.get("cadence_key"),
+        "digest_version": doc.get("digest_version"),
     }
 
 
@@ -197,14 +200,24 @@ def build_queued_run_document(
     period_start: str | None = None,
     period_end: str | None = None,
     account_margin: float | None = None,
+    origin: str | None = None,
+    cadence_key: str | None = None,
+    digest_version: str | None = None,
 ) -> dict[str, Any]:
-    """Build a denormalized queued run document from a serialized strategy."""
+    """Build a denormalized queued run document from a serialized strategy.
+
+    Optional ``origin`` / ``cadence_key`` / ``digest_version`` metadata is used by
+    AI Strategy daily self-backtests (idempotent ET cadence + digest skip).
+    """
     params = strategy.get("params") or {}
     timeframe = strategy.get("timeframe") or params.get("timeframe")
     instruments = list(strategy.get("instruments") or [])
     chosen = instrument or (instruments[0] if instruments else None)
     created_at = _now_iso()
     run_name = (name or "").strip() or f"{strategy.get('name') or 'Strategy'} backtest"
+    origin_text = (origin or "").strip() or None
+    cadence_text = (cadence_key or "").strip() or None
+    digest_text = (digest_version or "").strip() or None
     return {
         "id": str(uuid4()),
         "name": run_name,
@@ -234,6 +247,9 @@ def build_queued_run_document(
         "equity_curve": [],
         "params_snapshot": dict(params) if params else None,
         "ai_feedback": None,
+        "origin": origin_text,
+        "cadence_key": cadence_text,
+        "digest_version": digest_text,
     }
 
 
@@ -266,6 +282,9 @@ class BacktestRunsRepository:
         period_start: str | None = None,
         period_end: str | None = None,
         account_margin: float | None = None,
+        origin: str | None = None,
+        cadence_key: str | None = None,
+        digest_version: str | None = None,
     ) -> list[dict[str, Any]]:
         """Persist one queued run per strategy. Returns serialized run documents."""
         if not strategies:
@@ -285,12 +304,61 @@ class BacktestRunsRepository:
                     period_start=period_start,
                     period_end=period_end,
                     account_margin=account_margin,
+                    origin=origin,
+                    cadence_key=cadence_key,
+                    digest_version=digest_version,
                 )
                 row = BacktestRunRow(id=doc["id"], doc=doc)
                 _sync_row_columns(row, doc)
                 session.add(row)
                 created.append(serialize_backtest_run(doc, row=row))
         return created
+
+    async def find_by_cadence_key(self, cadence_key: str) -> dict[str, Any] | None:
+        """Return the newest run with ``doc.cadence_key`` matching, if any."""
+        key = (cadence_key or "").strip()
+        if not key:
+            return None
+        async with session_scope() as session:
+            stmt = (
+                select(BacktestRunRow)
+                .order_by(BacktestRunRow.created_at.desc())
+                .limit(200)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            for row in rows:
+                doc = dict(row.doc)
+                if str(doc.get("cadence_key") or "") == key:
+                    return serialize_backtest_run(doc, row=row)
+            return None
+
+    async def list_by_origin_for_strategy(
+        self,
+        strategy_id: str,
+        *,
+        origin: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List recent runs for a strategy filtered by ``origin`` (newest first)."""
+        sid = str(strategy_id or "").strip()
+        origin_text = (origin or "").strip()
+        if not sid or not origin_text:
+            return []
+        async with session_scope() as session:
+            stmt = (
+                select(BacktestRunRow)
+                .where(BacktestRunRow.strategy_id == sid)
+                .order_by(BacktestRunRow.created_at.desc())
+                .limit(max(1, min(limit, 100)))
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                doc = dict(row.doc)
+                if str(doc.get("origin") or "") != origin_text:
+                    continue
+                out.append(serialize_backtest_run(doc, row=row))
+            return out
 
     async def list_runs(
         self,

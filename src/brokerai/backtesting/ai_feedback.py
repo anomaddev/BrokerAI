@@ -14,6 +14,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from brokerai.ai_strategy.daily_backtest import ORIGIN_AI_STRATEGY_DAILY
+from brokerai.ai_strategy.learning import queue_learning_job
+from brokerai.ai_strategy.memory_digest import merge_feedback_notes_into_digest
 from brokerai.backtesting.feedback_suggestions import (
     ALLOWLIST_FOR_PROMPT,
     normalize_suggestions,
@@ -29,6 +32,7 @@ from brokerai.db.repositories.backtest_runs import (
     BacktestRunsRepository,
 )
 from brokerai.db.repositories.backtest_settings import BacktestSettingsRepository
+from brokerai.db.repositories.strategy_learning import StrategyMemoryDigestsRepository
 from brokerai.research_constants import REASONING_EFFORT_OPTIONS
 from brokerai.trading.data.candle_cache import CandleCache, OANDA_SOURCE
 
@@ -107,8 +111,136 @@ Rules for JSON:
 - Be specific and grounded in the supplied data. Do not invent trades or metrics.
 """
 
+_MEMORY_FEEDBACK_SYSTEM_PROMPT = """\
+You are BrokerAI's AI Strategy learning coach reviewing a compiled-playbook daily backtest.
+
+Your job is to improve the strategy's *memory digest* (standing rules and anti-rules),
+NOT to retune EMA/filter builder parameters. Do not suggest builder param paths.
+
+Use rigorous reasoning:
+1. Summarize what the playbook backtest did (edge, trade count, win rate, drawdown).
+2. Identify failure modes from losing trades and anti-rule gaps.
+3. Propose durable standing rules (what helped) and anti-rules (what to avoid).
+4. Call out overfitting risk: prefer generalizable lessons over fitting a few trades.
+5. Keep each rule short and actionable for future playbook compiles.
+
+Respond in clear markdown with these sections:
+## Summary
+## What worked
+## What hurt performance
+## Memory lessons
+## Risks / caveats
+
+After the markdown sections, append ONE fenced JSON block with memory notes:
+```json
+{
+  "memory_notes": [
+    {
+      "id": "london_continuation",
+      "kind": "standing_rule",
+      "text": "Prefer London continuation after early impulse",
+      "bias": "long",
+      "keywords": ["london", "continuation"],
+      "priority": 1
+    },
+    {
+      "id": "late_ny_fade",
+      "kind": "anti_rule",
+      "text": "Avoid late-NY fade entries",
+      "bias": null,
+      "keywords": ["ny", "fade"],
+      "priority": 2
+    }
+  ]
+}
+```
+
+Rules for JSON:
+- kind must be standing_rule, anti_rule, lesson, or note.
+- Do NOT include EMA/filter suggestion paths.
+- Keep the list short (≤8 notes). Be grounded in the supplied data.
+"""
+
 # Prevent overlapping auto/manual jobs for the same run on one API process.
 _inflight_feedback: set[str] = set()
+
+
+def is_ai_strategy_daily_run(run: dict[str, Any] | None) -> bool:
+    """True when the backtest was queued by the AI Strategy daily cadence."""
+    if not isinstance(run, dict):
+        return False
+    return str(run.get("origin") or "") == ORIGIN_AI_STRATEGY_DAILY
+
+
+def normalize_memory_notes(raw: Any) -> list[dict[str, Any]]:
+    """Sanitize memory-oriented feedback notes (daily AI Strategy runs)."""
+    if not isinstance(raw, list):
+        return []
+    allowed_kinds = {"standing_rule", "anti_rule", "lesson", "note"}
+    allowed_bias = {"long", "short", "flat", "both"}
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        kind = str(item.get("kind") or "lesson").strip().lower()
+        if kind not in allowed_kinds:
+            kind = "lesson"
+        bias_raw = item.get("bias")
+        bias: str | None
+        if isinstance(bias_raw, str) and bias_raw.strip() in allowed_bias:
+            bias = bias_raw.strip()
+        else:
+            bias = None
+        keywords_raw = item.get("keywords") or []
+        keywords: list[str] = []
+        if isinstance(keywords_raw, list):
+            for token in keywords_raw:
+                cleaned = str(token).strip().lower()
+                if cleaned and cleaned not in keywords:
+                    keywords.append(cleaned)
+        note_id = str(item.get("id") or "").strip() or f"note-{len(out) + 1}"
+        try:
+            priority = int(item.get("priority") or 0)
+        except (TypeError, ValueError):
+            priority = 0
+        out.append(
+            {
+                "id": note_id,
+                "kind": kind,
+                "text": text,
+                "bias": bias,
+                "keywords": keywords,
+                "priority": priority,
+            }
+        )
+        if len(out) >= 12:
+            break
+    return out
+
+
+def parse_memory_notes_from_markdown(text: str) -> tuple[str, list[dict[str, Any]]]:
+    """Extract a ``memory_notes`` JSON fence; return cleaned markdown + notes."""
+    import re
+
+    if not text:
+        return "", []
+    pattern = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.MULTILINE)
+    cleaned = text
+    notes: list[dict[str, Any]] = []
+    for match in pattern.finditer(text):
+        try:
+            parsed = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict) or "memory_notes" not in parsed:
+            continue
+        notes = normalize_memory_notes(parsed.get("memory_notes"))
+        cleaned = (text[: match.start()] + text[match.end() :]).strip()
+        break
+    return cleaned, notes
 
 
 def _now_iso() -> str:
@@ -137,6 +269,7 @@ def empty_ai_feedback() -> dict[str, Any]:
         "reasoning_effort": None,
         "markdown": None,
         "suggestions": [],
+        "memory_notes": [],
         "error": None,
         "started_at": None,
         "finished_at": None,
@@ -169,6 +302,7 @@ def normalize_ai_feedback(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         "reasoning_effort": effort,
         "markdown": str(raw["markdown"]) if raw.get("markdown") is not None else None,
         "suggestions": normalize_suggestions(raw.get("suggestions") or []),
+        "memory_notes": normalize_memory_notes(raw.get("memory_notes") or []),
         "error": str(raw["error"]) if raw.get("error") is not None else None,
         "started_at": str(raw["started_at"]) if raw.get("started_at") else None,
         "finished_at": str(raw["finished_at"]) if raw.get("finished_at") else None,
@@ -429,8 +563,16 @@ def slice_candle_windows(
     return windows
 
 
-def build_backtest_feedback_messages(context: dict[str, Any]) -> list[dict[str, str]]:
-    """Build chat messages for strategy-feedback analysis."""
+def build_backtest_feedback_messages(
+    context: dict[str, Any],
+    *,
+    memory_oriented: bool = False,
+) -> list[dict[str, str]]:
+    """Build chat messages for strategy-feedback analysis.
+
+    When ``memory_oriented`` is True (AI Strategy daily origin), use the memory
+    digest prompt/schema instead of EMA builder SUGGESTION_ALLOWLIST.
+    """
     payload = json.dumps(context, default=str, separators=(",", ":"))
     if len(payload) > MAX_CONTEXT_JSON_CHARS:
         # Drop candle windows first, then signal samples, to stay in budget.
@@ -446,15 +588,47 @@ def build_backtest_feedback_messages(context: dict[str, Any]) -> list[dict[str, 
             slim["filter_fails_sample"] = slim.get("filter_fails_sample", [])[:10]
             payload = json.dumps(slim, default=str, separators=(",", ":"))
 
-    user = (
-        "Analyze this completed BrokerAI backtest and suggest where the strategy "
-        "could be improved. Data follows as JSON.\n\n"
-        f"```json\n{payload}\n```"
-    )
+    if memory_oriented:
+        user = (
+            "Analyze this completed AI Strategy daily playbook backtest and propose "
+            "memory digest standing/anti rules. Do not suggest builder param paths. "
+            "Data follows as JSON.\n\n"
+            f"```json\n{payload}\n```"
+        )
+        system = _MEMORY_FEEDBACK_SYSTEM_PROMPT
+    else:
+        user = (
+            "Analyze this completed BrokerAI backtest and suggest where the strategy "
+            "could be improved. Data follows as JSON.\n\n"
+            f"```json\n{payload}\n```"
+        )
+        system = _FEEDBACK_SYSTEM_PROMPT
     return [
-        {"role": "system", "content": _FEEDBACK_SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+async def apply_memory_feedback_to_digest(
+    strategy_id: str,
+    memory_notes: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Persist memory notes into a new digest version (not EMA params).
+
+    Does **not** call ``apply_suggestions_to_params``. When notes are empty,
+    queues a learning job instead so Slice 3 can refresh from outcomes.
+    """
+    sid = (strategy_id or "").strip()
+    if not sid:
+        return None
+    digests = StrategyMemoryDigestsRepository()
+    if not memory_notes:
+        return await queue_learning_job(sid, force=True)
+
+    prior = await digests.get_latest(sid)
+    merged = merge_feedback_notes_into_digest(prior, memory_notes, strategy_id=sid)
+    version = await digests.next_version(sid)
+    return await digests.create_version(sid, merged, version=version)
 
 
 async def build_backtest_feedback_context(run_id: str) -> dict[str, Any]:
@@ -569,6 +743,7 @@ async def mark_ai_feedback_running(
         "reasoning_effort": reasoning_effort,
         "markdown": None,
         "suggestions": [],
+        "memory_notes": [],
         "error": None,
         "started_at": _now_iso(),
         "finished_at": None,
@@ -614,8 +789,19 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
     )
 
     try:
+        # Prefer raw doc so origin / cadence metadata is available.
+        run_doc = await runs_repo.get_raw_doc(run_id) or await runs_repo.get_by_id(run_id)
+        memory_oriented = is_ai_strategy_daily_run(run_doc)
         context = await build_backtest_feedback_context(run_id)
-        messages = build_backtest_feedback_messages(context)
+        if isinstance(run_doc, dict):
+            context.setdefault("run", {})
+            if isinstance(context["run"], dict):
+                context["run"]["origin"] = run_doc.get("origin")
+                context["run"]["cadence_key"] = run_doc.get("cadence_key")
+                context["run"]["digest_version"] = run_doc.get("digest_version")
+        messages = build_backtest_feedback_messages(
+            context, memory_oriented=memory_oriented
+        )
         markdown = await analyze_with_model(
             model_type,
             base_url,
@@ -624,19 +810,39 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
             api_key if isinstance(api_key, str) else None,
             reasoning_effort=None if effort == "none" else str(effort),
             cost_context={
-                "operation": "backtest_ai_feedback",
+                "operation": (
+                    "ai_strategy_daily_feedback"
+                    if memory_oriented
+                    else "backtest_ai_feedback"
+                ),
                 "backtest_run_id": run_id,
+                "strategy_id": str((run_doc or {}).get("strategy_id") or ""),
             },
         )
-        params_snapshot = (
-            context.get("params_snapshot")
-            if isinstance(context.get("params_snapshot"), dict)
-            else None
-        )
-        cleaned_markdown, suggestions = parse_suggestions_from_markdown(
-            markdown,
-            params_snapshot=params_snapshot,
-        )
+        if memory_oriented:
+            # Memory fork: never parse/apply EMA SUGGESTION_ALLOWLIST paths.
+            cleaned_markdown, memory_notes = parse_memory_notes_from_markdown(markdown)
+            suggestions: list[dict[str, Any]] = []
+            strategy_id = str((run_doc or {}).get("strategy_id") or "")
+            try:
+                await apply_memory_feedback_to_digest(strategy_id, memory_notes)
+            except Exception:
+                logger.exception(
+                    "Failed to apply memory feedback for daily run %s strategy=%s",
+                    run_id,
+                    strategy_id,
+                )
+        else:
+            params_snapshot = (
+                context.get("params_snapshot")
+                if isinstance(context.get("params_snapshot"), dict)
+                else None
+            )
+            cleaned_markdown, suggestions = parse_suggestions_from_markdown(
+                markdown,
+                params_snapshot=params_snapshot,
+            )
+            memory_notes = []
         feedback = {
             "status": AI_FEEDBACK_STATUS_COMPLETED,
             "model_id": str(model_id),
@@ -644,6 +850,7 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
             "reasoning_effort": str(effort),
             "markdown": cleaned_markdown,
             "suggestions": suggestions,
+            "memory_notes": memory_notes,
             "error": None,
             "started_at": started_at,
             "finished_at": _now_iso(),
@@ -660,6 +867,7 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
             "reasoning_effort": str(effort),
             "markdown": None,
             "suggestions": [],
+            "memory_notes": [],
             "error": str(exc),
             "started_at": started_at,
             "finished_at": _now_iso(),
@@ -736,6 +944,7 @@ async def begin_ai_feedback_job(run_id: str) -> dict[str, Any]:
                         "reasoning_effort": effort,
                         "markdown": None,
                         "suggestions": [],
+                        "memory_notes": [],
                         "error": "AI feedback task failed to start",
                         "started_at": _now_iso(),
                         "finished_at": _now_iso(),

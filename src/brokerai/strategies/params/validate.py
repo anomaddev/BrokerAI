@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from brokerai.strategies.base import StrategyPreset
-from brokerai.strategies.params.ai_section import validate_ai_section, validate_signal_ai_strategy
+from brokerai.strategies.params.ai_section import (
+    validate_ai_section,
+    validate_signal_ai_strategy,
+    validate_signal_compiled_playbook,
+)
 from brokerai.strategies.params.sections import (
     ParamsValidationError,
     validate_additional_timeframes,
@@ -45,6 +49,8 @@ def _validate_signal(
         return validate_signal_monthly_limit(signal_raw, expected_type="monthly_low")
     if signal_type == "ai_strategy":
         return validate_signal_ai_strategy(signal_raw)
+    if signal_type == "compiled_playbook":
+        return validate_signal_compiled_playbook(signal_raw)
     raise ParamsValidationError(f"Unsupported signal type: {signal_type}", field="signal.type")
 
 

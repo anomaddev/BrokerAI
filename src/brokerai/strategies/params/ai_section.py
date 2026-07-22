@@ -80,3 +80,26 @@ def validate_signal_ai_strategy(spec: Any) -> dict[str, Any]:
     if not isinstance(mode, str) or not mode.strip():
         mode = "scaffold"
     return {"type": "ai_strategy", "mode": mode.strip()}
+
+
+def validate_signal_compiled_playbook(spec: Any) -> dict[str, Any]:
+    """Validate a compiled-playbook signal block (daily AI Strategy backtests)."""
+    field = "signal"
+    data = _require_dict(spec, field)
+    signal_type = data.get("type")
+    if not isinstance(signal_type, str) or signal_type.strip() != "compiled_playbook":
+        raise ParamsValidationError(
+            "Expected signal type compiled_playbook",
+            field=f"{field}.type",
+        )
+    bias = data.get("bias", data.get("default_bias", "flat"))
+    if not isinstance(bias, str) or bias.strip() not in {"long", "short", "flat", "both"}:
+        raise ParamsValidationError(
+            "compiled_playbook bias must be long|short|flat|both",
+            field=f"{field}.bias",
+        )
+    out = dict(data)
+    out["type"] = "compiled_playbook"
+    out["bias"] = bias.strip()
+    out["default_bias"] = out["bias"]
+    return out

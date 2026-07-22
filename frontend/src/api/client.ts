@@ -1654,6 +1654,15 @@ export type BacktestAiSuggestion = {
   test_alone?: boolean;
 };
 
+export type BacktestAiMemoryNote = {
+  id: string;
+  kind: "standing_rule" | "anti_rule" | "lesson" | "note" | string;
+  text: string;
+  bias?: string | null;
+  keywords?: string[];
+  priority?: number;
+};
+
 export type BacktestAiFeedback = {
   status: BacktestAiFeedbackStatus;
   model_id: string | null;
@@ -1661,6 +1670,7 @@ export type BacktestAiFeedback = {
   reasoning_effort: ReasoningEffort | null;
   markdown: string | null;
   suggestions?: BacktestAiSuggestion[];
+  memory_notes?: BacktestAiMemoryNote[];
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -1695,6 +1705,9 @@ export type BacktestRun = {
   equity_curve?: BacktestEquityPoint[];
   params_snapshot?: Record<string, unknown> | null;
   ai_feedback?: BacktestAiFeedback | null;
+  origin?: string | null;
+  cadence_key?: string | null;
+  digest_version?: string | number | null;
 };
 
 export type BacktestLog = {
@@ -1725,6 +1738,8 @@ export type BacktestSettings = {
   ai_feedback_model_id: string | null;
   ai_feedback_model_name: string | null;
   ai_feedback_reasoning_effort: ReasoningEffort;
+  daily_ai_strategy_backtest_enabled?: boolean;
+  daily_ai_strategy_backtest_period?: BacktestPeriod | string;
 };
 
 export type BacktestRunsResponse = {

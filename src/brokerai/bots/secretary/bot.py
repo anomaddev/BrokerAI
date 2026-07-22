@@ -28,8 +28,15 @@ from brokerai.bots.secretary.scheduled_research import (
     next_debrief_schedule_probe_at,
     research_settings_fingerprint,
 )
+from brokerai.bots.secretary.scheduled_self_backtest import (
+    STABLE_UNTIL_SETTINGS as STABLE_UNTIL_BACKTEST_SETTINGS,
+    backtest_settings_fingerprint,
+    maybe_run_daily_ai_strategy_backtests,
+    next_daily_ai_backtest_probe_at,
+)
 from brokerai.config.settings import get_settings
 from brokerai.core.worker_pool import get_worker_pool
+from brokerai.db.repositories.backtest_settings import BacktestSettingsRepository
 from brokerai.db.repositories.research_settings import ResearchSettingsRepository
 from brokerai.research_markets import is_past_scheduled_run, is_past_weekly_brief_run
 from brokerai.tasks.runner import is_research_running
@@ -57,6 +64,8 @@ class SecretaryBot(Bot):
         self._last_account_fetch_at: datetime | None = None
         self._research_settings_fp: str | None = None
         self._research_next_check: dict[str, datetime] = {}
+        self._backtest_settings_fp: str | None = None
+        self._daily_ai_backtest_next_check: datetime | None = None
 
     @property
     def service(self) -> DataManagerService:
@@ -218,6 +227,31 @@ class SecretaryBot(Bot):
                     "weekly_debrief", next_debrief_probe_at(now, settings, skip)
                 )
 
+    async def _maybe_run_daily_ai_strategy_backtests(self) -> None:
+        now = datetime.now(timezone.utc)
+        settings = await BacktestSettingsRepository().get()
+        fingerprint = backtest_settings_fingerprint(settings)
+        if fingerprint != self._backtest_settings_fp:
+            self._backtest_settings_fp = fingerprint
+            self._daily_ai_backtest_next_check = None
+
+        if not settings.get("daily_ai_strategy_backtest_enabled"):
+            self._daily_ai_backtest_next_check = STABLE_UNTIL_BACKTEST_SETTINGS
+            return
+
+        if (
+            self._daily_ai_backtest_next_check is not None
+            and now < self._daily_ai_backtest_next_check
+        ):
+            return
+
+        summary = await maybe_run_daily_ai_strategy_backtests(now=now)
+        queued = summary.get("queued") or []
+        # Treat any probe as "done for deferral" — skips are idempotent.
+        self._daily_ai_backtest_next_check = next_daily_ai_backtest_probe_at(
+            now, done_today=bool(queued) or summary.get("reason") != "disabled"
+        )
+
     async def run_startup_pass(self) -> None:
         """Bootstrap candle cache and run initial strategy analysis once at startup."""
         if self._startup_done:
@@ -238,6 +272,7 @@ class SecretaryBot(Bot):
     async def tick(self) -> None:
         await self._maybe_fetch_account_summary()
         await self._maybe_run_scheduled_research()
+        await self._maybe_run_daily_ai_strategy_backtests()
 
         if not self._startup_done:
             await self.run_startup_pass()
