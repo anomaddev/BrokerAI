@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brain } from "lucide-react";
-import { api, type AiModel } from "../../../../api/client";
+import { Link } from "react-router-dom";
+import { api, type AiModel, type ResearchSettings } from "../../../../api/client";
 import DiscardStrategyChangesDialog from "../../../../components/strategies/DiscardStrategyChangesDialog";
+import EnableReportsPromptDialog from "../../../../components/strategies/EnableReportsPromptDialog";
 import SaveStrategyOverlay from "../../../../components/strategies/SaveStrategyOverlay";
 import StrategyBuilderFooter from "../../../../components/strategies/StrategyBuilderFooter";
 import StrategyBuilderHeader from "../../../../components/strategies/StrategyBuilderHeader";
@@ -45,6 +47,12 @@ import {
   LLM_MODE_OPTIONS,
   type AiStrategyParams,
 } from "./defaults";
+import {
+  enableReportKindsWithDefaults,
+  missingEnabledReportKinds,
+  REPORT_KIND_LABELS,
+  type ReportKind,
+} from "./reportSettingsPrompt";
 
 const ACCORDION_KEY = "brokerai-ai-strategy-accordion-v1";
 const DEFAULT_SECTIONS = {
@@ -220,6 +228,13 @@ export default function AiStrategyBuilder({
   const [currentVersion, setCurrentVersion] = useState<number | null>(null);
   const [catalog, setCatalog] = useState<CatalogOption[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const [researchSettings, setResearchSettings] = useState<ResearchSettings | null>(null);
+  const [reportsPromptKinds, setReportsPromptKinds] = useState<ReportKind[]>([]);
+  const [reportsPromptPhase, setReportsPromptPhase] = useState<"confirm" | "enabled">("confirm");
+  const [reportsPromptBusy, setReportsPromptBusy] = useState(false);
+  const [reportsPromptError, setReportsPromptError] = useState<string | null>(null);
+  const [declinedReportKinds, setDeclinedReportKinds] = useState<ReportKind[]>([]);
+  const autoPromptedReportsRef = useRef(false);
   const { timeOptions } = useGeneralSettings();
 
   useEffect(() => {
@@ -240,6 +255,102 @@ export default function AiStrategyBuilder({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await api.getResearchSettings();
+        if (!cancelled) setResearchSettings(settings);
+      } catch {
+        if (!cancelled) setResearchSettings(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const openReportsPrompt = useCallback((kinds: ReportKind[]) => {
+    if (kinds.length === 0) return;
+    setReportsPromptKinds(kinds);
+    setReportsPromptPhase("confirm");
+    setReportsPromptError(null);
+  }, []);
+
+  const promptForMissingReports = useCallback(
+    (
+      nextParams: Pick<AiStrategyParams, "useDailyReport" | "useWeeklyBrief" | "useWeeklyDebrief">,
+      settings: ResearchSettings | null,
+      options?: { ignoreDeclined?: boolean },
+    ) => {
+      const missing = missingEnabledReportKinds(nextParams, settings);
+      const kinds = options?.ignoreDeclined
+        ? missing
+        : missing.filter((kind) => !declinedReportKinds.includes(kind));
+      if (kinds.length > 0) openReportsPrompt(kinds);
+    },
+    [declinedReportKinds, openReportsPrompt],
+  );
+
+  useEffect(() => {
+    if (!researchSettings || autoPromptedReportsRef.current) return;
+    const missing = missingEnabledReportKinds(params, researchSettings).filter(
+      (kind) => !declinedReportKinds.includes(kind),
+    );
+    if (missing.length === 0) return;
+    autoPromptedReportsRef.current = true;
+    openReportsPrompt(missing);
+  }, [declinedReportKinds, openReportsPrompt, params, researchSettings]);
+
+  const handleGuidanceToggle = useCallback(
+    (
+      key: "useDailyReport" | "useWeeklyBrief" | "useWeeklyDebrief",
+      checked: boolean,
+    ) => {
+      const nextParams = { ...params, [key]: checked };
+      setParams(nextParams);
+      if (!checked) return;
+      const kindMap = {
+        useDailyReport: "daily_report",
+        useWeeklyBrief: "weekly_brief",
+        useWeeklyDebrief: "weekly_debrief",
+      } as const;
+      setDeclinedReportKinds((prev) => prev.filter((kind) => kind !== kindMap[key]));
+      promptForMissingReports(nextParams, researchSettings, { ignoreDeclined: true });
+    },
+    [params, promptForMissingReports, researchSettings],
+  );
+
+  const handleReportsPromptCancel = useCallback(() => {
+    setDeclinedReportKinds((prev) => [...new Set([...prev, ...reportsPromptKinds])]);
+    setReportsPromptKinds([]);
+    setReportsPromptError(null);
+    setReportsPromptBusy(false);
+    setReportsPromptPhase("confirm");
+  }, [reportsPromptKinds]);
+
+  const handleReportsPromptConfirm = useCallback(async () => {
+    if (!researchSettings || reportsPromptKinds.length === 0) return;
+    setReportsPromptBusy(true);
+    setReportsPromptError(null);
+    try {
+      const latest = await enableReportKindsWithDefaults(reportsPromptKinds, researchSettings);
+      setResearchSettings(latest);
+      setDeclinedReportKinds((prev) => prev.filter((kind) => !reportsPromptKinds.includes(kind)));
+      setReportsPromptPhase("enabled");
+    } catch (err) {
+      setReportsPromptError(err instanceof Error ? err.message : "Failed to enable reports");
+    } finally {
+      setReportsPromptBusy(false);
+    }
+  }, [reportsPromptKinds, researchSettings]);
+
+  const handleReportsPromptDismissEnabled = useCallback(() => {
+    setReportsPromptKinds([]);
+    setReportsPromptPhase("confirm");
+    setReportsPromptError(null);
   }, []);
 
   const preset = STRATEGY_PRESETS.find((p) => p.id === "ai_strategy");
@@ -380,6 +491,10 @@ export default function AiStrategyBuilder({
   const saveParams = useMemo(() => aiStrategyParamsToV1(params), [params]);
   const modelSelectionIncomplete =
     params.llmMode !== "off" && (!params.modelId || !params.modelName);
+  const disabledReportKinds = useMemo(
+    () => missingEnabledReportKinds(params, researchSettings),
+    [params, researchSettings],
+  );
 
   return (
     <div className="strategy-builder">
@@ -481,7 +596,7 @@ export default function AiStrategyBuilder({
                       body={AI_HELP.useDailyReport.body}
                     />
                   }
-                  onChange={(checked) => update("useDailyReport", checked)}
+                  onChange={(checked) => handleGuidanceToggle("useDailyReport", checked)}
                 />
                 <ParamToggleRow
                   label="Use weekly brief"
@@ -493,7 +608,7 @@ export default function AiStrategyBuilder({
                       body={AI_HELP.useWeeklyBrief.body}
                     />
                   }
-                  onChange={(checked) => update("useWeeklyBrief", checked)}
+                  onChange={(checked) => handleGuidanceToggle("useWeeklyBrief", checked)}
                 />
                 <ParamToggleRow
                   label="Use weekly debrief"
@@ -505,7 +620,7 @@ export default function AiStrategyBuilder({
                       body={AI_HELP.useWeeklyDebrief.body}
                     />
                   }
-                  onChange={(checked) => update("useWeeklyDebrief", checked)}
+                  onChange={(checked) => handleGuidanceToggle("useWeeklyDebrief", checked)}
                 />
                 <ParamToggleRow
                   label="Learn from outcomes"
@@ -523,6 +638,15 @@ export default function AiStrategyBuilder({
                   Research inputs are bias only. Learning feeds memory digests and daily
                   compiled-playbook improve runs (Settings → Backtesting).
                 </p>
+                {disabledReportKinds.length > 0 ? (
+                  <p className="param-helper param-helper--warn">
+                    {disabledReportKinds.map((kind) => REPORT_KIND_LABELS[kind]).join(", ")}{" "}
+                    {disabledReportKinds.length === 1 ? "is" : "are"} still off in{" "}
+                    <Link to="/settings/reports">Settings → Reports</Link>. This strategy will not
+                    receive that guidance until {disabledReportKinds.length === 1 ? "it is" : "they are"}{" "}
+                    scheduled.
+                  </p>
+                ) : null}
               </ParameterCard>
 
               <ParameterCard
@@ -642,6 +766,19 @@ export default function AiStrategyBuilder({
         open={discardConfirmOpen}
         onCancel={cancelDiscard}
         onDiscard={confirmDiscard}
+      />
+
+      <EnableReportsPromptDialog
+        open={reportsPromptKinds.length > 0}
+        kinds={reportsPromptKinds}
+        phase={reportsPromptPhase}
+        busy={reportsPromptBusy}
+        error={reportsPromptError}
+        onCancel={handleReportsPromptCancel}
+        onConfirm={() => {
+          void handleReportsPromptConfirm();
+        }}
+        onDismissEnabled={handleReportsPromptDismissEnabled}
       />
 
       {historyOverlayOpen && editStrategyId ? (
