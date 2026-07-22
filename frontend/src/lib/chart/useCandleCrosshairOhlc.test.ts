@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { UTCTimestamp } from "lightweight-charts";
 import type { CandleBar } from "../../api/client";
-import { defaultOhlcSnapshot } from "./useCandleCrosshairOhlc";
+import { defaultOhlcSnapshot, ohlcSnapshotsEqual } from "./useCandleCrosshairOhlc";
 
 function bar(iso: string, close = 1): CandleBar {
   return {
@@ -12,6 +13,23 @@ function bar(iso: string, close = 1): CandleBar {
     volume: 0,
   };
 }
+
+describe("ohlcSnapshotsEqual", () => {
+  it("treats identical OHLC values as equal even across object identity", () => {
+    const a = {
+      time: 1 as UTCTimestamp,
+      open: 1,
+      high: 2,
+      low: 0.5,
+      close: 1.5,
+    };
+    const b = { ...a };
+    expect(ohlcSnapshotsEqual(a, b)).toBe(true);
+    expect(ohlcSnapshotsEqual(a, { ...a, close: 1.6 })).toBe(false);
+    expect(ohlcSnapshotsEqual(null, null)).toBe(true);
+    expect(ohlcSnapshotsEqual(a, null)).toBe(false);
+  });
+});
 
 describe("defaultOhlcSnapshot", () => {
   it("uses the last candle when no focus center is set", () => {

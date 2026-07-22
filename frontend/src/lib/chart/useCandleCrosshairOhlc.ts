@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type {
   CandlestickData,
   IChartApi,
@@ -30,6 +30,21 @@ function candleBarToSnapshot(candle: CandleBar): OhlcSnapshot | null {
   };
 }
 
+export function ohlcSnapshotsEqual(
+  a: OhlcSnapshot | null,
+  b: OhlcSnapshot | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.time === b.time &&
+    a.open === b.open &&
+    a.high === b.high &&
+    a.low === b.low &&
+    a.close === b.close
+  );
+}
+
 /** Prefer the focus/selection center; fall back to the last mounted candle. */
 export function defaultOhlcSnapshot(
   candles: CandleBar[],
@@ -56,8 +71,17 @@ export function useCandleCrosshairOhlc(
     defaultOhlcSnapshot(candles, focusCenterUnix),
   );
 
+  const candlesRef = useRef(candles);
+  const focusCenterUnixRef = useRef(focusCenterUnix);
+  candlesRef.current = candles;
+  focusCenterUnixRef.current = focusCenterUnix;
+
+  const commitSnapshot = (next: OhlcSnapshot | null) => {
+    setSnapshot((prev) => (ohlcSnapshotsEqual(prev, next) ? prev : next));
+  };
+
   useEffect(() => {
-    setSnapshot(defaultOhlcSnapshot(candles, focusCenterUnix));
+    commitSnapshot(defaultOhlcSnapshot(candles, focusCenterUnix));
   }, [candles, focusCenterUnix]);
 
   useEffect(() => {
@@ -67,18 +91,22 @@ export function useCandleCrosshairOhlc(
 
     const handler = (param: MouseEventParams) => {
       if (!param.time) {
-        setSnapshot(defaultOhlcSnapshot(candles, focusCenterUnix));
+        commitSnapshot(
+          defaultOhlcSnapshot(candlesRef.current, focusCenterUnixRef.current),
+        );
         return;
       }
 
       const data = param.seriesData.get(series);
       if (!data || typeof data !== "object" || !("open" in data)) {
-        setSnapshot(defaultOhlcSnapshot(candles, focusCenterUnix));
+        commitSnapshot(
+          defaultOhlcSnapshot(candlesRef.current, focusCenterUnixRef.current),
+        );
         return;
       }
 
       const bar = data as CandlestickData;
-      setSnapshot({
+      commitSnapshot({
         time: param.time as UTCTimestamp,
         open: bar.open,
         high: bar.high,
@@ -89,7 +117,8 @@ export function useCandleCrosshairOhlc(
 
     chart.subscribeCrosshairMove(handler);
     return () => chart.unsubscribeCrosshairMove(handler);
-  }, [chartRef, seriesRef, candles, enabled, focusCenterUnix]);
+    // chart/series identity is via refs; re-bind when the chart becomes ready.
+  }, [chartRef, seriesRef, enabled]);
 
   return snapshot;
 }
