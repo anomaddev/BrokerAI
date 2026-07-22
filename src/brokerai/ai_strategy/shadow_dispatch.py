@@ -157,6 +157,18 @@ async def close_shadow_lot_with_outcome(
             "hypothesis": lot.get("hypothesis"),
         }
     )
+    # Batched learning only: enqueue a job when threshold/learn_enabled allow.
+    # Never await the LLM on the close hot path.
+    try:
+        from brokerai.ai_strategy.learning import queue_learning_job
+
+        await queue_learning_job(str(lot["strategy_id"]))
+    except Exception:
+        logger.exception(
+            "Failed to queue learning job after shadow close strategy=%s lot=%s",
+            lot.get("strategy_id"),
+            lot.get("id"),
+        )
     return closed
 
 

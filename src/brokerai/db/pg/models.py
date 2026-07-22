@@ -565,6 +565,50 @@ class TradeOutcomeRecordRow(Base):
     doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
 
 
+class StrategyMemoryDigestRow(Base):
+    """Versioned compact memory digest for AI Strategy (standing/anti rules)."""
+
+    __tablename__ = "strategy_memory_digests"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_id",
+            "version",
+            name="uq_strategy_memory_digests_strategy_version",
+        ),
+        Index(
+            "ix_strategy_memory_digests_strategy_version",
+            "strategy_id",
+            "version",
+        ),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class LearningJobRow(Base):
+    """Batched outcome-learning jobs (never per-close LLM)."""
+
+    __tablename__ = "learning_jobs"
+    __table_args__ = (
+        Index("ix_learning_jobs_strategy_status", "strategy_id", "status"),
+        Index("ix_learning_jobs_status_created", "status", "created_at"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
 class StrategyGuidanceRow(Base):
     """Structured research bias for AI Strategy (hot path; no markdown)."""
 

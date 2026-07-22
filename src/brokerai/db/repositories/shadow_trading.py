@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from brokerai.db.pg.client import session_scope
 from brokerai.db.pg.models import ShadowIntentRow, ShadowLotRow, TradeOutcomeRecordRow
@@ -183,6 +183,62 @@ class TradeOutcomeRecordsRepository:
                 )
             ).scalars().all()
             return [{"id": row.id, **dict(row.doc)} for row in rows]
+
+    async def count_since(
+        self,
+        strategy_id: str,
+        *,
+        since: datetime | None = None,
+    ) -> int:
+        """Count outcomes for a strategy with ``exit_ts`` strictly after ``since``.
+
+        When ``since`` is None, counts all outcomes for the strategy.
+        """
+        async with session_scope() as session:
+            stmt = (
+                select(func.count())
+                .select_from(TradeOutcomeRecordRow)
+                .where(TradeOutcomeRecordRow.strategy_id == strategy_id)
+            )
+            if since is not None:
+                stmt = stmt.where(TradeOutcomeRecordRow.exit_ts > since)
+            return int((await session.execute(stmt)).scalar_one())
+
+    async def list_since(
+        self,
+        strategy_id: str,
+        *,
+        since: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """List outcomes newest-first, optionally only those after ``since``."""
+        limit = max(1, min(int(limit), 2000))
+        async with session_scope() as session:
+            stmt = select(TradeOutcomeRecordRow).where(
+                TradeOutcomeRecordRow.strategy_id == strategy_id
+            )
+            if since is not None:
+                stmt = stmt.where(TradeOutcomeRecordRow.exit_ts > since)
+            stmt = stmt.order_by(TradeOutcomeRecordRow.exit_ts.desc()).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                doc = dict(row.doc)
+                out.append(
+                    {
+                        "id": row.id,
+                        **doc,
+                        "strategy_id": row.strategy_id,
+                        "mode": row.mode,
+                        "pair": row.pair,
+                        "timeframe": row.timeframe,
+                        "direction": row.direction,
+                        "entry_ts": row.entry_ts.isoformat(),
+                        "exit_ts": row.exit_ts.isoformat(),
+                        "realized_pnl": float(row.realized_pnl or 0.0),
+                    }
+                )
+            return out
 
     async def summarize_week(self, *, week_start: datetime, week_end: datetime) -> dict[str, Any]:
         async with session_scope() as session:
