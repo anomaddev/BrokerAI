@@ -87,4 +87,18 @@ describe("backtestActionsToChartMarkers", () => {
     expect(marker?.role).toBe("skipped");
     expect(marker?.sequence).toBe(9);
   });
+
+  it("builds a selected marker for executed signals", () => {
+    const marker = backtestActionToSelectedMarker(
+      action({
+        sequence: 4,
+        kind: "signal",
+        message: "Crossover detected, confidence 72%, executing trade",
+        meta: { direction: "short" },
+      }),
+    );
+    expect(marker?.role).toBe("signal");
+    expect(marker?.label).toBe("SIGNAL");
+    expect(marker?.sequence).toBe(4);
+  });
 });

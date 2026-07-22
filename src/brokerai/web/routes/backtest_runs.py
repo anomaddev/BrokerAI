@@ -43,6 +43,71 @@ router = APIRouter(prefix="/api/backtest-runs", tags=["backtest-runs"])
 BACKTEST_CANDLE_LIMIT_MAX = 25_000
 
 
+def _parse_candle_time_ms(value: object) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Cache stores nanosecond fractional seconds; fromisoformat accepts up to us.
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    if "." in text:
+        head, rest = text.split(".", 1)
+        frac = ""
+        tz = ""
+        for index, char in enumerate(rest):
+            if char.isdigit():
+                frac += char
+            else:
+                tz = rest[index:]
+                break
+        text = f"{head}.{frac[:6]}{tz}"
+    try:
+        return datetime.fromisoformat(text).timestamp() * 1000.0
+    except ValueError:
+        return None
+
+
+def slice_candles_around(
+    candles: list[dict],
+    *,
+    around_iso: str,
+    limit: int = BACKTEST_CANDLE_LIMIT_MAX,
+) -> list[dict]:
+    """Return up to ``limit`` candles centered on ``around_iso``.
+
+    Edge cases:
+    - Empty input → empty list.
+    - Unparseable ``around_iso`` → last ``limit`` candles (same as default trim).
+    - Anchor before/after the series → clamp to the nearer end.
+    """
+    if not candles or limit <= 0:
+        return list(candles)
+    if len(candles) <= limit:
+        return list(candles)
+
+    target_ms = _parse_candle_time_ms(around_iso)
+    if target_ms is None:
+        return candles[-limit:]
+
+    best_idx = 0
+    for index, candle in enumerate(candles):
+        candle_ms = _parse_candle_time_ms(candle.get("time"))
+        if candle_ms is None:
+            continue
+        if candle_ms <= target_ms:
+            best_idx = index
+        else:
+            break
+
+    half = limit // 2
+    start = max(0, best_idx - half)
+    end = min(len(candles), start + limit)
+    start = max(0, end - limit)
+    return candles[start:end]
+
+
 class QueueBacktestRunsBody(BaseModel):
     strategy_ids: list[str] = Field(min_length=1, max_length=200)
     name: str | None = Field(default=None, max_length=120)
@@ -127,12 +192,21 @@ async def get_backtest_run(
 async def get_backtest_run_candles(
     run_id: str,
     _username: str = Depends(require_auth),
+    around: str | None = Query(
+        default=None,
+        description="ISO timestamp to center the returned window on when the "
+        "full period exceeds the candle cap (action/trade chart snap).",
+    ),
 ) -> JSONResponse:
     """Return cached OANDA candles covering a backtest run's evaluation window.
 
     Uses the Postgres candle cache directly (same data the worker used). Avoids
     the explore ``/api/market-data/candles`` 2000-bar cap, which truncates 6m
     M15 windows and left the review chart empty when focused near period end.
+
+    When the period exceeds ``BACKTEST_CANDLE_LIMIT_MAX``, pass ``around`` to
+    center the slice on an action/trade time instead of always returning the
+    period tip.
     """
     run = await BacktestRunsRepository().get_by_id(run_id)
     if run is None:
@@ -180,13 +254,21 @@ async def get_backtest_run_candles(
         )
 
     if len(candles) > BACKTEST_CANDLE_LIMIT_MAX:
-        candles = candles[-BACKTEST_CANDLE_LIMIT_MAX:]
+        if around and str(around).strip():
+            candles = slice_candles_around(
+                candles, around_iso=str(around).strip(), limit=BACKTEST_CANDLE_LIMIT_MAX
+            )
+        else:
+            candles = candles[-BACKTEST_CANDLE_LIMIT_MAX:]
 
     if not candles:
         raise HTTPException(
             status_code=503,
             detail="Candle data unavailable for this backtest window.",
         )
+
+    window_since = str(candles[0].get("time") or since)
+    window_until = str(candles[-1].get("time") or until)
 
     return JSONResponse(
         {
@@ -195,6 +277,9 @@ async def get_backtest_run_candles(
             "source": OANDA_SOURCE,
             "since": str(since),
             "until": str(until),
+            "window_since": window_since,
+            "window_until": window_until,
+            "around": around,
             "candles": [serialize_candle(candle) for candle in candles],
         }
     )

@@ -29,6 +29,7 @@ import {
   chartFocusVisibleLogicalRange,
   clipExploreOverlayDataToFocus,
   extendCandlesForWarmup,
+  focusWindowVisibleBars,
   sliceCandlesAroundUnix,
   sliceCandlesToFocusWindow,
   type ChartFocusWindow,
@@ -70,8 +71,24 @@ type ExploreCandleChartProps = {
    * crossover flags are hidden so fills are not confused with skipped signals.
    */
   actionMarkers?: BacktestChartMarker[];
-  /** Highlights the marker matching the selected action sequence. */
+  /**
+   * Highlights markers whose sequence is in this set (single action or trade group).
+   * Prefer this over ``selectedActionSequence`` when multiple markers should be active.
+   */
+  selectedActionSequences?: number[] | null;
+  /** @deprecated Use ``selectedActionSequences``. */
   selectedActionSequence?: number | null;
+  /**
+   * Identity of the current focus request (e.g. ``action:12:3`` / ``group:trade-4:5``).
+   * Must change when the user re-selects an action even if the time window is unchanged,
+   * so the chart re-centers after a pan or same-bar signal→entry step.
+   */
+  focusRequestKey?: string;
+  /**
+   * Override the default visible bar count when applying ``focusWindow``.
+   * When omitted, derived from the focus window span for the timeframe.
+   */
+  focusVisibleBars?: number;
 };
 
 function toChartTime(isoTime: string): UTCTimestamp | null {
@@ -140,8 +157,24 @@ export default function ExploreCandleChart({
   pinnedSignals = [],
   signalLookback = null,
   actionMarkers = [],
+  selectedActionSequences = null,
   selectedActionSequence = null,
+  focusRequestKey = "",
+  focusVisibleBars,
 }: ExploreCandleChartProps) {
+  const resolvedSelectedSequences = useMemo(() => {
+    if (selectedActionSequences != null && selectedActionSequences.length > 0) {
+      return selectedActionSequences;
+    }
+    if (selectedActionSequence != null) return [selectedActionSequence];
+    return [];
+  }, [selectedActionSequences, selectedActionSequence]);
+
+  const resolvedFocusVisibleBars = useMemo(() => {
+    if (focusVisibleBars != null && focusVisibleBars > 0) return focusVisibleBars;
+    if (focusWindow) return focusWindowVisibleBars(focusWindow, timeframe);
+    return FOCUS_VISIBLE_BARS;
+  }, [focusVisibleBars, focusWindow, timeframe]);
   const { timeOptions } = useGeneralSettings();
   const priceContainerRef = useRef<HTMLDivElement>(null);
   const adxContainerRef = useRef<HTMLDivElement>(null);
@@ -177,6 +210,8 @@ export default function ExploreCandleChart({
   const focusVisibleKey = focusWindow
     ? `${focusWindow.visibleFromTime}:${focusWindow.visibleToTime}`
     : "";
+  // Prefer an explicit request key so same-bar / re-click selections still re-snap.
+  const appliedFocusIdentity = focusRequestKey || focusVisibleKey;
 
   // Focus anchor (action / step). Derived synchronously so the first focused paint
   // slices and centers correctly.
@@ -189,7 +224,7 @@ export default function ExploreCandleChart({
 
   useEffect(() => {
     setPanCenterUnix(null);
-  }, [focusVisibleKey]);
+  }, [appliedFocusIdentity]);
 
   const displayCandles = useMemo(() => {
     if (!focusWindow) return availableCandles;
@@ -484,10 +519,11 @@ export default function ExploreCandleChart({
           hasFittedRef.current = true;
           shiftingWindowRef.current = false;
         } else if (focusWindow) {
-          // Re-center whenever the focus anchor changes (action click / step).
+          // Re-center whenever the focus request changes (action click / step / group).
           // Do not gate on hasFittedRef — that ran before the focus-key reset
           // effect and left the viewport right-aligned on the series tip.
-          if (appliedFocusKeyRef.current !== focusVisibleKey) {
+          // Identity includes focusRequestKey so same-bar_time re-selects still snap.
+          if (appliedFocusKeyRef.current !== appliedFocusIdentity) {
             // Prior unfocused fits may have pinned the right edge; that clamps
             // the logical range so the anchor sits on the right instead of center.
             for (const chart of charts) {
@@ -500,7 +536,7 @@ export default function ExploreCandleChart({
             const logical = chartFocusVisibleLogicalRange(
               displayCandles,
               focusWindow,
-              FOCUS_VISIBLE_BARS,
+              resolvedFocusVisibleBars,
             );
             if (logical) {
               for (const chart of charts) {
@@ -510,7 +546,7 @@ export default function ExploreCandleChart({
                   /* series may briefly be empty while shifting */
                 }
               }
-              appliedFocusKeyRef.current = focusVisibleKey;
+              appliedFocusKeyRef.current = appliedFocusIdentity;
               hasFittedRef.current = true;
             }
           }
@@ -530,7 +566,7 @@ export default function ExploreCandleChart({
     } else {
       setLayoutRevision((revision) => revision + 1);
     }
-  }, [displayCandles, overlayData, focusWindow, focusVisibleKey]);
+  }, [displayCandles, overlayData, focusWindow, appliedFocusIdentity, resolvedFocusVisibleBars]);
 
   useEffect(() => {
     hasFittedRef.current = false;
@@ -631,7 +667,7 @@ export default function ExploreCandleChart({
               paneRef={priceContainerRef}
               candles={markerCandles}
               markers={actionMarkers}
-              selectedSequence={selectedActionSequence}
+              selectedSequences={resolvedSelectedSequences}
               chartReady={chartReady}
               layoutRevision={layoutRevision}
             />

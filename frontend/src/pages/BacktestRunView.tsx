@@ -16,12 +16,25 @@ import ExploreCandleChart from "../components/explore/ExploreCandleChart";
 import StrategyOverlay from "../components/strategies/StrategyOverlay";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import { decomposeStrategyToLayers } from "../lib/chart/chartOverlayState";
-import { buildCenteredBarFocusWindow } from "../lib/chart/chartFocusWindow";
+import {
+  FOCUS_VISIBLE_BARS,
+  buildCenteredBarFocusWindow,
+  buildSpanBarFocusWindow,
+  focusWindowVisibleBars,
+} from "../lib/chart/chartFocusWindow";
+import { timeframeToMs } from "../lib/candleSchedule";
 import { parseAppInstant } from "../lib/formatTime";
 import { ROUTES } from "../lib/routes";
 import {
-  backtestActionToSelectedMarker,
+  actionsForSequences,
+  actionMatchesKindFilter,
+  buildBacktestActionTimeline,
+  groupBacktestActions,
+  type BacktestActionGroup,
+} from "../lib/backtests/backtestActionGroups";
+import {
   backtestActionsToChartMarkers,
+  mergeSelectedActionMarkers,
 } from "../lib/backtests/backtestChartMarkers";
 import {
   findEventIndex,
@@ -44,11 +57,25 @@ import { getSupabaseBrowserClient } from "../lib/supabaseClient";
 
 type PanelTab = "overview" | "strategy" | "actions" | "feedback";
 type TimeStepMode = "1d" | "7d" | "1m";
+type ActionsListView = "actions" | "trades";
+type ActionSelection =
+  | { mode: "action"; sequence: number }
+  | { mode: "group"; groupId: string; sequences: number[] };
 
 const EVENT_STEP_OPTIONS: Array<{ kind: EventStepKind; label: string }> = [
+  { kind: "trade", label: "Trade" },
   { kind: "action", label: "Action" },
   { kind: "signal", label: "Signal" },
   { kind: "exit", label: "Exit" },
+];
+
+const ACTION_KIND_FILTERS: Array<{ id: string; label: string }> = [
+  { id: "signal", label: "Signal" },
+  { id: "filter_fail", label: "Filter fail" },
+  { id: "entry", label: "Entry" },
+  { id: "exit", label: "Exit" },
+  { id: "sl", label: "SL" },
+  { id: "tp", label: "TP" },
 ];
 
 type EventStepMenuProps = {
@@ -68,7 +95,7 @@ function EventStepMenu({
 }: EventStepMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const kindLabel = EVENT_STEP_OPTIONS.find((option) => option.kind === kind)?.label ?? "Action";
+  const kindLabel = EVENT_STEP_OPTIONS.find((option) => option.kind === kind)?.label ?? "Trade";
 
   useEffect(() => {
     if (!open) return;
@@ -241,6 +268,17 @@ function actionKindClass(kind: string): string {
   return "backtest-action-kind--default";
 }
 
+function tradeDirectionKindClass(direction: string | null | undefined): string {
+  const normalized = String(direction || "").trim().toLowerCase();
+  if (normalized === "long" || normalized === "bullish" || normalized === "buy") {
+    return "backtest-action-kind--long";
+  }
+  if (normalized === "short" || normalized === "bearish" || normalized === "sell") {
+    return "backtest-action-kind--short";
+  }
+  return "backtest-action-kind--entry";
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -309,13 +347,18 @@ export default function BacktestRunView() {
   const [logs, setLogs] = useState<BacktestLog[]>([]);
   const [tab, setTab] = useState<PanelTab>("overview");
   const [selectedActionIndex, setSelectedActionIndex] = useState(0);
+  const [actionSelection, setActionSelection] = useState<ActionSelection | null>(null);
+  const [focusRequestKey, setFocusRequestKey] = useState("");
+  const focusNonceRef = useRef(0);
+  const [kindFilter, setKindFilter] = useState<Set<string>>(() => new Set());
+  const [actionsListView, setActionsListView] = useState<ActionsListView>("actions");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [candlesLoading, setCandlesLoading] = useState(true);
   const [logFollow, setLogFollow] = useState(true);
   const [logLevel, setLogLevel] = useState<string>("all");
   const [logsExpanded, setLogsExpanded] = useState(false);
-  const [eventStepKind, setEventStepKind] = useState<EventStepKind>("action");
+  const [eventStepKind, setEventStepKind] = useState<EventStepKind>("trade");
   const [feedbackSettings, setFeedbackSettings] = useState<BacktestSettings | null>(null);
   const [analyzeBusy, setAnalyzeBusy] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
@@ -323,6 +366,39 @@ export default function BacktestRunView() {
   const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<Set<string>>(new Set());
   const selectedActionItemRef = useRef<HTMLButtonElement | null>(null);
   const feedbackMarkdownRef = useRef<HTMLDivElement | null>(null);
+
+  function bumpFocusRequest(key: string) {
+    focusNonceRef.current += 1;
+    setFocusRequestKey(`${key}:${focusNonceRef.current}`);
+  }
+
+  function selectActionAtIndex(index: number) {
+    const action = actions[index];
+    if (!action) return;
+    setSelectedActionIndex(index);
+    setActionSelection({ mode: "action", sequence: action.sequence });
+    bumpFocusRequest(`action:${action.sequence}`);
+  }
+
+  function selectTradeGroup(group: BacktestActionGroup) {
+    const entryIndex = actions.findIndex((action) => action.sequence === group.entrySequence);
+    if (entryIndex >= 0) setSelectedActionIndex(entryIndex);
+    setActionSelection({
+      mode: "group",
+      groupId: group.id,
+      sequences: group.sequences,
+    });
+    bumpFocusRequest(`group:${group.id}`);
+  }
+
+  function toggleKindFilter(kind: string) {
+    setKindFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!runId) return;
@@ -493,40 +569,6 @@ export default function BacktestRunView() {
     };
   }, [runId, run?.ai_feedback?.status]);
 
-  useEffect(() => {
-    if (!runId || !run) return;
-    const symbol = run.instrument || run.instruments[0];
-    if (!symbol) {
-      setCandles([]);
-      setCandlesError("Backtest run has no instrument");
-      setCandlesLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setCandlesLoading(true);
-    setCandlesError(null);
-    api
-      .getBacktestRunCandles(runId)
-      .then((data) => {
-        if (cancelled) return;
-        setCandles(data.candles);
-        if (data.candles.length === 0) {
-          setCandlesError("No candle data for this backtest window.");
-        }
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setCandles([]);
-        setCandlesError(err instanceof Error ? err.message : "Failed to load chart data");
-      })
-      .finally(() => {
-        if (!cancelled) setCandlesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [runId, run?.id, run?.period_start, run?.period_end, run?.instrument, run?.timeframe]);
-
   const timeframe = (run?.timeframe || "M15") as Timeframe;
   const symbol = run?.instrument || run?.instruments[0] || null;
   const overlayItems = useMemo(
@@ -534,25 +576,163 @@ export default function BacktestRunView() {
     [strategy],
   );
   const selectedAction = actions[selectedActionIndex] ?? null;
+  const { groups: tradeGroups } = useMemo(() => groupBacktestActions(actions), [actions]);
+  const selectedGroup = useMemo(() => {
+    if (actionSelection?.mode !== "group") return null;
+    return tradeGroups.find((group) => group.id === actionSelection.groupId) ?? null;
+  }, [actionSelection, tradeGroups]);
+
+  const candleFocusIso =
+    selectedGroup?.fromBarTime ||
+    selectedAction?.bar_time ||
+    run?.period_start ||
+    null;
+  const candleFocusKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    candleFocusKeyRef.current = null;
+  }, [runId]);
+
+  useEffect(() => {
+    if (!runId || !run) return;
+    if (!symbol) {
+      setCandles([]);
+      setCandlesError("Backtest run has no instrument");
+      setCandlesLoading(false);
+      return;
+    }
+    if (!candleFocusIso) return;
+
+    const focusMs = parseAppInstant(candleFocusIso)?.getTime();
+    if (focusMs == null) return;
+
+    if (candles.length > 0) {
+      const firstMs = parseAppInstant(candles[0]?.time || "")?.getTime();
+      const lastMs = parseAppInstant(candles[candles.length - 1]?.time || "")?.getTime();
+      if (firstMs != null && lastMs != null && focusMs >= firstMs && focusMs <= lastMs) {
+        return;
+      }
+    }
+
+    const requestKey = `${runId}:${candleFocusIso}`;
+    if (candleFocusKeyRef.current === requestKey) return;
+    candleFocusKeyRef.current = requestKey;
+
+    let cancelled = false;
+    // Keep existing candles on screen while the focused window loads.
+    if (candles.length === 0) setCandlesLoading(true);
+    setCandlesError(null);
+    api
+      .getBacktestRunCandles(runId, { around: candleFocusIso })
+      .then((data) => {
+        if (cancelled || candleFocusKeyRef.current !== requestKey) return;
+        setCandles(data.candles);
+        if (data.candles.length === 0) {
+          setCandlesError("No candle data for this backtest window.");
+        }
+      })
+      .catch((err) => {
+        if (cancelled || candleFocusKeyRef.current !== requestKey) return;
+        candleFocusKeyRef.current = null;
+        if (candles.length === 0) {
+          setCandles([]);
+          setCandlesError(err instanceof Error ? err.message : "Failed to load chart data");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCandlesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    runId,
+    run,
+    symbol,
+    candleFocusIso,
+    candles,
+    run?.period_start,
+    run?.period_end,
+    run?.instrument,
+    run?.timeframe,
+  ]);
+
+  const selectedSequences = useMemo(() => {
+    if (actionSelection?.mode === "group") return actionSelection.sequences;
+    if (actionSelection?.mode === "action") return [actionSelection.sequence];
+    if (selectedAction) return [selectedAction.sequence];
+    return [];
+  }, [actionSelection, selectedAction]);
+
+  const selectedActionsForMarkers = useMemo(
+    () => actionsForSequences(actions, selectedSequences),
+    [actions, selectedSequences],
+  );
+
+  const filteredActions = useMemo(
+    () => actions.filter((action) => actionMatchesKindFilter(action, kindFilter)),
+    [actions, kindFilter],
+  );
+
+  const actionTimeline = useMemo(
+    () => buildBacktestActionTimeline(actions, kindFilter),
+    [actions, kindFilter],
+  );
 
   useEffect(() => {
     selectedActionItemRef.current?.scrollIntoView({
       block: "nearest",
       behavior: "smooth",
     });
-  }, [selectedActionIndex, tab]);
+  }, [selectedActionIndex, actionSelection, tab, actionsListView]);
+
+  // Keep selection in sync when actions first load / refresh.
+  useEffect(() => {
+    if (actions.length === 0) {
+      setActionSelection(null);
+      return;
+    }
+    if (actionSelection == null && selectedAction) {
+      setActionSelection({ mode: "action", sequence: selectedAction.sequence });
+    }
+  }, [actions, actionSelection, selectedAction]);
 
   const actionMarkers = useMemo(() => {
     const fills = backtestActionsToChartMarkers(actions);
-    const selected = backtestActionToSelectedMarker(selectedAction);
-    if (!selected || selected.role !== "skipped") return fills;
-    if (fills.some((marker) => marker.sequence === selected.sequence)) return fills;
-    return [...fills, selected];
-  }, [actions, selectedAction]);
+    return mergeSelectedActionMarkers(fills, selectedActionsForMarkers);
+  }, [actions, selectedActionsForMarkers]);
 
   const focusWindow = useMemo(() => {
-    // Prefer the selected action (or period start) over current_bar so a completed
-    // run does not zoom to the last bar before the user steps through.
+    // Prefer the selected action/group over current_bar so a completed run does
+    // not zoom to the last bar before the user steps through.
+    const periodStart = parseAppInstant(run?.period_start || "")?.getTime();
+    const periodEnd = parseAppInstant(run?.period_end || "")?.getTime();
+    const candleStart = candles.length
+      ? parseAppInstant(candles[0]?.time || "")?.getTime()
+      : null;
+    const candleEnd = candles.length
+      ? parseAppInstant(candles[candles.length - 1]?.time || "")?.getTime()
+      : null;
+
+    if (selectedGroup?.fromBarTime && selectedGroup.toBarTime) {
+      const fromMs = parseAppInstant(selectedGroup.fromBarTime)?.getTime();
+      const toMs = parseAppInstant(selectedGroup.toBarTime)?.getTime();
+      const displayFrom = periodStart ?? candleStart ?? fromMs;
+      const displayTo = periodEnd ?? candleEnd ?? toMs;
+      if (displayFrom == null || displayTo == null || fromMs == null || toMs == null) {
+        return null;
+      }
+      return buildSpanBarFocusWindow({
+        fromIso: selectedGroup.fromBarTime,
+        toIso: selectedGroup.toBarTime,
+        timeframe,
+        displaySinceMs: displayFrom,
+        displayUntilMs: displayTo,
+        padBars: 8,
+        minVisibleBars: FOCUS_VISIBLE_BARS,
+      });
+    }
+
     const anchor =
       selectedAction?.bar_time || run?.period_start || run?.current_bar;
     if (!anchor) return null;
@@ -562,14 +742,6 @@ export default function BacktestRunView() {
 
     // Keep the full backtest period in the series so the user can pan/scroll
     // across the entire run. Zoom uses a fixed bar count for the timeframe.
-    const periodStart = parseAppInstant(run?.period_start || "")?.getTime();
-    const periodEnd = parseAppInstant(run?.period_end || "")?.getTime();
-    const candleStart = candles.length
-      ? parseAppInstant(candles[0]?.time || "")?.getTime()
-      : null;
-    const candleEnd = candles.length
-      ? parseAppInstant(candles[candles.length - 1]?.time || "")?.getTime()
-      : null;
     const displayFrom = periodStart ?? candleStart ?? center;
     const displayTo = periodEnd ?? candleEnd ?? center;
     if (displayFrom == null || displayTo == null) return null;
@@ -581,6 +753,7 @@ export default function BacktestRunView() {
       displayUntilMs: displayTo,
     });
   }, [
+    selectedGroup,
     selectedAction?.bar_time,
     run?.period_start,
     run?.period_end,
@@ -588,6 +761,20 @@ export default function BacktestRunView() {
     candles,
     timeframe,
   ]);
+
+  const focusVisibleBars = useMemo(() => {
+    if (!focusWindow) return FOCUS_VISIBLE_BARS;
+    if (selectedGroup) {
+      const fromMs = parseAppInstant(selectedGroup.fromBarTime || "")?.getTime();
+      const toMs = parseAppInstant(selectedGroup.toBarTime || "")?.getTime();
+      if (fromMs != null && toMs != null) {
+        const barMs = timeframeToMs(timeframe);
+        const spanBars = Math.max(1, Math.ceil((toMs - fromMs) / barMs) + 1);
+        return Math.max(FOCUS_VISIBLE_BARS, spanBars + 16);
+      }
+    }
+    return focusWindowVisibleBars(focusWindow, timeframe);
+  }, [focusWindow, selectedGroup, timeframe]);
 
   const filteredLogs = useMemo(() => {
     if (logLevel === "all") return logs;
@@ -612,7 +799,16 @@ export default function BacktestRunView() {
   function stepEvent(kind: EventStepKind, direction: 1 | -1) {
     const index = findEventIndex(actions, selectedActionIndex, kind, direction);
     if (index < 0) return;
-    setSelectedActionIndex(index);
+    if (kind === "trade") {
+      const action = actions[index];
+      const group = tradeGroups.find((item) => item.sequences.includes(action.sequence));
+      if (group) {
+        selectTradeGroup(group);
+        setTab("actions");
+        return;
+      }
+    }
+    selectActionAtIndex(index);
     setTab("actions");
   }
 
@@ -633,7 +829,7 @@ export default function BacktestRunView() {
         best = i;
         if (t.getTime() >= target) break;
       }
-      setSelectedActionIndex(best);
+      selectActionAtIndex(best);
     } else {
       let best = selectedActionIndex;
       for (let i = selectedActionIndex - 1; i >= 0; i -= 1) {
@@ -642,7 +838,7 @@ export default function BacktestRunView() {
         best = i;
         if (t.getTime() <= target) break;
       }
-      setSelectedActionIndex(best);
+      selectActionAtIndex(best);
     }
     setTab("actions");
   }
@@ -810,7 +1006,9 @@ export default function BacktestRunView() {
                 Cancel
               </button>
             ) : null}
-            {status === "completed" ? (
+            {status === "completed" &&
+            feedback?.status !== "completed" &&
+            feedback?.status !== "failed" ? (
               <button
                 type="button"
                 className="btn btn-sm"
@@ -878,14 +1076,20 @@ export default function BacktestRunView() {
             <EventStepMenu
               direction="previous"
               kind={eventStepKind}
-              disabled={actions.length === 0 || selectedActionIndex <= 0}
+              disabled={
+                actions.length === 0 ||
+                findEventIndex(actions, selectedActionIndex, eventStepKind, -1) < 0
+              }
               onKindChange={setEventStepKind}
               onStep={(kind) => stepEvent(kind, -1)}
             />
             <EventStepMenu
               direction="next"
               kind={eventStepKind}
-              disabled={actions.length === 0 || selectedActionIndex >= actions.length - 1}
+              disabled={
+                actions.length === 0 ||
+                findEventIndex(actions, selectedActionIndex, eventStepKind, 1) < 0
+              }
               onKindChange={setEventStepKind}
               onStep={(kind) => stepEvent(kind, 1)}
             />
@@ -903,8 +1107,10 @@ export default function BacktestRunView() {
             error={candlesError}
             overlayItems={overlayItems}
             focusWindow={focusWindow}
+            focusRequestKey={focusRequestKey}
+            focusVisibleBars={focusVisibleBars}
             actionMarkers={actionMarkers}
-            selectedActionSequence={selectedAction?.sequence ?? null}
+            selectedActionSequences={selectedSequences}
           />
           {(status === "running" || logs.length > 0) && (
             <div className="backtest-log-viewer">
@@ -1120,7 +1326,11 @@ export default function BacktestRunView() {
                 <div className="backtest-actions-hero-main">
                   <p className="backtest-overview-hero-label">Actions</p>
                   <p className="backtest-actions-hero-count">
-                    {actions.length === 0 ? "None yet" : `${actions.length} recorded`}
+                    {actions.length === 0
+                      ? "None yet"
+                      : tradeGroups.length > 0
+                        ? `${tradeGroups.length} trades · ${actions.length} actions`
+                        : `${actions.length} recorded`}
                   </p>
                   <p className="settings-muted backtest-actions-order-hint">
                     Oldest → newest
@@ -1133,40 +1343,221 @@ export default function BacktestRunView() {
                 ) : null}
               </section>
 
+              {actions.length > 0 ? (
+                <div className="backtest-actions-toolbar">
+                  <div className="backtest-actions-view-toggle" role="group" aria-label="Actions view">
+                    <button
+                      type="button"
+                      className={`backtest-actions-view-btn${
+                        actionsListView === "actions" ? " backtest-actions-view-btn--active" : ""
+                      }`}
+                      onClick={() => setActionsListView("actions")}
+                    >
+                      Actions
+                    </button>
+                    <button
+                      type="button"
+                      className={`backtest-actions-view-btn${
+                        actionsListView === "trades" ? " backtest-actions-view-btn--active" : ""
+                      }`}
+                      onClick={() => setActionsListView("trades")}
+                    >
+                      Trades
+                    </button>
+                  </div>
+                  <div className="backtest-actions-filters" role="group" aria-label="Filter by kind">
+                    {ACTION_KIND_FILTERS.map((filter) => {
+                      const active = kindFilter.has(filter.id);
+                      return (
+                        <button
+                          key={filter.id}
+                          type="button"
+                          className={`backtest-actions-filter-chip${
+                            active ? " backtest-actions-filter-chip--active" : ""
+                          }`}
+                          aria-pressed={active}
+                          onClick={() => toggleKindFilter(filter.id)}
+                        >
+                          {filter.label}
+                        </button>
+                      );
+                    })}
+                    {kindFilter.size > 0 ? (
+                      <button
+                        type="button"
+                        className="backtest-actions-filter-clear"
+                        onClick={() => setKindFilter(new Set())}
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
               {actions.length === 0 ? (
                 <div className="backtest-actions-empty">
                   <p className="settings-muted">
                     No actions recorded yet. Step through once the run starts producing signals.
                   </p>
                 </div>
-              ) : (
-                <ul className="backtest-actions-list">
-                  {actions.map((action, index) => (
-                    <li key={action.id}>
-                      <button
-                        type="button"
-                        ref={index === selectedActionIndex ? selectedActionItemRef : undefined}
-                        className={`backtest-action-item${
-                          index === selectedActionIndex ? " backtest-action-item--active" : ""
-                        }`}
-                        onClick={() => setSelectedActionIndex(index)}
-                      >
-                        <span className="backtest-action-item-top">
-                          <span
-                            className={`backtest-action-kind ${actionKindClass(action.kind)}`}
+              ) : actionsListView === "actions" ? (
+                filteredActions.length === 0 ? (
+                  <div className="backtest-actions-empty">
+                    <p className="settings-muted">No actions match the current filter.</p>
+                  </div>
+                ) : (
+                  <ul className="backtest-actions-list">
+                    {filteredActions.map((action) => {
+                      const index = actions.findIndex((row) => row.id === action.id);
+                      const isActive =
+                        actionSelection?.mode === "action" &&
+                        actionSelection.sequence === action.sequence;
+                      return (
+                        <li key={action.id}>
+                          <button
+                            type="button"
+                            ref={isActive ? selectedActionItemRef : undefined}
+                            className={`backtest-action-item${
+                              isActive ? " backtest-action-item--active" : ""
+                            }`}
+                            onClick={() => selectActionAtIndex(index)}
                           >
-                            {action.kind.replace(/_/g, " ")}
-                          </span>
-                          {action.bar_time ? (
-                            <span className="backtest-action-time settings-muted">
-                              {formatInstant(action.bar_time)}
+                            <span className="backtest-action-item-top">
+                              <span
+                                className={`backtest-action-kind ${actionKindClass(action.kind)}`}
+                              >
+                                {action.kind.replace(/_/g, " ")}
+                              </span>
+                              {action.bar_time ? (
+                                <span className="backtest-action-time settings-muted">
+                                  {formatInstant(action.bar_time)}
+                                </span>
+                              ) : null}
                             </span>
-                          ) : null}
-                        </span>
-                        <span className="backtest-action-message">{action.message}</span>
-                      </button>
-                    </li>
-                  ))}
+                            <span className="backtest-action-message">{action.message}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )
+              ) : actionTimeline.length === 0 ? (
+                <div className="backtest-actions-empty">
+                  <p className="settings-muted">No trades or actions match the current filter.</p>
+                </div>
+              ) : (
+                <ul className="backtest-actions-list backtest-actions-list--trades">
+                  {actionTimeline.map((item) => {
+                    if (item.type === "action") {
+                      const { action, index } = item;
+                      const isActive =
+                        actionSelection?.mode === "action" &&
+                        actionSelection.sequence === action.sequence;
+                      return (
+                        <li key={`solo-${action.id}`}>
+                          <button
+                            type="button"
+                            ref={isActive ? selectedActionItemRef : undefined}
+                            className={`backtest-action-item${
+                              isActive ? " backtest-action-item--active" : ""
+                            }`}
+                            onClick={() => selectActionAtIndex(index)}
+                          >
+                            <span className="backtest-action-item-top">
+                              <span
+                                className={`backtest-action-kind ${actionKindClass(action.kind)}`}
+                              >
+                                {action.kind.replace(/_/g, " ")}
+                              </span>
+                              {action.bar_time ? (
+                                <span className="backtest-action-time settings-muted">
+                                  {formatInstant(action.bar_time)}
+                                </span>
+                              ) : null}
+                            </span>
+                            <span className="backtest-action-message">{action.message}</span>
+                          </button>
+                        </li>
+                      );
+                    }
+
+                    const { group } = item;
+                    const groupActive =
+                      actionSelection?.mode === "group" &&
+                      actionSelection.groupId === group.id;
+                    const directionLabel = group.direction
+                      ? group.direction.charAt(0).toUpperCase() + group.direction.slice(1)
+                      : "Trade";
+                    return (
+                      <li key={group.id} className="backtest-action-group">
+                        <button
+                          type="button"
+                          ref={groupActive ? selectedActionItemRef : undefined}
+                          className={`backtest-action-group-header${
+                            groupActive ? " backtest-action-group-header--active" : ""
+                          }`}
+                          onClick={() => selectTradeGroup(group)}
+                        >
+                          <span className="backtest-action-group-header-top">
+                            <span
+                              className={`backtest-action-kind ${tradeDirectionKindClass(group.direction)}`}
+                            >
+                              {directionLabel}
+                            </span>
+                            <span
+                              className={`backtest-action-group-pnl ${pnlToneClass(group.realizedPnl)}`}
+                            >
+                              {formatPnl(group.realizedPnl)}
+                            </span>
+                          </span>
+                          <span className="backtest-action-group-meta settings-muted">
+                            {group.fromBarTime ? formatInstant(group.fromBarTime) : "—"}
+                            {" → "}
+                            {group.toBarTime ? formatInstant(group.toBarTime) : "—"}
+                            {` · ${group.actions.length} events`}
+                          </span>
+                        </button>
+                        <ul className="backtest-action-group-children">
+                          {group.actions.map((action) => {
+                            const index = actions.findIndex((row) => row.id === action.id);
+                            const isActive =
+                              actionSelection?.mode === "action" &&
+                              actionSelection.sequence === action.sequence;
+                            const kindVisible =
+                              kindFilter.size === 0 ||
+                              actionMatchesKindFilter(action, kindFilter);
+                            return (
+                              <li key={action.id}>
+                                <button
+                                  type="button"
+                                  ref={isActive ? selectedActionItemRef : undefined}
+                                  className={`backtest-action-item backtest-action-item--nested${
+                                    isActive ? " backtest-action-item--active" : ""
+                                  }${kindVisible ? "" : " backtest-action-item--dimmed"}`}
+                                  onClick={() => selectActionAtIndex(index)}
+                                >
+                                  <span className="backtest-action-item-top">
+                                    <span
+                                      className={`backtest-action-kind ${actionKindClass(action.kind)}`}
+                                    >
+                                      {action.kind.replace(/_/g, " ")}
+                                    </span>
+                                    {action.bar_time ? (
+                                      <span className="backtest-action-time settings-muted">
+                                        {formatInstant(action.bar_time)}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                  <span className="backtest-action-message">{action.message}</span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>

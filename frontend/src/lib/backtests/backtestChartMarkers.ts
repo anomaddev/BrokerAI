@@ -1,7 +1,7 @@
 import type { BacktestAction } from "../../api/client";
 import { parseAppInstant } from "../formatTime";
 
-export type BacktestChartMarkerRole = "entry" | "exit" | "skipped";
+export type BacktestChartMarkerRole = "entry" | "exit" | "skipped" | "signal";
 
 export type BacktestChartMarker = {
   id: string;
@@ -43,11 +43,11 @@ function metaDirection(
   return "long";
 }
 
-function isExecutedSignal(action: BacktestAction): boolean {
+export function isExecutedSignal(action: BacktestAction): boolean {
   return action.message.toLowerCase().includes("executing trade");
 }
 
-function isSkippedSignal(action: BacktestAction): boolean {
+export function isSkippedSignal(action: BacktestAction): boolean {
   if (action.kind === "filter_fail") return true;
   if (action.kind !== "signal") return false;
   return !isExecutedSignal(action);
@@ -65,6 +65,8 @@ function exitLabel(kind: string, meta: Record<string, unknown> | null | undefine
 export type BacktestChartMarkerOptions = {
   /** Include FILTER / SKIP markers. Default false — they overwhelm multi-month charts. */
   includeSkipped?: boolean;
+  /** Include executed SIGNAL markers (normally omitted; the entry fill represents the trade). */
+  includeExecutedSignals?: boolean;
 };
 
 /**
@@ -79,6 +81,7 @@ export function backtestActionsToChartMarkers(
   options: BacktestChartMarkerOptions = {},
 ): BacktestChartMarker[] {
   const includeSkipped = Boolean(options.includeSkipped);
+  const includeExecutedSignals = Boolean(options.includeExecutedSignals);
   const markers: BacktestChartMarker[] = [];
 
   for (const action of actions) {
@@ -118,6 +121,18 @@ export function backtestActionsToChartMarkers(
     }
 
     if (kind === "signal" && isExecutedSignal(action)) {
+      if (includeExecutedSignals) {
+        markers.push({
+          id: `signal-${action.sequence}`,
+          sequence: action.sequence,
+          time,
+          price,
+          direction,
+          role: "signal",
+          label: "SIGNAL",
+          kind,
+        });
+      }
       continue;
     }
 
@@ -138,11 +153,34 @@ export function backtestActionsToChartMarkers(
   return markers;
 }
 
-/** Build the single marker for a selected skip/filter action so step-through can highlight it. */
+/**
+ * Build marker(s) for selected action(s) so step-through / group review can highlight
+ * non-fill events (executed signals, skips, filter fails) that are omitted by default.
+ */
 export function backtestActionToSelectedMarker(
   action: BacktestAction | null | undefined,
 ): BacktestChartMarker | null {
   if (!action) return null;
-  const markers = backtestActionsToChartMarkers([action], { includeSkipped: true });
+  const markers = backtestActionsToChartMarkers([action], {
+    includeSkipped: true,
+    includeExecutedSignals: true,
+  });
   return markers[0] ?? null;
+}
+
+/** Merge fill markers with temporary markers for the currently selected sequences. */
+export function mergeSelectedActionMarkers(
+  fillMarkers: BacktestChartMarker[],
+  selectedActions: BacktestAction[],
+): BacktestChartMarker[] {
+  const bySequence = new Map<number, BacktestChartMarker>();
+  for (const marker of fillMarkers) {
+    bySequence.set(marker.sequence, marker);
+  }
+  for (const action of selectedActions) {
+    if (bySequence.has(action.sequence)) continue;
+    const selected = backtestActionToSelectedMarker(action);
+    if (selected) bySequence.set(selected.sequence, selected);
+  }
+  return [...bySequence.values()].sort((a, b) => a.sequence - b.sequence);
 }
