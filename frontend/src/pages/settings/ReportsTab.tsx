@@ -347,10 +347,20 @@ export default function ReportsTab() {
   }, []);
 
   const saveEpochRef = useRef(0);
+  const dirtyDailyRef = useRef(false);
+  const dirtyWeeklyRef = useRef(false);
 
   const persistReportsSettings = useCallback(async () => {
     const epoch = ++saveEpochRef.current;
     const snapshot = snapshotRef.current;
+    const saveDaily = dirtyDailyRef.current;
+    const saveWeekly = dirtyWeeklyRef.current;
+    if (!saveDaily && !saveWeekly) return;
+
+    // Clear before awaits so edits during the request re-dirty and coalesce.
+    dirtyDailyRef.current = false;
+    dirtyWeeklyRef.current = false;
+
     const enabledSourceIds = new Set(
       snapshot.models.filter((m) => m.enabled).map((m) => m.id),
     );
@@ -359,34 +369,53 @@ export default function ReportsTab() {
       (c) => c.enabled && c.model_name && enabledSourceIds.has(c.model_id),
     );
 
-    await api.saveResearchSettings({
-      contributor_models: contributorList,
-      synthesis_model_id: snapshot.synthesisModelId,
-      synthesis_model_name: snapshot.synthesisModelName,
-      synthesis_reasoning_effort: snapshot.synthesisReasoning,
-      daily_report_enabled: snapshot.dailyReportEnabled,
-      daily_report_market_id: snapshot.dailyReportMarketId,
-      daily_report_market_offset_hours: snapshot.dailyReportMarketOffsetHours,
-    });
+    let saved: Awaited<ReturnType<typeof api.saveWeeklyResearchSettings>> | null = null;
+    let dailyDone = false;
+    let weeklyDone = false;
 
-    const saved = await api.saveWeeklyResearchSettings({
-      weekly_brief_enabled: snapshot.weeklyBriefEnabled,
-      weekly_brief_model_id: snapshot.weeklyBriefModelId,
-      weekly_brief_model_name: snapshot.weeklyBriefModelName,
-      weekly_brief_reasoning_effort: snapshot.weeklyBriefReasoning,
-      weekly_brief_market_id: snapshot.weeklyBriefMarketId,
-      weekly_brief_market_offset_hours: snapshot.weeklyBriefMarketOffsetHours,
-      weekly_debrief_enabled: snapshot.weeklyDebriefEnabled,
-      weekly_debrief_model_id: snapshot.weeklyDebriefModelId,
-      weekly_debrief_model_name: snapshot.weeklyDebriefModelName,
-      weekly_debrief_reasoning_effort: snapshot.weeklyDebriefReasoning,
-      weekly_debrief_market_id: snapshot.weeklyDebriefMarketId,
-      weekly_debrief_market_offset_hours: snapshot.weeklyDebriefMarketOffsetHours,
-    });
+    try {
+      // Only hit the endpoints whose fields changed. Each PUT runs config backup;
+      // doing both on every toggle was a major source of multi-second lag.
+      if (saveDaily) {
+        saved = await api.saveResearchSettings({
+          contributor_models: contributorList,
+          synthesis_model_id: snapshot.synthesisModelId,
+          synthesis_model_name: snapshot.synthesisModelName,
+          synthesis_reasoning_effort: snapshot.synthesisReasoning,
+          daily_report_enabled: snapshot.dailyReportEnabled,
+          daily_report_market_id: snapshot.dailyReportMarketId,
+          daily_report_market_offset_hours: snapshot.dailyReportMarketOffsetHours,
+        });
+        dailyDone = true;
+      }
+
+      if (saveWeekly) {
+        saved = await api.saveWeeklyResearchSettings({
+          weekly_brief_enabled: snapshot.weeklyBriefEnabled,
+          weekly_brief_model_id: snapshot.weeklyBriefModelId,
+          weekly_brief_model_name: snapshot.weeklyBriefModelName,
+          weekly_brief_reasoning_effort: snapshot.weeklyBriefReasoning,
+          weekly_brief_market_id: snapshot.weeklyBriefMarketId,
+          weekly_brief_market_offset_hours: snapshot.weeklyBriefMarketOffsetHours,
+          weekly_debrief_enabled: snapshot.weeklyDebriefEnabled,
+          weekly_debrief_model_id: snapshot.weeklyDebriefModelId,
+          weekly_debrief_model_name: snapshot.weeklyDebriefModelName,
+          weekly_debrief_reasoning_effort: snapshot.weeklyDebriefReasoning,
+          weekly_debrief_market_id: snapshot.weeklyDebriefMarketId,
+          weekly_debrief_market_offset_hours: snapshot.weeklyDebriefMarketOffsetHours,
+        });
+        weeklyDone = true;
+      }
+    } catch (err) {
+      // Re-queue only the sections that did not complete so the next pass retries.
+      if (saveDaily && !dailyDone) dirtyDailyRef.current = true;
+      if (saveWeekly && !weeklyDone) dirtyWeeklyRef.current = true;
+      throw err;
+    }
 
     // Ignore stale responses so an older in-flight save cannot overwrite optimistic
     // toggle/UI state (that race made Enable switches feel delayed).
-    if (epoch !== saveEpochRef.current) return;
+    if (epoch !== saveEpochRef.current || !saved) return;
 
     // Only sync server-derived fields; local form state is already optimistic.
     setScheduleWarnings(saved.schedule_warnings ?? []);
@@ -411,11 +440,13 @@ export default function ReportsTab() {
         ]);
         setModels(modelsData.models);
         applySavedSettings(settings);
-        await loadCatalog(modelsData.models);
+        // Settings toggles should be interactive immediately; catalog listing can
+        // hang on slow provider APIs and must not gate Enable switches.
         markReady();
+        setLoading(false);
+        void loadCatalog(modelsData.models);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load report settings");
-      } finally {
         setLoading(false);
       }
     })();
@@ -485,8 +516,39 @@ export default function ReportsTab() {
     );
   }
 
+  function markDailyDirty() {
+    dirtyDailyRef.current = true;
+  }
+
+  function markWeeklyDirty() {
+    dirtyWeeklyRef.current = true;
+  }
+
   function patchSnapshot(patch: Partial<ReportsSnapshot>) {
     snapshotRef.current = { ...snapshotRef.current, ...patch };
+    const touchesDaily =
+      patch.dailyReportEnabled !== undefined ||
+      patch.dailyReportMarketId !== undefined ||
+      patch.dailyReportMarketOffsetHours !== undefined ||
+      patch.synthesisModelId !== undefined ||
+      patch.synthesisModelName !== undefined ||
+      patch.synthesisReasoning !== undefined;
+    const touchesWeekly =
+      patch.weeklyBriefEnabled !== undefined ||
+      patch.weeklyBriefModelId !== undefined ||
+      patch.weeklyBriefModelName !== undefined ||
+      patch.weeklyBriefReasoning !== undefined ||
+      patch.weeklyBriefMarketId !== undefined ||
+      patch.weeklyBriefMarketOffsetHours !== undefined ||
+      patch.weeklyDebriefEnabled !== undefined ||
+      patch.weeklyDebriefModelId !== undefined ||
+      patch.weeklyDebriefModelName !== undefined ||
+      patch.weeklyDebriefReasoning !== undefined ||
+      patch.weeklyDebriefMarketId !== undefined ||
+      patch.weeklyDebriefMarketOffsetHours !== undefined;
+    if (touchesDaily) markDailyDirty();
+    if (touchesWeekly) markWeeklyDirty();
+
     // Keep React state in sync immediately so toggles/selects don't wait on save.
     if (patch.dailyReportEnabled !== undefined) setDailyReportEnabled(patch.dailyReportEnabled);
     if (patch.dailyReportMarketId !== undefined) setDailyReportMarketId(patch.dailyReportMarketId);
@@ -521,6 +583,7 @@ export default function ReportsTab() {
 
   function toggleContributor(sourceId: string, modelName: string, enabled: boolean) {
     const key = catalogSelectionKey(sourceId, modelName);
+    markDailyDirty();
     setContributors((prev) => {
       const next = {
         ...prev,
@@ -543,6 +606,7 @@ export default function ReportsTab() {
     reasoning: ReasoningEffort,
   ) {
     const key = catalogSelectionKey(sourceId, modelName);
+    markDailyDirty();
     setContributors((prev) => {
       const next = {
         ...prev,

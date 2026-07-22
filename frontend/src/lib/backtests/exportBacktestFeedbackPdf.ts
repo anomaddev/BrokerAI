@@ -1,7 +1,9 @@
 /**
- * Open a print-friendly window for AI backtest feedback so the user can
- * Save as PDF from the browser print dialog.
+ * Download AI backtest feedback as a PDF (no pop-up / print dialog).
  */
+
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 
 export type BacktestFeedbackPrintOptions = {
   title: string;
@@ -9,6 +11,8 @@ export type BacktestFeedbackPrintOptions = {
   metaLines?: string[];
   /** Sanitized HTML from the already-rendered markdown body. */
   bodyHtml: string;
+  /** Optional download basename without extension. */
+  filename?: string;
 };
 
 function escapeHtml(value: string): string {
@@ -20,7 +24,17 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Build the standalone HTML document used for print / Save as PDF. */
+function sanitizeFilename(value: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/[^\w\s.-]+/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return cleaned || "ai-feedback";
+}
+
+/** Build the standalone HTML document used for PDF rendering. */
 export function buildBacktestFeedbackPrintDocument(
   options: BacktestFeedbackPrintOptions,
 ): string {
@@ -128,10 +142,6 @@ export function buildBacktestFeedbackPrintDocument(
       border-top: 1px solid #ddd;
       margin: 1.4em 0;
     }
-    @media print {
-      body { padding: 0; }
-      a { color: inherit; text-decoration: none; }
-    }
   </style>
 </head>
 <body>
@@ -147,40 +157,131 @@ export function buildBacktestFeedbackPrintDocument(
 </html>`;
 }
 
-/**
- * Open the feedback in a new window and invoke the print dialog (Save as PDF).
- *
- * @throws if the browser blocks the pop-up
- */
-export function openBacktestFeedbackPrintView(
-  options: BacktestFeedbackPrintOptions,
-): void {
-  const html = buildBacktestFeedbackPrintDocument(options);
-  const win = window.open("", "_blank", "noopener,noreferrer");
-  if (!win) {
-    throw new Error(
-      "Pop-up blocked. Allow pop-ups for this site to export PDF.",
-    );
+function mountOfflineDocument(html: string): HTMLIFrameElement {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.position = "fixed";
+  iframe.style.left = "-10000px";
+  iframe.style.top = "0";
+  iframe.style.width = "820px";
+  iframe.style.height = "1160px";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentDocument;
+  if (!doc) {
+    iframe.remove();
+    throw new Error("Failed to create PDF renderer");
   }
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+  doc.open();
+  doc.write(html);
+  doc.close();
+  return iframe;
+}
 
-  const triggerPrint = () => {
-    try {
-      win.focus();
-      win.print();
-    } catch {
-      /* user can still print manually from the opened tab */
+function waitForIframeLoad(iframe: HTMLIFrameElement): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => resolve();
+    if (iframe.contentDocument?.readyState === "complete") {
+      window.setTimeout(done, 50);
+      return;
     }
-  };
+    iframe.addEventListener(
+      "load",
+      () => {
+        window.setTimeout(done, 50);
+      },
+      { once: true },
+    );
+  });
+}
 
-  // Give the new document a tick to finish layout before printing.
-  if (win.document.readyState === "complete") {
-    window.setTimeout(triggerPrint, 50);
-  } else {
-    win.addEventListener("load", () => window.setTimeout(triggerPrint, 50), {
-      once: true,
+/**
+ * Render feedback HTML to a multi-page PDF and trigger a normal file download.
+ */
+export async function downloadBacktestFeedbackPdf(
+  options: BacktestFeedbackPrintOptions,
+): Promise<void> {
+  const html = buildBacktestFeedbackPrintDocument(options);
+  const filename = `${sanitizeFilename(options.filename || options.title)}.pdf`;
+  const iframe = mountOfflineDocument(html);
+
+  try {
+    await waitForIframeLoad(iframe);
+    const source = iframe.contentDocument?.body;
+    if (!source) {
+      throw new Error("Failed to render feedback for PDF export");
+    }
+
+    const canvas = await html2canvas(source, {
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      backgroundColor: "#ffffff",
+      windowWidth: 820,
     });
+
+    const pdf = new jsPDF({
+      orientation: "portrait",
+      unit: "pt",
+      format: "a4",
+    });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 36;
+    const contentWidth = pageWidth - margin * 2;
+    const contentHeight = pageHeight - margin * 2;
+
+    const imgWidth = contentWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const pageCanvas = document.createElement("canvas");
+    const pageCtx = pageCanvas.getContext("2d");
+    if (!pageCtx) {
+      throw new Error("Failed to slice PDF pages");
+    }
+
+    const pxPerPt = canvas.width / imgWidth;
+    const pageHeightPx = contentHeight * pxPerPt;
+    let renderedHeight = 0;
+    let pageIndex = 0;
+
+    while (renderedHeight < canvas.height) {
+      const sliceHeight = Math.min(pageHeightPx, canvas.height - renderedHeight);
+      pageCanvas.width = canvas.width;
+      pageCanvas.height = Math.max(1, Math.floor(sliceHeight));
+      pageCtx.fillStyle = "#ffffff";
+      pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+      pageCtx.drawImage(
+        canvas,
+        0,
+        renderedHeight,
+        canvas.width,
+        sliceHeight,
+        0,
+        0,
+        canvas.width,
+        sliceHeight,
+      );
+
+      const pageData = pageCanvas.toDataURL("image/jpeg", 0.92);
+      if (pageIndex > 0) pdf.addPage();
+      pdf.addImage(
+        pageData,
+        "JPEG",
+        margin,
+        margin,
+        imgWidth,
+        sliceHeight / pxPerPt,
+      );
+
+      renderedHeight += sliceHeight;
+      pageIndex += 1;
+    }
+
+    pdf.save(filename);
+  } finally {
+    iframe.remove();
   }
 }

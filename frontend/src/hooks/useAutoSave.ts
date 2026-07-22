@@ -20,6 +20,8 @@ export default function useAutoSave({
   const skipSaveRef = useRef(true);
   const saveTimerRef = useRef<number | null>(null);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const saveRunningRef = useRef(false);
+  const pendingSaveRef = useRef(false);
   const savedTimerRef = useRef<number | null>(null);
   const onSaveRef = useRef(onSave);
   const canSaveRef = useRef(canSave);
@@ -46,23 +48,38 @@ export default function useAutoSave({
   const enqueueSave = useCallback(() => {
     if (skipSaveRef.current) return;
 
+    // Always mark dirty so an in-flight save will do one more pass with the
+    // latest snapshot instead of queuing N full saves (each can take a long time
+    // when config backup runs).
+    pendingSaveRef.current = true;
+    if (saveRunningRef.current) return;
+
+    saveRunningRef.current = true;
     saveChainRef.current = saveChainRef.current
       .then(async () => {
-        if (canSaveRef.current && !canSaveRef.current()) return;
-
         setSaving(true);
         try {
-          await onSaveRef.current();
-          setError(null);
-          flashSaved();
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to save");
+          while (pendingSaveRef.current && !skipSaveRef.current) {
+            pendingSaveRef.current = false;
+            if (canSaveRef.current && !canSaveRef.current()) continue;
+            try {
+              await onSaveRef.current();
+              setError(null);
+              flashSaved();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Failed to save");
+            }
+          }
         } finally {
+          saveRunningRef.current = false;
           setSaving(false);
+          if (pendingSaveRef.current && !skipSaveRef.current) {
+            enqueueSave();
+          }
         }
       })
       .catch(() => {
-        // Keep the chain alive after a rejected save.
+        saveRunningRef.current = false;
       });
   }, [flashSaved]);
 
@@ -100,6 +117,7 @@ export default function useAutoSave({
 
   const markNotReady = useCallback(() => {
     skipSaveRef.current = true;
+    pendingSaveRef.current = false;
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;

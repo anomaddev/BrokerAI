@@ -27,7 +27,7 @@ import {
   findEventIndex,
   type EventStepKind,
 } from "../lib/backtests/backtestActionStep";
-import { openBacktestFeedbackPrintView } from "../lib/backtests/exportBacktestFeedbackPdf";
+import { downloadBacktestFeedbackPdf } from "../lib/backtests/exportBacktestFeedbackPdf";
 import {
   backtestRunStatusLabel,
   normalizeBacktestRunStatus,
@@ -748,15 +748,17 @@ export default function BacktestRunView() {
     ? ["overview", "strategy", "actions", "feedback"]
     : ["overview", "strategy", "actions"];
 
-  function exportFeedbackPdf() {
+  async function exportFeedbackPdf() {
     if (!feedback?.markdown || !feedbackMarkdownRef.current) return;
     setExportError(null);
     try {
       const metaLines: string[] = [];
       if (feedback.model_name) metaLines.push(feedback.model_name);
       if (feedback.finished_at) metaLines.push(formatInstant(feedback.finished_at));
-      openBacktestFeedbackPrintView({
-        title: `${run.name || run.strategy_name} — AI feedback`,
+      const title = `${run.name || run.strategy_name} — AI feedback`;
+      await downloadBacktestFeedbackPdf({
+        title,
+        filename: `${run.name || run.strategy_name}-ai-feedback`,
         subtitle: [
           run.strategy_name,
           symbol,
@@ -1199,12 +1201,12 @@ export default function BacktestRunView() {
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
-                        title="Export as PDF"
-                        aria-label="Export AI feedback as PDF"
-                        onClick={exportFeedbackPdf}
+                        title="Download feedback as PDF"
+                        aria-label="Download AI feedback as PDF"
+                        onClick={() => void exportFeedbackPdf()}
                       >
                         <FileDown size={14} strokeWidth={2} aria-hidden />
-                        Export PDF
+                        Download PDF
                       </button>
                     ) : null}
                     <button
