@@ -31,6 +31,16 @@ For each due `(symbol, timeframe)` WorkUnit at candle close:
 
 Parallelism is controlled by `BROKERAI_PIPELINE_CONCURRENCY` (default 10) with nested caps for OANDA fetches and analysis CPU.
 
+### AI Strategy fork
+
+When an enabled strategy has `preset_id=ai_strategy`:
+
+- **Warming / ready** — Broker records would-have intents in `shadow_intents` / `shadow_lots` (never `broker_lots`). Warm-up advances only on realtime bars (catchup never advances or calls the LLM).
+- **Live** — Normal Associate dispatch after gates; priority prefers live strategies over warming AI on the same pair.
+- **Daily improve** — Secretary may queue at-most-daily compiled-playbook backtests when backtest settings enable them.
+
+Details: [AI Strategy](../strategies/ai-strategy.md).
+
 ## Configuration
 
 | Env var | Default | Purpose |
@@ -62,11 +72,14 @@ BROKERAI_ENABLED_BOTS=secretary,broker,researcher
 ## Module layout
 
 ```
-src/brokerai/bots/secretary/     — coordinator
-src/brokerai/bots/broker/        — execution authority
+src/brokerai/bots/secretary/     — coordinator (+ daily AI Strategy backtest tick)
+src/brokerai/bots/broker/        — execution authority (+ shadow fork)
 src/brokerai/bots/associate/     — per-asset order workers
 src/brokerai/bots/data_manager/worker.py
 src/brokerai/bots/data_analyzer/worker.py
+src/brokerai/ai_strategy/        — lifecycle, shadow, learning, compile, daily BT
+src/brokerai/backtesting/        — backtest engine + AI feedback
+src/brokerai/cost/llm_guard.py   — LLM spend gate
 src/brokerai/core/worker_pool.py
 src/brokerai/core/pipeline_candle_cache.py
 ```

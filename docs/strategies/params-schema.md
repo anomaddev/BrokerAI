@@ -1,6 +1,8 @@
 # Strategy Params Schema (v1)
 
-BrokerAI stores strategy configuration in Postgres (`brokerai.strategies`) as a JSONB `doc` whose `params` field is a structured **StrategyParams v1** object. Every preset (EMA Crossover today, others later) uses the same top-level sections. Presets differ by which indicator types, signal types, and filter types they populate inside those sections—not by inventing new top-level keys.
+BrokerAI stores strategy configuration in Postgres (`brokerai.strategies`) as a JSONB `doc` whose `params` field is a structured **StrategyParams v1** object. Every preset (EMA Crossover, AI Strategy, Custom) uses the same top-level sections. Presets differ by which indicator types, signal types, and filter types they populate inside those sections—not by inventing new top-level keys.
+
+For AI Strategy lifecycle (warm-up / promote / shadow), see [ai-strategy.md](./ai-strategy.md).
 
 Access is via the FastAPI app only: schema `brokerai` is not exposed to Supabase PostgREST (`anon` / `authenticated`). RLS is enabled with no policies as deny-by-default defense in depth.
 
@@ -254,6 +256,30 @@ Requires `signal.type` of `ema_crossover` when `enabled` is true. ATR stop loss 
 
 Note: `max_trades_per_day` is stored under `risk` but displayed in the Execution UI section.
 
+### `ai`
+
+AI Strategy knobs only. Required and persisted for `preset_id=ai_strategy`. Other presets omit or ignore this section. Validated by `strategies/params/ai_section.py`.
+
+| Field | Type | Default | Bounds / values |
+|-------|------|---------|-----------------|
+| `model_id` | string \| null | `null` | LLM id from Settings → Models |
+| `use_daily_report` | boolean | `true` | Include daily research as bias |
+| `use_weekly_brief` | boolean | `true` | Include weekly brief as bias |
+| `use_weekly_debrief` | boolean | `true` | Include weekly debrief as bias |
+| `llm_mode` | string | `off` | `off`, `on_signal_change`, `interval`, `manual` |
+| `min_llm_interval_minutes` | integer | `240` | 15–10080 |
+| `max_llm_calls_per_day` | integer | `12` | 0–500 |
+| `max_llm_calls_per_symbol_per_day` | integer | `4` | 0–100 |
+| `max_context_bars` | integer | `64` | 16–500 |
+| `learn_enabled` | boolean | `false` | Queue outcome → memory digest learning |
+
+#### Signal types used with AI Strategy
+
+| `signal.type` | Where used |
+|---------------|------------|
+| `ai_strategy` | Live / shadow analysis (`ModelSignalRuntime`) |
+| `compiled_playbook` | Ephemeral docs for daily AI Strategy backtests (not edited in the builder) |
+
 ---
 
 ## Strategy document (Postgres)
@@ -280,6 +306,16 @@ Rows live in `brokerai.strategies` with denormalized columns (`id`, `asset_class
 }
 ```
 
+AI Strategy docs additionally carry lifecycle fields on the document (not inside `params`):
+
+| Field | Purpose |
+|-------|---------|
+| `execution_phase` | `warming` \| `ready` \| `live` |
+| `warmup` | ET trading-day warm-up counters and episode metadata |
+| `ai_improve` | Daily improve queue stamp / skip reason |
+
+Promote to live: `POST /api/strategies/{id}/promote`.
+
 One-shot repair for docs written before indicator replace-merge:
 
 `./venv/bin/python scripts/cleanup_strategy_orphan_indicators.py --dry-run`
@@ -296,6 +332,7 @@ One-shot repair for docs written before indicator replace-merge:
 | GET | `/api/strategies/{id}` | Single strategy |
 | PATCH | `/api/strategies/{id}` | Partial update |
 | DELETE | `/api/strategies/{id}` | Delete |
+| POST | `/api/strategies/{id}/promote` | Promote a ready AI Strategy to `live` |
 
 Validation errors return HTTP 400 with a descriptive message.
 
@@ -312,6 +349,8 @@ Validation errors return HTTP 400 with a descriptive message.
 | API routes | `src/brokerai/web/routes/strategies.py` |
 | Frontend types | `frontend/src/lib/strategyParams/` |
 | EMA mapper | `frontend/src/pages/strategies/presets/emaCrossover/apiParams.ts` |
+| AI Strategy mapper | `frontend/src/pages/strategies/presets/aiStrategy/apiParams.ts` |
+| AI lifecycle / shadow | `src/brokerai/ai_strategy/` |
 
 ---
 

@@ -21,6 +21,7 @@ Product overview and install: [`README.md`](../README.md). Local Cloud/agent not
 |-----|-------|
 | [auth/self-hosted-oidc.md](auth/self-hosted-oidc.md) | Builtin vs OIDC; profiles and MFA |
 | [strategies/params-schema.md](strategies/params-schema.md) | StrategyParams v1 |
+| [strategies/ai-strategy.md](strategies/ai-strategy.md) | AI Strategy: warm-up, shadow, learning, daily backtests |
 | [dev/onboarding-preview.md](dev/onboarding-preview.md) | Clean-DB onboarding wizard preview |
 
 ## Releases
