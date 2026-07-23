@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from brokerai.config.settings import get_settings
 from brokerai.web.routes.auth import require_auth
 from brokerai.web.system_power import power_control_available, trigger_reboot, trigger_shutdown
+from brokerai.web.system_services import trigger_orchestrator_restart
 from brokerai.web.update_runner import is_dev_install
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -18,6 +19,24 @@ async def power_status(_username: str = Depends(require_auth)) -> JSONResponse:
             "available": power_control_available(settings),
             "dev_mode": dev_mode,
         }
+    )
+
+
+@router.post("/orchestrator/restart")
+async def restart_orchestrator(_username: str = Depends(require_auth)) -> JSONResponse:
+    """Restart the orchestrator service (or all modules in-process as a fallback)."""
+    ok, message, mode = await trigger_orchestrator_restart()
+    if not ok:
+        raise HTTPException(status_code=503, detail=message)
+    return JSONResponse(
+        {
+            "action": "restart",
+            "target": "orchestrator",
+            "status": "accepted",
+            "mode": mode,
+            "message": message,
+        },
+        status_code=202,
     )
 
 

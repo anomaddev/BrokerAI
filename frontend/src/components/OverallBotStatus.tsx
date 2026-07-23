@@ -17,6 +17,9 @@ import {
 } from "../lib/botActivity";
 import {
   computeOverallStatus,
+  formatBotErrorsForClipboard,
+  formatOverallErrorSummary,
+  listBotErrors,
   overallStatusLabel,
   overallStatusTone,
   sortBots,
@@ -49,6 +52,30 @@ import type { Timeframe } from "../lib/strategyParams/types";
 const POLL_INTERVAL_MS = 15_000;
 const COUNTDOWN_REFRESH_MS = 1_000;
 const TIMELINE_LIMIT = 5;
+const COPY_FEEDBACK_MS = 2_000;
+const TOOLTIP_CLOSE_DELAY_MS = 120;
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.setAttribute("readonly", "");
+      el.style.position = "fixed";
+      el.style.left = "-9999px";
+      document.body.appendChild(el);
+      el.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(el);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
 
 type TooltipCoords = {
   top: number;
@@ -110,6 +137,38 @@ export default function OverallBotStatus() {
     setHovered: setNextHovered,
     coords: nextCoords,
   } = useHoverTooltipCoords<HTMLSpanElement>();
+  const pillCloseTimerRef = useRef<number | null>(null);
+  const [errorCopied, setErrorCopied] = useState(false);
+  const errorCopiedTimerRef = useRef<number | null>(null);
+
+  function openPillTooltip() {
+    if (pillCloseTimerRef.current != null) {
+      window.clearTimeout(pillCloseTimerRef.current);
+      pillCloseTimerRef.current = null;
+    }
+    setPillHovered(true);
+  }
+
+  function scheduleClosePillTooltip() {
+    if (pillCloseTimerRef.current != null) {
+      window.clearTimeout(pillCloseTimerRef.current);
+    }
+    pillCloseTimerRef.current = window.setTimeout(() => {
+      setPillHovered(false);
+      pillCloseTimerRef.current = null;
+    }, TOOLTIP_CLOSE_DELAY_MS);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pillCloseTimerRef.current != null) {
+        window.clearTimeout(pillCloseTimerRef.current);
+      }
+      if (errorCopiedTimerRef.current != null) {
+        window.clearTimeout(errorCopiedTimerRef.current);
+      }
+    };
+  }, []);
 
   const [loaded, setLoaded] = useState(false);
   const [orchestratorRunning, setOrchestratorRunning] = useState<boolean | null>(null);
@@ -306,6 +365,23 @@ export default function OverallBotStatus() {
   const tone = overallStatusTone(status);
   const label = overallStatusLabel(status);
   const marketBadge = resolveMarketStatusBadge(status);
+  const botErrors = listBotErrors(bots);
+  const errorSummary = formatOverallErrorSummary(bots);
+  const errorClipboardText = formatBotErrorsForClipboard(bots);
+
+  async function copyBotErrors() {
+    if (!errorClipboardText) return;
+    const ok = await copyTextToClipboard(errorClipboardText);
+    if (!ok) return;
+    setErrorCopied(true);
+    if (errorCopiedTimerRef.current != null) {
+      window.clearTimeout(errorCopiedTimerRef.current);
+    }
+    errorCopiedTimerRef.current = window.setTimeout(() => {
+      setErrorCopied(false);
+      errorCopiedTimerRef.current = null;
+    }, COPY_FEEDBACK_MS);
+  }
 
   const showNextAction = status === "running" || status === "waiting" || status === "sleeping";
   const secretary = bots.find((bot) => bot.name === "secretary");
@@ -333,6 +409,7 @@ export default function OverallBotStatus() {
   const explainer = resolveOverallStatusExplainer(status, nextAction, {
     orchestratorRunning,
     anyAssetClassEnabled,
+    errorSummary,
   });
   const nextActionLabel =
     showNextAction && nextAction && nextAction.kind !== "none"
@@ -354,6 +431,8 @@ export default function OverallBotStatus() {
           className="overall-bot-status-tooltip"
           role="tooltip"
           style={{ top: pillCoords.top, left: pillCoords.left }}
+          onMouseEnter={openPillTooltip}
+          onMouseLeave={scheduleClosePillTooltip}
         >
           <div className="overall-bot-status-tooltip__title-row">
             <p className="overall-bot-status-tooltip__title">Bot: {label}</p>
@@ -361,6 +440,37 @@ export default function OverallBotStatus() {
               <span className="overall-bot-status-tooltip__market-badge">{marketBadge}</span>
             ) : null}
           </div>
+          {status === "error" ? (
+            <div className="overall-bot-status-tooltip__errors">
+              <div className="overall-bot-status-tooltip__errors-header">
+                <p className="overall-bot-status-tooltip__errors-label">Error details</p>
+                {errorClipboardText ? (
+                  <button
+                    type="button"
+                    className="overall-bot-status-tooltip__copy"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void copyBotErrors();
+                    }}
+                  >
+                    {errorCopied ? "Copied" : "Copy"}
+                  </button>
+                ) : null}
+              </div>
+              {botErrors.length > 0 ? (
+                botErrors.map((error) => (
+                  <p key={error.name} className="overall-bot-status-tooltip__error">
+                    {error.message ? `${error.name}: ${error.message}` : `${error.name} reported an error.`}
+                  </p>
+                ))
+              ) : (
+                <p className="overall-bot-status-tooltip__error">
+                  One or more modules reported an error.
+                </p>
+              )}
+            </div>
+          ) : null}
           {nextAction && nextAction.kind !== "none" ? (
             <p className="overall-bot-status-tooltip__line">
               {formatNextActionDisplay(nextAction)}
@@ -466,10 +576,10 @@ export default function OverallBotStatus() {
           ref={pillRef}
           className={`overall-bot-status overall-bot-status--${tone}`}
           aria-label="Overall bot status"
-          onMouseEnter={() => setPillHovered(true)}
-          onMouseLeave={() => setPillHovered(false)}
-          onFocus={() => setPillHovered(true)}
-          onBlur={() => setPillHovered(false)}
+          onMouseEnter={openPillTooltip}
+          onMouseLeave={scheduleClosePillTooltip}
+          onFocus={openPillTooltip}
+          onBlur={scheduleClosePillTooltip}
           tabIndex={0}
           aria-describedby={pillHovered ? "overall-bot-status-tip" : undefined}
         >
@@ -479,7 +589,25 @@ export default function OverallBotStatus() {
           </div>
 
           {!nextActionLabel ? (
-            <span className="overall-bot-status__meta">{explainer}</span>
+            <span className="overall-bot-status__meta" title={explainer}>
+              {explainer}
+            </span>
+          ) : null}
+
+          {status === "error" && errorClipboardText ? (
+            <button
+              type="button"
+              className="overall-bot-status__copy"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void copyBotErrors();
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+              aria-label="Copy error details"
+            >
+              {errorCopied ? "Copied" : "Copy"}
+            </button>
           ) : null}
 
           {showNextAction && nextAction ? (

@@ -480,3 +480,30 @@ async def stop_bot(name: str, _username: str = Depends(require_auth)) -> JSONRes
     if not result.ok:
         raise HTTPException(status_code=500, detail=result.message)
     return JSONResponse({"action": "stop", "bot": name, "status": "accepted"}, status_code=202)
+
+
+@app.post("/api/bots/{name}/restart")
+async def restart_bot(name: str, _username: str = Depends(require_auth)) -> JSONResponse:
+    """Restart one orchestrator module without restarting the API or host."""
+    bot_name = name.strip()
+    if not bot_name:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    client = ControlClient()
+    try:
+        # Allow any loaded module (including auto-injected secretary/broker), not
+        # only names listed in enabled_bots.
+        result = await asyncio.to_thread(client.submit, "restart", bot_name, timeout=15.0)
+    except ControlTimeout as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not result.ok:
+        status = 404 if "not found" in result.message.lower() else 500
+        raise HTTPException(status_code=status, detail=result.message)
+    return JSONResponse(
+        {
+            "action": "restart",
+            "bot": bot_name,
+            "status": "accepted",
+            "bot_status": result.bot_status,
+        },
+        status_code=202,
+    )

@@ -493,7 +493,12 @@ export function formatNextActionTargetUtc(
 export function resolveOverallStatusExplainer(
   status: OverallBotStatus,
   nextAction: NextActionState | null,
-  options?: { orchestratorRunning?: boolean; anyAssetClassEnabled?: boolean },
+  options?: {
+    orchestratorRunning?: boolean;
+    anyAssetClassEnabled?: boolean;
+    /** Concrete bot error text for the status bar when status is error. */
+    errorSummary?: string | null;
+  },
 ): string {
   if (status === "stopped") {
     if (options?.orchestratorRunning && options.anyAssetClassEnabled === false) {
@@ -503,7 +508,8 @@ export function resolveOverallStatusExplainer(
   }
 
   if (status === "error") {
-    return "One or more modules reported an error.";
+    const summary = options?.errorSummary?.trim();
+    return summary || "One or more modules reported an error.";
   }
 
   if (nextAction?.kind === "none" && nextAction.label === "No trading sessions enabled") {

@@ -143,6 +143,35 @@ class Orchestrator:
         await bot.stop()
         return True
 
+    async def restart_bot(self, name: str) -> bool:
+        """Stop then start a single module without bouncing the whole orchestrator."""
+        if name not in self.bots:
+            return False
+        await self.stop_bot(name)
+        return await self.start_bot(name)
+
+    async def restart_all_bots(self) -> bool:
+        """Restart every module while keeping control/heartbeat loops alive.
+
+        Unlike ``stop_all``, this does not flip ``_running`` to False (that would
+        tear down the control loop mid-command).
+        """
+        if not self._running:
+            return False
+        names = list(self.bots.keys())
+        for name in names:
+            await self.stop_bot(name)
+        for name in names:
+            await self.start_bot(name)
+        logger.info("Orchestrator restarted %d module(s) in-process", len(names))
+        await record_bot_activity(
+            ACTION_ORCHESTRATOR_STARTED,
+            "Orchestrator modules restarted",
+            detail=f"Restarted {len(names)} module(s)",
+            source="orchestrator",
+        )
+        return True
+
     async def get_statuses(self) -> list[dict]:
         return [await bot.status() for bot in self.bots.values()]
 

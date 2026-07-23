@@ -368,8 +368,21 @@ export const api = {
     request<{ action: string; status: string; message: string }>("/api/system/shutdown", {
       method: "POST",
     }),
+  restartOrchestrator: () =>
+    request<{
+      action: string;
+      target: string;
+      status: string;
+      mode: string;
+      message: string;
+    }>("/api/system/orchestrator/restart", { method: "POST" }),
   startBot: (name: string) => request(`/api/bots/${name}/start`, { method: "POST" }),
   stopBot: (name: string) => request(`/api/bots/${name}/stop`, { method: "POST" }),
+  restartBot: (name: string) =>
+    request<{ action: string; bot: string; status: string; bot_status?: Record<string, unknown> }>(
+      `/api/bots/${encodeURIComponent(name)}/restart`,
+      { method: "POST" },
+    ),
 
   listModels: () => request<{ models: AiModel[] }>("/api/settings/models"),
   createModel: (data: CreateModelInput) =>

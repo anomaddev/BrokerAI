@@ -15,7 +15,7 @@ from brokerai.config.settings import Settings, get_settings
 if TYPE_CHECKING:
     from brokerai.core.orchestrator import Orchestrator
 
-ControlAction = Literal["start", "stop", "status"]
+ControlAction = Literal["start", "stop", "restart", "status"]
 
 
 @dataclass
@@ -172,6 +172,23 @@ class ControlServer:
                 bot_status=match,
             )
 
+        # Reserved control target: restart every module without killing control loops.
+        if command.action == "restart" and bot == "orchestrator":
+            ok = await self.orchestrator.restart_all_bots()
+            return ControlResult(
+                id=command.id,
+                ok=ok,
+                action=command.action,
+                bot=bot,
+                message=(
+                    "Orchestrator modules restarted"
+                    if ok
+                    else "Failed to restart orchestrator modules (is it running?)"
+                ),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                bot_status={"running": bool(getattr(self.orchestrator, "_running", False))},
+            )
+
         if bot not in self.orchestrator.bots:
             return ControlResult(
                 id=command.id,
@@ -184,8 +201,19 @@ class ControlServer:
 
         if command.action == "start":
             ok = await self.orchestrator.start_bot(bot)
-        else:
+        elif command.action == "restart":
+            ok = await self.orchestrator.restart_bot(bot)
+        elif command.action == "stop":
             ok = await self.orchestrator.stop_bot(bot)
+        else:
+            return ControlResult(
+                id=command.id,
+                ok=False,
+                action=command.action,
+                bot=bot,
+                message=f"Unsupported action '{command.action}'",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            )
 
         status = await self.orchestrator.bots[bot].status()
         return ControlResult(

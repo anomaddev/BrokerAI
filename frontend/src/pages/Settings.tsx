@@ -78,7 +78,7 @@ const SETTINGS_SECTIONS: SettingsNavSection[] = [
   },
 ];
 
-type BotStatus = { name: string; state: string };
+type BotStatus = { name: string; state: string; last_error?: string | null };
 
 function stateBadgeClass(state: string): string {
   if (state === "running" || state === "stopped" || state === "error") return state;
@@ -1080,15 +1080,76 @@ function SystemTab() {
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [bots, setBots] = useState<BotStatus[]>([]);
   const [db, setDb] = useState<Record<string, unknown> | null>(null);
+  const [restartingBot, setRestartingBot] = useState<string | null>(null);
+  const [botActionError, setBotActionError] = useState<string | null>(null);
+
+  async function refreshBots() {
+    try {
+      const data = await api.bots();
+      setBots(data.bots);
+    } catch {
+      setBots([]);
+    }
+  }
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null));
-    api.bots().then((data) => setBots(data.bots)).catch(() => setBots([]));
+    void refreshBots();
     api.dbStats().then(setDb).catch(() => setDb(null));
   }, []);
 
   const postgres = health?.postgres as { status?: string } | undefined;
+  const orchestratorRunning = Boolean(health?.orchestrator_running);
   const sortedBots = sortBots(bots);
+
+  async function refreshHealthAndBots() {
+    await refreshBots();
+    try {
+      const nextHealth = await api.health();
+      setHealth(nextHealth);
+    } catch {
+      /* keep prior health */
+    }
+  }
+
+  async function handleRestartBot(name: string) {
+    if (!orchestratorRunning || restartingBot) return;
+    setBotActionError(null);
+    setRestartingBot(name);
+    try {
+      await api.restartBot(name);
+      // Heartbeat can lag a few seconds after control IPC.
+      await new Promise((resolve) => window.setTimeout(resolve, 800));
+      await refreshHealthAndBots();
+    } catch (err) {
+      setBotActionError(err instanceof Error ? err.message : `Failed to restart ${formatBotName(name)}.`);
+      await refreshBots();
+    } finally {
+      setRestartingBot(null);
+    }
+  }
+
+  async function handleRestartOrchestrator() {
+    if (restartingBot) return;
+    setBotActionError(null);
+    setRestartingBot("__orchestrator__");
+    try {
+      const result = await api.restartOrchestrator();
+      // systemd bounce needs a bit longer before heartbeat is fresh.
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, result.mode === "systemd" ? 2500 : 1000),
+      );
+      await refreshHealthAndBots();
+    } catch (err) {
+      setBotActionError(err instanceof Error ? err.message : "Failed to restart orchestrator.");
+      await refreshHealthAndBots();
+    } finally {
+      setRestartingBot(null);
+    }
+  }
+
+  const actionBusy = restartingBot != null;
+  const orchestratorBusy = restartingBot === "__orchestrator__";
 
   return (
     <div className="settings-panel">
@@ -1100,20 +1161,71 @@ function SystemTab() {
       <div className="card">
         <h3>System Status</h3>
         <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-          Version: {String(health?.version ?? "—")} · Orchestrator:{" "}
-          {health?.orchestrator_running ? "running" : "offline"} · Postgres:{" "}
-          {postgres?.status ?? "unknown"}
+          Version: {String(health?.version ?? "—")} · Postgres: {postgres?.status ?? "unknown"}
         </p>
+        <p style={{ color: "var(--muted)", fontSize: "0.8rem", marginTop: "0.35rem" }}>
+          Restart the orchestrator or a single module without rebooting the API or host.
+        </p>
+        {botActionError ? <p className="settings-error">{botActionError}</p> : null}
         <div className="system-status-bots">
+          <div className="system-status-bot">
+            <div className="system-status-bot__info">
+              <div className="system-status-bot__row">
+                <span className="system-status-bot__name">Orchestrator</span>
+                <span className={`badge ${orchestratorRunning ? "running" : "stopped"}`}>
+                  {orchestratorRunning ? "running" : "offline"}
+                </span>
+              </div>
+              <p className="system-status-bot__hint">
+                Restarts all trading modules. On production hosts this bounces the
+                orchestrator service.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={actionBusy}
+              onClick={() => void handleRestartOrchestrator()}
+              title="Restart orchestrator"
+            >
+              {orchestratorBusy ? "Restarting…" : "Restart"}
+            </button>
+          </div>
           {sortedBots.length === 0 ? (
             <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>No sub-bots configured.</p>
           ) : (
-            sortedBots.map((bot) => (
-              <div key={bot.name} className="system-status-bot">
-                <span>{formatBotName(bot.name)}</span>
-                <span className={`badge ${stateBadgeClass(bot.state)}`}>{bot.state}</span>
-              </div>
-            ))
+            sortedBots.map((bot) => {
+              const errorText = bot.last_error?.trim() || null;
+              const busy = restartingBot === bot.name;
+              return (
+                <div key={bot.name} className="system-status-bot">
+                  <div className="system-status-bot__info">
+                    <div className="system-status-bot__row">
+                      <span className="system-status-bot__name">{formatBotName(bot.name)}</span>
+                      <span className={`badge ${stateBadgeClass(bot.state)}`}>{bot.state}</span>
+                    </div>
+                    {errorText ? (
+                      <p className="system-status-bot__error" title={errorText}>
+                        {errorText}
+                      </p>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    disabled={!orchestratorRunning || actionBusy}
+                    onClick={() => void handleRestartBot(bot.name)}
+                    title={
+                      orchestratorRunning
+                        ? `Restart ${formatBotName(bot.name)}`
+                        : "Orchestrator is offline"
+                    }
+                  >
+                    {busy ? "Restarting…" : "Restart"}
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
       </div>

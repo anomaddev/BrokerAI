@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveMarketStatusBadge,
   resolveNextActionTooltipExplainer,
+  resolveOverallStatusExplainer,
   type NextActionState,
 } from "./nextAction";
 
@@ -30,6 +31,22 @@ describe("resolveMarketStatusBadge", () => {
   it("returns null for stopped and error", () => {
     expect(resolveMarketStatusBadge("stopped")).toBeNull();
     expect(resolveMarketStatusBadge("error")).toBeNull();
+  });
+});
+
+describe("resolveOverallStatusExplainer", () => {
+  it("shows the concrete error summary when status is error", () => {
+    expect(
+      resolveOverallStatusExplainer("error", null, {
+        errorSummary: "Secretary: OANDA timeout",
+      }),
+    ).toBe("Secretary: OANDA timeout");
+  });
+
+  it("falls back when error summary is missing", () => {
+    expect(resolveOverallStatusExplainer("error", null)).toBe(
+      "One or more modules reported an error.",
+    );
   });
 });
 
