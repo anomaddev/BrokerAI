@@ -176,13 +176,26 @@ async def apply_execution_gates(
                 intent=None,
             )
 
-    winners = resolve_priority_conflicts([(analysis, params) for analysis, params, _, _ in gated])
+    winners = resolve_priority_conflicts(
+        [(analysis, params) for analysis, params, _, _ in gated],
+        strategies_by_id=strategies_by_id,
+    )
     winner_ids = {(analysis.strategy_id, analysis.pair) for analysis, _ in winners}
+
+    # Warming/ready AI Strategies must still produce shadow intents even when they
+    # lose the *live* priority slot to another strategy on the same pair.
+    from brokerai.ai_strategy.shadow_dispatch import strategy_allows_live_dispatch
+
+    dispatch_keys = set(winner_ids)
+    for analysis, _params, strategy, _gate_candles in gated:
+        if strategy_allows_live_dispatch(strategy):
+            continue
+        dispatch_keys.add((analysis.strategy_id, analysis.pair))
 
     intents: list[TradeIntent] = []
     for analysis, params, strategy, gate_candles in gated:
         key = (analysis.strategy_id, analysis.pair)
-        if key not in winner_ids:
+        if key not in dispatch_keys:
             await persist_execution_outcome(
                 analysis,
                 processed_at=when,
@@ -212,7 +225,7 @@ async def apply_execution_gates(
             gates_passed=True,
             gate_reasons=[],
             gate_details={},
-            priority_winner=True,
+            priority_winner=key in winner_ids,
             intent_queued=intent is not None,
             intent=intent,
         )

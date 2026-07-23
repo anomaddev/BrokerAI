@@ -22,7 +22,7 @@ def test_validate_params_accepts_default_ema_crossover():
     assert preset is not None
     result = validate_params(preset, DEFAULT_PARAMS)
     assert result["timeframe"] == "M15"
-    assert result["min_candles"] == 63
+    assert result["min_candles"] == 200
     assert result["execution"]["priority"] == 50
     assert result["execution"]["dont_hold_between_sessions"] is True
     assert result["execution"]["dont_hold_between_markets"] is True
@@ -243,7 +243,7 @@ def test_custom_preset_accepts_monthly_high_signal():
         },
     )
     assert params["signal"]["type"] == "monthly_high"
-    assert params["min_candles"] == 93
+    assert params["min_candles"] == 200
 
 
 def test_custom_preset_accepts_ema_crossover_signal():
@@ -271,7 +271,7 @@ def test_custom_preset_accepts_ema_crossover_signal():
         },
     )
     assert params["signal"]["type"] == "ema_crossover"
-    assert params["min_candles"] == 63
+    assert params["min_candles"] == 200
 
 
 def test_prepare_params_swaps_reversed_fast_slow_ema_refs():

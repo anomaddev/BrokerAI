@@ -232,13 +232,15 @@ cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-update" /etc/sudoers.d/broke
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-admin" /etc/sudoers.d/brokerai-admin
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-power" /etc/sudoers.d/brokerai-power
 cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-domain" /etc/sudoers.d/brokerai-domain
+cp "${BROKERAI_INSTALL_DIR}/config/sudoers/brokerai-services" /etc/sudoers.d/brokerai-services
 chmod 440 /etc/sudoers.d/brokerai-update /etc/sudoers.d/brokerai-admin \
-  /etc/sudoers.d/brokerai-power /etc/sudoers.d/brokerai-domain
+  /etc/sudoers.d/brokerai-power /etc/sudoers.d/brokerai-domain /etc/sudoers.d/brokerai-services
 chmod +x "${BROKERAI_INSTALL_DIR}/scripts/apply-domain-tls.sh"
 visudo -cf /etc/sudoers.d/brokerai-update
 visudo -cf /etc/sudoers.d/brokerai-admin
 visudo -cf /etc/sudoers.d/brokerai-power
 visudo -cf /etc/sudoers.d/brokerai-domain
+visudo -cf /etc/sudoers.d/brokerai-services
 _brokerai_install_postgres_backup "${BROKERAI_INSTALL_DIR}" "${BROKERAI_CONFIG_DIR}/config.env"
 systemctl daemon-reload
 systemctl enable --now brokerai-orchestrator brokerai-web brokerai-update.timer

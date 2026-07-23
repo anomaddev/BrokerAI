@@ -1,0 +1,5 @@
+# Allow the web UI (brokerai user) to restart BrokerAI services without a password.
+brokerai ALL=(root) NOPASSWD: /bin/systemctl restart brokerai-orchestrator
+brokerai ALL=(root) NOPASSWD: /bin/systemctl start brokerai-orchestrator
+brokerai ALL=(root) NOPASSWD: /bin/systemctl stop brokerai-orchestrator
+brokerai ALL=(root) NOPASSWD: /bin/systemctl is-active brokerai-orchestrator

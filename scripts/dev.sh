@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
 # BrokerAI local development — bootstrap and run all dev services on macOS/Linux.
 #
-# Each run wipes the local Supabase DB volume + data/auth so the app starts as a
-# fresh install (setup wizard). Pass --no-supabase to skip Docker wipe/start.
+# Reuses the local Supabase DB volume and data/auth across runs. For a clean
+# first-run setup wizard (wipe DB + auth), use ./scripts/dev-onboarding.sh.
 #
 # Usage:
-#   ./scripts/dev.sh              Fresh DB + start dev stack
-#   ./scripts/dev.sh --setup      Bootstrap only (venv, .env, wipe Supabase, npm)
+#   ./scripts/dev.sh              Start (or reuse) Supabase + start dev stack
+#   ./scripts/dev.sh --setup      Bootstrap only (venv, .env, Supabase, npm)
 #   ./scripts/dev.sh --backend-only   API + orchestrator only (no Vite)
-#   ./scripts/dev.sh --no-supabase Skip Supabase Docker wipe/start
+#   ./scripts/dev.sh --no-supabase Skip Supabase Docker start
 #   ./scripts/dev.sh --no-open    Do not open browser (macOS)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="${ROOT}/venv"
 ENV_FILE="${ROOT}/.env"
-AUTH_DIR="${ROOT}/data/auth"
-SUPA="${ROOT}/deploy/supabase"
 SUPABASE_DB_CONTAINER="supabase-db"
 PIDS=()
 
@@ -31,12 +29,12 @@ Usage: $(basename "$0") [OPTIONS]
 
 Bootstrap and run BrokerAI locally for development.
 
-Wipes the local Supabase Postgres/storage volumes and data/auth/ on every run
-so you land on a new-install setup wizard. Does not reset deploy/supabase/.env keys.
+Starts (or reuses) local Supabase and keeps the Postgres volume + data/auth
+across runs. For a clean DB + setup wizard, use ./scripts/dev-onboarding.sh.
 
 Options:
-  --setup          Bootstrap venv, .env, wipe Supabase, and npm deps; do not start servers
-  --no-supabase    Skip Supabase Docker wipe/start (keep your existing DB)
+  --setup          Bootstrap venv, .env, Supabase, and npm deps; do not start servers
+  --no-supabase    Skip Supabase Docker start
   --no-open        Do not open the browser (macOS)
   --backend-only   Skip Vite; serve built static via uvicorn only
   -h, --help       Show this help
@@ -149,14 +147,7 @@ ensure_env_file() {
 }
 
 ensure_dirs() {
-  mkdir -p "${ROOT}/data" "${ROOT}/logs"
-}
-
-compose_supabase() {
-  (
-    cd "${SUPA}"
-    docker compose -f docker-compose.yml -f docker-compose.brokerai.yml "$@"
-  )
+  mkdir -p "${ROOT}/data" "${ROOT}/logs" "${ROOT}/data/auth"
 }
 
 postgres_ready() {
@@ -166,7 +157,7 @@ postgres_ready() {
 
 wait_for_postgres() {
   local i
-  log "Waiting for Postgres (${SUPABASE_DB_CONTAINER}) — first init can take a minute"
+  log "Waiting for Postgres (${SUPABASE_DB_CONTAINER})"
   for i in $(seq 1 120); do
     if postgres_ready; then
       # Give init scripts a moment after pg_isready flips true on a fresh volume.
@@ -228,35 +219,9 @@ ensure_brokerai_schema() {
   return 1
 }
 
-wipe_supabase_db() {
-  log "Wiping Supabase Postgres volume (clean DB from scratch)"
-  if [[ -f "${SUPA}/.env" ]]; then
-    compose_supabase down --remove-orphans || true
-  else
-    warn "deploy/supabase/.env missing — compose down may be incomplete"
-  fi
-
-  # Bind-mounted data dirs (not Docker named volumes). Keep .env / JWT keys.
-  for dir in "${SUPA}/volumes/db/data" "${SUPA}/volumes/storage"; do
-    if [[ -e "${dir}" ]]; then
-      log "Removing ${dir}"
-      rm -rf "${dir}"
-    fi
-  done
-}
-
-reset_auth() {
-  log "Resetting local auth / onboarding state (data/auth)"
-  mkdir -p "${ROOT}/data" "${ROOT}/logs"
-  if [[ -d "${AUTH_DIR}" ]]; then
-    rm -rf "${AUTH_DIR}"
-  fi
-  mkdir -p "${AUTH_DIR}"
-}
-
 ensure_supabase() {
   if [[ "${NO_SUPABASE}" == "true" ]]; then
-    log "Skipping Supabase wipe/start (--no-supabase)"
+    log "Skipping Supabase start (--no-supabase)"
     return 0
   fi
 
@@ -270,10 +235,13 @@ ensure_supabase() {
     return 0
   fi
 
-  wipe_supabase_db
-  log "Starting self-hosted Supabase on a fresh volume"
-  "${ROOT}/scripts/setup-supabase.sh" --start
-  wait_for_postgres
+  if postgres_ready; then
+    log "Supabase Postgres already running — reusing existing volume"
+  else
+    log "Starting self-hosted Supabase (existing volume reused if present)"
+    "${ROOT}/scripts/setup-supabase.sh" --start
+    wait_for_postgres
+  fi
   ensure_brokerai_schema
 }
 
@@ -306,7 +274,6 @@ bootstrap() {
   ensure_venv
   ensure_env_file
   ensure_dirs
-  reset_auth
   ensure_supabase
   if [[ "${BACKEND_ONLY}" != "true" ]]; then
     ensure_frontend_deps
@@ -342,8 +309,7 @@ open_browser() {
   fi
   if [[ "$(uname -s)" == "Darwin" ]] && command -v open >/dev/null 2>&1; then
     sleep 1.5
-    # Fresh wipe → land on the first-run setup wizard.
-    open "http://localhost:5173/setup" 2>/dev/null || true
+    open "http://localhost:5173" 2>/dev/null || true
   fi
 }
 
@@ -357,9 +323,9 @@ print_banner() {
     echo "  UI:      http://localhost:5173  (Vite, hot reload)"
     echo "  API:     http://127.0.0.1:${port}"
   fi
-  echo "  Postgres: 127.0.0.1:5432 (Supabase, wiped this run)"
+  echo "  Postgres: 127.0.0.1:5432 (Supabase, volume preserved)"
   echo "  Studio:  http://127.0.0.1:3000"
-  echo "  Setup:   http://localhost:5173/setup  (fresh install)"
+  echo "  Fresh DB / setup wizard: ./scripts/dev-onboarding.sh"
   if [[ "${BROKERAI_AUTH_MODE:-builtin}" == "oidc" ]]; then
     echo "  Auth:    OIDC (${BROKERAI_OIDC_ISSUER:-issuer not set})"
   else

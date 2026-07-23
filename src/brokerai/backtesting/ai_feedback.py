@@ -14,6 +14,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from brokerai.ai_strategy.daily_backtest import ORIGIN_AI_STRATEGY_DAILY
+from brokerai.ai_strategy.learning import queue_learning_job
+from brokerai.ai_strategy.memory_digest import (
+    digest_content_unchanged,
+    merge_feedback_notes_into_digest,
+)
 from brokerai.backtesting.feedback_suggestions import (
     ALLOWLIST_FOR_PROMPT,
     normalize_suggestions,
@@ -29,6 +35,7 @@ from brokerai.db.repositories.backtest_runs import (
     BacktestRunsRepository,
 )
 from brokerai.db.repositories.backtest_settings import BacktestSettingsRepository
+from brokerai.db.repositories.strategy_learning import StrategyMemoryDigestsRepository
 from brokerai.research_constants import REASONING_EFFORT_OPTIONS
 from brokerai.trading.data.candle_cache import CandleCache, OANDA_SOURCE
 
@@ -107,8 +114,292 @@ Rules for JSON:
 - Be specific and grounded in the supplied data. Do not invent trades or metrics.
 """
 
+_MEMORY_NOTES_JSON_FOOTER = """\
+After the markdown sections, append ONE fenced JSON block with memory notes:
+```json
+{
+  "memory_notes": [
+    {
+      "id": "london_continuation",
+      "kind": "standing_rule",
+      "text": "Prefer London continuation after early impulse",
+      "bias": "long",
+      "keywords": ["london", "continuation"],
+      "priority": 1
+    },
+    {
+      "id": "late_ny_fade",
+      "kind": "anti_rule",
+      "text": "Avoid late-NY fade entries",
+      "bias": null,
+      "keywords": ["ny", "fade"],
+      "priority": 2
+    }
+  ]
+}
+```
+
+Rules for JSON:
+- kind must be standing_rule, anti_rule, lesson, or note.
+- Prefer rule text that names the instrument condition / session / signal reason.
+- Do NOT include EMA/filter suggestion paths.
+- Do NOT write rules whose only claim is "more trades" or "higher P&L".
+- Do NOT encode the window's total return or claim prior knowledge of this exact period.
+- Keep the list short (≤8 notes). Be grounded in the supplied data.
+"""
+
+_MEMORY_FEEDBACK_SYSTEM_PROMPT = f"""\
+You are BrokerAI's AI Strategy learning coach reviewing a compiled-playbook
+*signal review* over an instrument's historical candles.
+
+Your job is to improve the strategy's *memory digest* (standing rules and anti-rules)
+so future compiles know *where on the instrument* to lean long/short or stand aside.
+This is NOT an EMA/filter builder review. Do not suggest builder param paths.
+Do NOT judge success by trade count, win rate, or realized P&L. Zero fills is normal
+and is not failure by itself.
+
+Anti-cheat: Treat this candle walk as a fresh pass. Do NOT encode the window's total
+return into standing rules.
+
+Use rigorous reasoning:
+1. Describe the instrument trend from `period_summary`, `trend_segments`, and
+   `playbook_review` (direction of travel, ranges, regime shifts).
+2. For sampled bars in `should_have_traded` / `stood_aside`, explain:
+   "We should have traded here based on {{signal}}" or
+   "Stand aside here because {{reason}}".
+3. Judge whether the compiled bias + momentum gate *aligned with the instrument*
+   — not whether the simulator filled many tickets.
+4. Propose durable standing rules (where/when the book should lean in) and
+   anti-rules (where it should refuse). Prefer location/session/regime language.
+5. Call out overfitting: prefer generalizable lessons over fitting a few bars.
+
+Respond in clear markdown with these sections:
+## Instrument trend
+## Where we should have traded
+## Where we should have stood aside
+## Memory lessons
+## Risks / caveats
+
+{_MEMORY_NOTES_JSON_FOOTER}"""
+
+_EXPLORE_FEEDBACK_SYSTEM_PROMPT = f"""\
+You are BrokerAI's AI Strategy learning coach on an *explore* (pattern-only) pass.
+
+This run walked candles and emitted signals but did **not** execute fills. Distill
+durable pattern / structure lessons into the memory digest (standing rules and
+anti-rules) for later trade loops.
+
+Do NOT invent trade outcomes, P&L, win rates, or fill counts. Do NOT suggest builder
+param paths. Do NOT encode the window's total return as a standing rule.
+
+Anti-cheat: Write rules as if the next loop has never seen this exact series — only
+your distilled lessons carry forward.
+
+Use rigorous reasoning:
+1. From `period_summary`, `trend_segments`, and `playbook_review`, describe regimes,
+   ranges, and directional structure (sessions, HTF bias, momentum context).
+2. For `should_have_traded` / `stood_aside` samples, explain pattern-level reasons —
+   not hypothetical tickets.
+3. Propose standing rules (where to lean) and anti-rules (where to refuse) in
+   location/session/regime language.
+4. Prefer generalizable lessons; call out overfitting.
+
+Respond in clear markdown with these sections:
+## Instrument patterns
+## Promising locations
+## Stand-aside locations
+## Memory lessons
+## Risks / caveats
+
+{_MEMORY_NOTES_JSON_FOOTER}"""
+
+_TRADE_MEMORY_FEEDBACK_SYSTEM_PROMPT = f"""\
+You are BrokerAI's AI Strategy learning coach reviewing a *live-parity trade* pass.
+
+This run executed fills as if the data were live. Learn only from *this run's*
+entries, exits, signals, and filter fails — plus prior digest rules already in
+`params_snapshot`. Treat the candle series as new: you do not "remember" walking
+this same window before, even if startup previously explored it.
+
+Do NOT judge success by trade count alone. Do NOT encode the window's total return
+into standing rules. Do NOT suggest builder param paths.
+
+Use rigorous reasoning:
+1. Relate this run's fills and signals to instrument structure
+   (`period_summary`, `trend_segments`, `playbook_review`).
+2. For good/bad outcomes, explain "traded here based on {{signal}}" or
+   "should have stood aside because {{reason}}".
+3. Update standing / anti rules so the next compile improves decisions without
+   memorizing this period's path.
+4. Call out overfitting.
+
+Respond in clear markdown with these sections:
+## Instrument trend
+## Trade outcomes
+## Where we should have stood aside
+## Memory lessons
+## Risks / caveats
+
+{_MEMORY_NOTES_JSON_FOOTER}"""
+
+PLAYBOOK_REVIEW_MAX_EVALS = 400
+PLAYBOOK_REVIEW_SAMPLE_LIMIT = 24
+TREND_SEGMENT_COUNT = 4
+
 # Prevent overlapping auto/manual jobs for the same run on one API process.
 _inflight_feedback: set[str] = set()
+
+
+def resolve_feedback_loop_mode(run: dict[str, Any] | None) -> str | None:
+    """Return ``explore`` / ``trade`` when set on a startup run, else ``None``."""
+    if not isinstance(run, dict):
+        return None
+    mode = str(run.get("loop_mode") or "").strip().lower()
+    if mode in {"explore", "trade"}:
+        return mode
+    return None
+
+
+def scrub_period_spoilers(context: dict[str, Any]) -> dict[str, Any]:
+    """Drop full-window return spoilers so lessons cannot encode period P&L."""
+    out = dict(context)
+    summary = out.get("period_summary")
+    if isinstance(summary, dict):
+        out["period_summary"] = {k: v for k, v in summary.items() if k != "period_return"}
+    return out
+
+
+def shape_context_for_loop_mode(
+    context: dict[str, Any],
+    *,
+    loop_mode: str | None,
+) -> dict[str, Any]:
+    """Package feedback context for explore vs trade (anti-cheat).
+
+    Explore drops fill/equity/stats so the coach cannot invent trade outcomes.
+    Both modes scrub ``period_return`` so digests cannot memorize window P&L.
+    """
+    shaped = scrub_period_spoilers(context)
+    mode = (loop_mode or "").strip().lower() or None
+    if mode == "explore":
+        shaped["trades"] = []
+        shaped["equity_curve"] = []
+        shaped["stats"] = {
+            "total_trades": 0,
+            "note": "explore_loop: fills disabled; ignore trade metrics",
+        }
+        shaped["candle_windows"] = []
+        shaped["framing"] = (
+            "explore_patterns: signal-only pass; distill structure lessons; "
+            "no fills; no period-return spoilers; next loop has not seen this series"
+        )
+        if isinstance(shaped.get("run"), dict):
+            shaped["run"] = {**shaped["run"], "loop_mode": "explore"}
+        return shaped
+    if mode == "trade":
+        shaped["framing"] = (
+            "live_parity_trade: learn from this run's fills/signals only; "
+            "treat candles as unseen; no period-return spoilers; prior lessons "
+            "live only in digest/params_snapshot"
+        )
+        if isinstance(shaped.get("run"), dict):
+            shaped["run"] = {**shaped["run"], "loop_mode": "trade"}
+        return shaped
+    # Daily / unspecified memory reviews: still scrub period_return.
+    if shaped.get("playbook_review") is not None and "framing" not in shaped:
+        shaped["framing"] = (
+            "signal_review: judge instrument trend alignment and where the playbook "
+            "should have traded or stood aside; ignore trade count / P&L as success "
+            "metrics; do not encode period_return"
+        )
+    return shaped
+
+
+def is_ai_strategy_daily_run(run: dict[str, Any] | None) -> bool:
+    """True when the backtest should use memory-oriented AI feedback.
+
+    Covers daily cadence runs and create-time startup improve loops.
+    """
+    if not isinstance(run, dict):
+        return False
+    origin = str(run.get("origin") or "")
+    if origin == ORIGIN_AI_STRATEGY_DAILY:
+        return True
+    # Late import avoids circular import with startup → ai_feedback.
+    from brokerai.ai_strategy.startup import ORIGIN_AI_STRATEGY_STARTUP
+
+    return origin == ORIGIN_AI_STRATEGY_STARTUP
+
+
+def normalize_memory_notes(raw: Any) -> list[dict[str, Any]]:
+    """Sanitize memory-oriented feedback notes (daily AI Strategy runs)."""
+    if not isinstance(raw, list):
+        return []
+    allowed_kinds = {"standing_rule", "anti_rule", "lesson", "note"}
+    allowed_bias = {"long", "short", "flat", "both"}
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        kind = str(item.get("kind") or "lesson").strip().lower()
+        if kind not in allowed_kinds:
+            kind = "lesson"
+        bias_raw = item.get("bias")
+        bias: str | None
+        if isinstance(bias_raw, str) and bias_raw.strip() in allowed_bias:
+            bias = bias_raw.strip()
+        else:
+            bias = None
+        keywords_raw = item.get("keywords") or []
+        keywords: list[str] = []
+        if isinstance(keywords_raw, list):
+            for token in keywords_raw:
+                cleaned = str(token).strip().lower()
+                if cleaned and cleaned not in keywords:
+                    keywords.append(cleaned)
+        note_id = str(item.get("id") or "").strip() or f"note-{len(out) + 1}"
+        try:
+            priority = int(item.get("priority") or 0)
+        except (TypeError, ValueError):
+            priority = 0
+        out.append(
+            {
+                "id": note_id,
+                "kind": kind,
+                "text": text,
+                "bias": bias,
+                "keywords": keywords,
+                "priority": priority,
+            }
+        )
+        if len(out) >= 12:
+            break
+    return out
+
+
+def parse_memory_notes_from_markdown(text: str) -> tuple[str, list[dict[str, Any]]]:
+    """Extract a ``memory_notes`` JSON fence; return cleaned markdown + notes."""
+    import re
+
+    if not text:
+        return "", []
+    pattern = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", re.MULTILINE)
+    cleaned = text
+    notes: list[dict[str, Any]] = []
+    for match in pattern.finditer(text):
+        try:
+            parsed = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict) or "memory_notes" not in parsed:
+            continue
+        notes = normalize_memory_notes(parsed.get("memory_notes"))
+        cleaned = (text[: match.start()] + text[match.end() :]).strip()
+        break
+    return cleaned, notes
 
 
 def _now_iso() -> str:
@@ -137,6 +428,7 @@ def empty_ai_feedback() -> dict[str, Any]:
         "reasoning_effort": None,
         "markdown": None,
         "suggestions": [],
+        "memory_notes": [],
         "error": None,
         "started_at": None,
         "finished_at": None,
@@ -169,6 +461,7 @@ def normalize_ai_feedback(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         "reasoning_effort": effort,
         "markdown": str(raw["markdown"]) if raw.get("markdown") is not None else None,
         "suggestions": normalize_suggestions(raw.get("suggestions") or []),
+        "memory_notes": normalize_memory_notes(raw.get("memory_notes") or []),
         "error": str(raw["error"]) if raw.get("error") is not None else None,
         "started_at": str(raw["started_at"]) if raw.get("started_at") else None,
         "finished_at": str(raw["finished_at"]) if raw.get("finished_at") else None,
@@ -343,6 +636,161 @@ def summarize_period_candles(candles: list[dict[str, Any]]) -> dict[str, Any] | 
     }
 
 
+def build_trend_segments(
+    candles: list[dict[str, Any]],
+    *,
+    segments: int = TREND_SEGMENT_COUNT,
+) -> list[dict[str, Any]]:
+    """Split the window into coarse trend segments (open→close return each)."""
+    if not candles or segments < 1:
+        return []
+    n = len(candles)
+    out: list[dict[str, Any]] = []
+    for i in range(segments):
+        start = (i * n) // segments
+        end = ((i + 1) * n) // segments
+        if end <= start:
+            continue
+        chunk = candles[start:end]
+        try:
+            open_px = float(chunk[0]["open"])
+            close_px = float(chunk[-1]["close"])
+            high = max(float(c["high"]) for c in chunk)
+            low = min(float(c["low"]) for c in chunk)
+        except (KeyError, TypeError, ValueError):
+            continue
+        ret = (close_px - open_px) / open_px if open_px else None
+        direction = "up" if ret is not None and ret > 0 else "down" if ret is not None and ret < 0 else "flat"
+        out.append(
+            {
+                "index": i,
+                "bar_count": len(chunk),
+                "first_time": chunk[0].get("time"),
+                "last_time": chunk[-1].get("time"),
+                "open": open_px,
+                "high": high,
+                "low": low,
+                "close": close_px,
+                "return": ret,
+                "direction": direction,
+            }
+        )
+    return out
+
+
+def _is_compiled_playbook_params(params: Any) -> bool:
+    if not isinstance(params, dict):
+        return False
+    signal = params.get("signal")
+    if not isinstance(signal, dict):
+        return False
+    return str(signal.get("type") or "") == "compiled_playbook"
+
+
+def build_playbook_signal_review(
+    candles: list[dict[str, Any]],
+    params: dict[str, Any],
+    *,
+    max_evals: int = PLAYBOOK_REVIEW_MAX_EVALS,
+    sample_limit: int = PLAYBOOK_REVIEW_SAMPLE_LIMIT,
+) -> dict[str, Any] | None:
+    """Re-evaluate playbook gates across the period for signal-lesson context.
+
+    Samples bars (stride) so long histories stay cheap. Returns counts by gate
+    reason plus concrete ``should_have_traded`` / ``stood_aside`` examples the
+    LLM can cite — independent of whether the simulator filled tickets.
+    """
+    if not candles or not _is_compiled_playbook_params(params):
+        return None
+
+    from brokerai.strategies.candles import effective_min_candles
+    from brokerai.trading.indicator_cache import IndicatorCacheView
+    from brokerai.trading.presets.compiled_playbook.signal import (
+        CompiledPlaybookSignalEvaluator,
+    )
+
+    signal = params.get("signal") if isinstance(params.get("signal"), dict) else {}
+    min_required = max(1, int(effective_min_candles(params) or 1))
+    if len(candles) < min_required + 1:
+        return {
+            "bias": signal.get("bias"),
+            "standing_rules": list(signal.get("standing_rules") or [])[:12],
+            "anti_rules": list(signal.get("anti_rules") or [])[:12],
+            "anti_active": bool(signal.get("anti_active")),
+            "require_momentum": bool(signal.get("require_momentum", True)),
+            "momentum_bars": signal.get("momentum_bars"),
+            "eval_count": 0,
+            "reason_counts": {},
+            "should_have_traded": [],
+            "stood_aside": [],
+            "note": "Not enough candles to re-evaluate playbook gates",
+        }
+
+    evaluator = CompiledPlaybookSignalEvaluator()
+    indicators = IndicatorCacheView(pair="review", timeframe=str(params.get("timeframe") or "M15"))
+    usable = len(candles) - min_required + 1
+    stride = max(1, (usable + max_evals - 1) // max_evals)
+    reason_counts: dict[str, int] = {}
+    should_trade: list[dict[str, Any]] = []
+    stood_aside: list[dict[str, Any]] = []
+    eval_count = 0
+    fire_count = 0
+
+    for end_idx in range(min_required, len(candles) + 1, stride):
+        window = candles[:end_idx]
+        result = evaluator.evaluate(window, params, indicators)
+        eval_count += 1
+        meta = result.metadata if isinstance(result.metadata, dict) else {}
+        if result.direction:
+            fire_count += 1
+            reason = str(meta.get("signal") or f"playbook_{result.direction}")
+        else:
+            reason = str(meta.get("reason") or "no_signal")
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        bar = window[-1]
+        try:
+            close_px = float(bar["close"])
+        except (KeyError, TypeError, ValueError):
+            close_px = None
+        sample = {
+            "time": bar.get("time"),
+            "close": close_px,
+            "bias": meta.get("bias") or signal.get("bias"),
+            "momentum": meta.get("momentum"),
+            "signal": meta.get("signal"),
+            "reason": reason,
+            "direction": result.direction,
+            "lesson": (
+                f"Should have traded {result.direction} based on {meta.get('signal') or reason}"
+                if result.direction
+                else f"Stand aside because {reason}"
+            ),
+        }
+        if result.direction and len(should_trade) < sample_limit:
+            should_trade.append(sample)
+        elif not result.direction and len(stood_aside) < sample_limit:
+            if reason not in {"insufficient_candles"}:
+                stood_aside.append(sample)
+
+    return {
+        "bias": signal.get("bias"),
+        "standing_rules": list(signal.get("standing_rules") or [])[:12],
+        "anti_rules": list(signal.get("anti_rules") or [])[:12],
+        "anti_active": bool(signal.get("anti_active")),
+        "require_momentum": bool(signal.get("require_momentum", True)),
+        "momentum_bars": signal.get("momentum_bars"),
+        "digest_summary": signal.get("digest_summary") or "",
+        "eval_count": eval_count,
+        "eval_stride": stride,
+        "reason_counts": reason_counts,
+        "signal_fire_count": fire_count,
+        "signal_fire_rate": round(fire_count / eval_count, 4) if eval_count else 0.0,
+        "should_have_traded": should_trade,
+        "stood_aside": stood_aside,
+        "trend_segments": build_trend_segments(candles),
+    }
+
+
 def _compact_candle(c: dict[str, Any]) -> dict[str, Any]:
     return {
         "t": c.get("time"),
@@ -429,32 +877,125 @@ def slice_candle_windows(
     return windows
 
 
-def build_backtest_feedback_messages(context: dict[str, Any]) -> list[dict[str, str]]:
-    """Build chat messages for strategy-feedback analysis."""
+def build_backtest_feedback_messages(
+    context: dict[str, Any],
+    *,
+    memory_oriented: bool = False,
+    loop_mode: str | None = None,
+) -> list[dict[str, str]]:
+    """Build chat messages for strategy-feedback analysis.
+
+    When ``memory_oriented`` is True (AI Strategy daily/startup origin), use the
+    memory digest prompt/schema instead of EMA builder SUGGESTION_ALLOWLIST.
+    ``loop_mode`` selects explore vs trade prompts for startup loops.
+    """
     payload = json.dumps(context, default=str, separators=(",", ":"))
     if len(payload) > MAX_CONTEXT_JSON_CHARS:
-        # Drop candle windows first, then signal samples, to stay in budget.
+        # Drop candle windows first, then dense samples, to stay in budget.
         slim = dict(context)
         slim["candle_windows"] = []
+        slim["equity_curve"] = []
         slim["note"] = (
-            "Candle windows omitted because context exceeded the size budget; "
-            "rely on trades, stats, and period_summary."
+            "Candle windows/equity omitted because context exceeded the size budget; "
+            "rely on playbook_review, period_summary, and trend_segments."
+            if memory_oriented
+            else (
+                "Candle windows omitted because context exceeded the size budget; "
+                "rely on trades, stats, and period_summary."
+            )
         )
         payload = json.dumps(slim, default=str, separators=(",", ":"))
         if len(payload) > MAX_CONTEXT_JSON_CHARS:
             slim["signals_sample"] = slim.get("signals_sample", [])[:10]
             slim["filter_fails_sample"] = slim.get("filter_fails_sample", [])[:10]
+            slim["trades"] = slim.get("trades", [])[:10]
+            review = slim.get("playbook_review")
+            if isinstance(review, dict):
+                slim["playbook_review"] = {
+                    **review,
+                    "should_have_traded": list(review.get("should_have_traded") or [])[:12],
+                    "stood_aside": list(review.get("stood_aside") or [])[:12],
+                }
             payload = json.dumps(slim, default=str, separators=(",", ":"))
 
-    user = (
-        "Analyze this completed BrokerAI backtest and suggest where the strategy "
-        "could be improved. Data follows as JSON.\n\n"
-        f"```json\n{payload}\n```"
-    )
+    mode = (loop_mode or "").strip().lower() or None
+    if memory_oriented and mode == "explore":
+        user = (
+            "Review this AI Strategy *explore* (pattern-only) pass. Focus on "
+            "instrument structure and where the book should lean or stand aside — "
+            "not fills or P&L. Propose memory digest standing/anti rules. Data "
+            "follows as JSON.\n\n"
+            f"```json\n{payload}\n```"
+        )
+        system = _EXPLORE_FEEDBACK_SYSTEM_PROMPT
+    elif memory_oriented and mode == "trade":
+        user = (
+            "Review this AI Strategy *live-parity trade* pass. Learn from this "
+            "run's outcomes only; treat candles as unseen. Propose memory digest "
+            "standing/anti rules. Do not encode period return. Data follows as "
+            "JSON.\n\n"
+            f"```json\n{payload}\n```"
+        )
+        system = _TRADE_MEMORY_FEEDBACK_SYSTEM_PROMPT
+    elif memory_oriented:
+        user = (
+            "Review this AI Strategy playbook signal pass over the instrument. "
+            "Focus on trend location and where the book should have traded or stood "
+            "aside based on signals/reasons — not trade count or P&L. Propose memory "
+            "digest standing/anti rules. Do not suggest builder param paths. "
+            "Data follows as JSON.\n\n"
+            f"```json\n{payload}\n```"
+        )
+        system = _MEMORY_FEEDBACK_SYSTEM_PROMPT
+    else:
+        user = (
+            "Analyze this completed BrokerAI backtest and suggest where the strategy "
+            "could be improved. Data follows as JSON.\n\n"
+            f"```json\n{payload}\n```"
+        )
+        system = _FEEDBACK_SYSTEM_PROMPT
     return [
-        {"role": "system", "content": _FEEDBACK_SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+async def apply_memory_feedback_to_digest(
+    strategy_id: str,
+    memory_notes: list[dict[str, Any]],
+    *,
+    source: str = "ai_strategy_daily_feedback",
+) -> dict[str, Any] | None:
+    """Persist memory notes into a new digest version (not EMA params).
+
+    Does **not** call ``apply_suggestions_to_params``. When notes are empty,
+    queues a learning job instead so Slice 3 can refresh from outcomes.
+
+    Skips creating a new version when the merged learning content fingerprint
+    matches the prior digest — version bumps without content changes were
+    masking no-op feedback and making Memory look "stuck" while vN advanced.
+    """
+    sid = (strategy_id or "").strip()
+    if not sid:
+        return None
+    digests = StrategyMemoryDigestsRepository()
+    if not memory_notes:
+        return await queue_learning_job(sid, force=True)
+
+    prior = await digests.get_latest(sid)
+    merged = merge_feedback_notes_into_digest(
+        prior, memory_notes, strategy_id=sid, source=source
+    )
+    if prior is not None and digest_content_unchanged(prior, merged):
+        logger.info(
+            "Memory feedback for strategy=%s produced no content change — "
+            "keeping digest v%s (skip version bump)",
+            sid,
+            prior.get("version"),
+        )
+        return prior
+    version = await digests.next_version(sid)
+    return await digests.create_version(sid, merged, version=version)
 
 
 async def build_backtest_feedback_context(run_id: str) -> dict[str, Any]:
@@ -502,7 +1043,10 @@ async def build_backtest_feedback_context(run_id: str) -> dict[str, Any]:
 
     candles: list[dict[str, Any]] = []
     period_summary: dict[str, Any] | None = None
+    trend_segments: list[dict[str, Any]] = []
     candle_windows: list[dict[str, Any]] = []
+    playbook_review: dict[str, Any] | None = None
+    params_snapshot = run.get("params_snapshot") if isinstance(run.get("params_snapshot"), dict) else {}
     if symbol and since and until:
         try:
             candles = await CandleCache().read_candles(
@@ -513,11 +1057,14 @@ async def build_backtest_feedback_context(run_id: str) -> dict[str, Any]:
                 until=str(until),
             )
             period_summary = summarize_period_candles(candles)
+            trend_segments = build_trend_segments(candles)
             candle_windows = slice_candle_windows(
                 candles,
                 trades,
                 timeframe=timeframe,
             )
+            if _is_compiled_playbook_params(params_snapshot):
+                playbook_review = build_playbook_signal_review(candles, params_snapshot)
         except Exception:
             logger.warning(
                 "Failed to load candles for AI feedback on run %s", run_id, exc_info=True
@@ -525,7 +1072,9 @@ async def build_backtest_feedback_context(run_id: str) -> dict[str, Any]:
 
     equity = downsample_equity_for_feedback(list(run.get("equity_curve") or []))
 
-    return {
+    # For playbook/AI Strategy reviews, keep stats available but de-emphasize them
+    # in the package shape the prompt sees first.
+    context: dict[str, Any] = {
         "run": {
             "id": run.get("id"),
             "name": run.get("name"),
@@ -542,16 +1091,24 @@ async def build_backtest_feedback_context(run_id: str) -> dict[str, Any]:
             "started_at": run.get("started_at"),
             "finished_at": run.get("finished_at"),
         },
-        "params_snapshot": run.get("params_snapshot"),
-        "stats": run.get("stats"),
-        "equity_curve": equity,
-        "trades": trades,
+        "params_snapshot": params_snapshot or run.get("params_snapshot"),
+        "period_summary": period_summary,
+        "trend_segments": trend_segments,
+        "playbook_review": playbook_review,
         "signals_sample": signals,
         "filter_fails_sample": filter_fails,
-        "period_summary": period_summary,
         "candle_windows": candle_windows,
         "warn_logs": warn_logs,
+        "stats": run.get("stats"),
+        "trades": trades,
+        "equity_curve": equity,
     }
+    if playbook_review is not None:
+        context["framing"] = (
+            "signal_review: judge instrument trend alignment and where the playbook "
+            "should have traded or stood aside; ignore trade count / P&L as success metrics"
+        )
+    return context
 
 
 async def mark_ai_feedback_running(
@@ -569,12 +1126,65 @@ async def mark_ai_feedback_running(
         "reasoning_effort": reasoning_effort,
         "markdown": None,
         "suggestions": [],
+        "memory_notes": [],
         "error": None,
         "started_at": _now_iso(),
         "finished_at": None,
         "usage": None,
     }
     return await BacktestRunsRepository().update_ai_feedback(run_id, feedback)
+
+
+async def claim_ai_feedback_run(
+    run_id: str,
+    *,
+    model_id: str,
+    model_name: str,
+    reasoning_effort: str,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Atomically claim feedback for a completed run.
+
+    Returns ``(run, claimed)``. When ``claimed`` is False another drain/worker
+    already owns or finished feedback — caller must not call the LLM again.
+    """
+    from brokerai.db.pg.client import session_scope
+    from brokerai.db.pg.models import BacktestRunRow
+    from brokerai.db.repositories.backtest_runs import (
+        BACKTEST_RUN_STATUS_COMPLETED,
+        serialize_backtest_run,
+        _sync_row_columns,
+    )
+
+    async with session_scope() as session:
+        row = await session.get(BacktestRunRow, run_id, with_for_update=True)
+        if row is None:
+            return None, False
+        doc = dict(row.doc)
+        if str(doc.get("status") or row.status) != BACKTEST_RUN_STATUS_COMPLETED:
+            return serialize_backtest_run(doc, row=row), False
+        existing = normalize_ai_feedback(doc.get("ai_feedback"))
+        if existing and existing.get("status") in {
+            AI_FEEDBACK_STATUS_RUNNING,
+            AI_FEEDBACK_STATUS_COMPLETED,
+        }:
+            return serialize_backtest_run(doc, row=row), False
+        feedback = {
+            "status": AI_FEEDBACK_STATUS_RUNNING,
+            "model_id": model_id,
+            "model_name": model_name,
+            "reasoning_effort": reasoning_effort,
+            "markdown": None,
+            "suggestions": [],
+            "memory_notes": [],
+            "error": None,
+            "started_at": _now_iso(),
+            "finished_at": None,
+            "usage": None,
+        }
+        doc["ai_feedback"] = normalize_ai_feedback(feedback)
+        row.doc = doc
+        _sync_row_columns(row, doc)
+        return serialize_backtest_run(doc, row=row), True
 
 
 async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
@@ -606,16 +1216,35 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
     resolved_name = str(bound.get("model_name") or model_name)
 
     started_at = _now_iso()
-    await mark_ai_feedback_running(
+    claimed_run, claimed = await claim_ai_feedback_run(
         run_id,
         model_id=str(model_id),
         model_name=resolved_name,
         reasoning_effort=str(effort),
     )
+    if not claimed:
+        # Another API/secretary drain (or auto-analyze) owns this feedback.
+        return claimed_run or {"id": run_id}
 
     try:
+        # Prefer raw doc so origin / cadence / loop_mode metadata is available.
+        run_doc = await runs_repo.get_raw_doc(run_id) or await runs_repo.get_by_id(run_id)
+        memory_oriented = is_ai_strategy_daily_run(run_doc)
+        loop_mode = resolve_feedback_loop_mode(run_doc) if memory_oriented else None
         context = await build_backtest_feedback_context(run_id)
-        messages = build_backtest_feedback_messages(context)
+        if isinstance(run_doc, dict):
+            context.setdefault("run", {})
+            if isinstance(context["run"], dict):
+                context["run"]["origin"] = run_doc.get("origin")
+                context["run"]["cadence_key"] = run_doc.get("cadence_key")
+                context["run"]["digest_version"] = run_doc.get("digest_version")
+                if loop_mode:
+                    context["run"]["loop_mode"] = loop_mode
+        if memory_oriented:
+            context = shape_context_for_loop_mode(context, loop_mode=loop_mode)
+        messages = build_backtest_feedback_messages(
+            context, memory_oriented=memory_oriented, loop_mode=loop_mode
+        )
         markdown = await analyze_with_model(
             model_type,
             base_url,
@@ -624,19 +1253,58 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
             api_key if isinstance(api_key, str) else None,
             reasoning_effort=None if effort == "none" else str(effort),
             cost_context={
-                "operation": "backtest_ai_feedback",
+                "operation": (
+                    "ai_strategy_explore_feedback"
+                    if loop_mode == "explore"
+                    else (
+                        "ai_strategy_trade_feedback"
+                        if loop_mode == "trade"
+                        else (
+                            "ai_strategy_daily_feedback"
+                            if memory_oriented
+                            else "backtest_ai_feedback"
+                        )
+                    )
+                ),
                 "backtest_run_id": run_id,
+                "strategy_id": str((run_doc or {}).get("strategy_id") or ""),
             },
         )
-        params_snapshot = (
-            context.get("params_snapshot")
-            if isinstance(context.get("params_snapshot"), dict)
-            else None
-        )
-        cleaned_markdown, suggestions = parse_suggestions_from_markdown(
-            markdown,
-            params_snapshot=params_snapshot,
-        )
+        if memory_oriented:
+            # Memory fork: never parse/apply EMA SUGGESTION_ALLOWLIST paths.
+            cleaned_markdown, memory_notes = parse_memory_notes_from_markdown(markdown)
+            suggestions: list[dict[str, Any]] = []
+            strategy_id = str((run_doc or {}).get("strategy_id") or "")
+            digest_source = (
+                "ai_strategy_startup_explore"
+                if loop_mode == "explore"
+                else (
+                    "ai_strategy_startup_trade"
+                    if loop_mode == "trade"
+                    else "ai_strategy_daily_feedback"
+                )
+            )
+            try:
+                await apply_memory_feedback_to_digest(
+                    strategy_id, memory_notes, source=digest_source
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to apply memory feedback for daily run %s strategy=%s",
+                    run_id,
+                    strategy_id,
+                )
+        else:
+            params_snapshot = (
+                context.get("params_snapshot")
+                if isinstance(context.get("params_snapshot"), dict)
+                else None
+            )
+            cleaned_markdown, suggestions = parse_suggestions_from_markdown(
+                markdown,
+                params_snapshot=params_snapshot,
+            )
+            memory_notes = []
         feedback = {
             "status": AI_FEEDBACK_STATUS_COMPLETED,
             "model_id": str(model_id),
@@ -644,6 +1312,7 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
             "reasoning_effort": str(effort),
             "markdown": cleaned_markdown,
             "suggestions": suggestions,
+            "memory_notes": memory_notes,
             "error": None,
             "started_at": started_at,
             "finished_at": _now_iso(),
@@ -660,6 +1329,7 @@ async def run_backtest_ai_feedback(run_id: str) -> dict[str, Any]:
             "reasoning_effort": str(effort),
             "markdown": None,
             "suggestions": [],
+            "memory_notes": [],
             "error": str(exc),
             "started_at": started_at,
             "finished_at": _now_iso(),
@@ -736,6 +1406,7 @@ async def begin_ai_feedback_job(run_id: str) -> dict[str, Any]:
                         "reasoning_effort": effort,
                         "markdown": None,
                         "suggestions": [],
+                        "memory_notes": [],
                         "error": "AI feedback task failed to start",
                         "started_at": _now_iso(),
                         "finished_at": _now_iso(),
@@ -764,8 +1435,18 @@ async def maybe_auto_analyze_backtest(run_id: str) -> None:
             return
         if not ai_feedback_settings_ready(settings):
             return
-        run = await BacktestRunsRepository().get_by_id(run_id)
+        # Prefer raw doc so origin is available for startup skip.
+        runs_repo = BacktestRunsRepository()
+        run = await runs_repo.get_raw_doc(run_id)
+        if run is None:
+            run = await runs_repo.get_by_id(run_id)
         if run is None or run.get("status") != BACKTEST_RUN_STATUS_COMPLETED:
+            return
+        # Create-time startup runs feedback synchronously in the drain loop.
+        # Auto-analyze would race it and surface LLM budget ``in_flight`` errors.
+        from brokerai.ai_strategy.startup import ORIGIN_AI_STRATEGY_STARTUP
+
+        if str(run.get("origin") or "") == ORIGIN_AI_STRATEGY_STARTUP:
             return
         existing = normalize_ai_feedback(
             run.get("ai_feedback") if isinstance(run.get("ai_feedback"), dict) else None

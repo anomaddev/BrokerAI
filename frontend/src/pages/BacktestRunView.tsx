@@ -48,6 +48,7 @@ import {
 import { TIMEFRAME_LABELS, type Timeframe } from "../lib/strategyParams";
 import {
   applySuggestionsToParams,
+  isAiStrategyDailyOrigin,
   suggestionDisplayValue,
   storeBacktestAiDraft,
   type AiFeedbackSuggestion,
@@ -910,11 +911,14 @@ export default function BacktestRunView() {
 
   function openSuggestionsInBuilder() {
     if (!run?.params_snapshot || !run.strategy_id || !runId) return;
+    if (isAiStrategyDailyOrigin(run.origin)) return;
     const selected = feedbackSuggestions.filter((s) => selectedSuggestionIds.has(s.id));
     if (selected.length === 0) return;
     const patched = applySuggestionsToParams(
       run.params_snapshot as StrategyParamsV1,
       selected,
+      undefined,
+      { origin: run.origin },
     );
     storeBacktestAiDraft({
       runId,
@@ -1660,7 +1664,9 @@ export default function BacktestRunView() {
                 </div>
               ) : null}
 
-              {feedback?.status === "completed" && feedbackSuggestions.length > 0 ? (
+              {feedback?.status === "completed" &&
+              feedbackSuggestions.length > 0 &&
+              !isAiStrategyDailyOrigin(run.origin) ? (
                 <section className="backtest-feedback-suggestions" aria-label="Structured suggestions">
                   <div className="backtest-feedback-suggestions-header">
                     <h3 className="backtest-feedback-suggestions-title">Builder suggestions</h3>
@@ -1700,6 +1706,32 @@ export default function BacktestRunView() {
                     onClick={openSuggestionsInBuilder}
                   >
                     Open selected in builder
+                  </button>
+                </section>
+              ) : null}
+              {feedback?.status === "completed" && isAiStrategyDailyOrigin(run.origin) ? (
+                <section className="backtest-feedback-suggestions" aria-label="Memory feedback">
+                  <div className="backtest-feedback-suggestions-header">
+                    <h3 className="backtest-feedback-suggestions-title">Memory lessons</h3>
+                    <p className="settings-muted">
+                      Daily AI Strategy feedback updates the learning digest. Builder apply is
+                      disabled for these runs.
+                    </p>
+                  </div>
+                  {(feedback.memory_notes?.length ?? 0) > 0 ? (
+                    <ul className="backtest-feedback-suggestion-list">
+                      {feedback.memory_notes?.map((note) => (
+                        <li key={note.id} className="backtest-feedback-suggestion-card">
+                          <strong>{note.kind}</strong>
+                          <p className="param-helper">{note.text}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="settings-muted">No structured memory notes were returned.</p>
+                  )}
+                  <button type="button" className="btn btn-primary" disabled title="Memory-only run">
+                    Apply in builder unavailable
                   </button>
                 </section>
               ) : null}

@@ -79,6 +79,14 @@ class BrokerStateService:
         exchange_id: str,
         intent: TradeIntent,
     ) -> dict[str, Any]:
+        from brokerai.ai_strategy.shadow_dispatch import refuse_non_live_placement
+        from brokerai.db.repositories.strategies import StrategiesRepository
+
+        strategy = await StrategiesRepository().get_by_id(intent.strategy_id)
+        refuse = refuse_non_live_placement(strategy)
+        if refuse:
+            raise RuntimeError(refuse)
+
         credentials, account_id = await self._credentials_for(exchange_id)
         intent_meta = intent.metadata or {}
         if credentials is None or account_id is None:

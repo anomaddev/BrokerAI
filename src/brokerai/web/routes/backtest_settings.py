@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from brokerai.db.repositories.ai_models import AiModelsRepository
+from brokerai.db.repositories.backtest_runs import BACKTEST_PERIODS
 from brokerai.db.repositories.backtest_settings import (
     MAX_CONCURRENT,
     MIN_CONCURRENT,
@@ -26,6 +27,8 @@ class UpdateBacktestSettingsBody(BaseModel):
     ai_feedback_model_id: str | None = None
     ai_feedback_model_name: str | None = None
     ai_feedback_reasoning_effort: str | None = None
+    daily_ai_strategy_backtest_enabled: bool | None = None
+    daily_ai_strategy_backtest_period: str | None = None
 
 
 @router.get("")
@@ -45,6 +48,11 @@ async def update_backtest_settings(
         effort = payload["ai_feedback_reasoning_effort"]
         if effort is not None and effort not in REASONING_EFFORT_OPTIONS:
             raise HTTPException(status_code=400, detail="Invalid reasoning effort")
+
+    if "daily_ai_strategy_backtest_period" in payload:
+        period = payload["daily_ai_strategy_backtest_period"]
+        if period is not None and period not in BACKTEST_PERIODS:
+            raise HTTPException(status_code=400, detail="Invalid backtest period")
 
     model_id = payload.get("ai_feedback_model_id")
     model_name = payload.get("ai_feedback_model_name")
@@ -75,5 +83,7 @@ async def update_backtest_settings(
         ai_feedback_model_name=None if clear_model else payload.get("ai_feedback_model_name"),
         ai_feedback_reasoning_effort=payload.get("ai_feedback_reasoning_effort"),
         clear_ai_feedback_model=clear_model,
+        daily_ai_strategy_backtest_enabled=payload.get("daily_ai_strategy_backtest_enabled"),
+        daily_ai_strategy_backtest_period=payload.get("daily_ai_strategy_backtest_period"),
     )
     return JSONResponse(settings)

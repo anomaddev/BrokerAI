@@ -31,6 +31,8 @@ export type {
   CustomFilterSpec,
   EmaCrossoverApproachingSpec,
   EmaCrossoverSignalSpec,
+  AiStrategySignalSpec,
+  AiSectionSpec,
   MonthlyHighSignalSpec,
   MonthlyLowSignalSpec,
   SignalSpec,

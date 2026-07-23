@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from brokerai.strategies.base import StrategyPreset
+from brokerai.strategies.params.ai_section import (
+    validate_ai_section,
+    validate_signal_ai_strategy,
+    validate_signal_compiled_playbook,
+)
 from brokerai.strategies.params.sections import (
     ParamsValidationError,
     validate_additional_timeframes,
@@ -42,6 +47,10 @@ def _validate_signal(
         return validate_signal_monthly_limit(signal_raw, expected_type="monthly_high")
     if signal_type == "monthly_low":
         return validate_signal_monthly_limit(signal_raw, expected_type="monthly_low")
+    if signal_type == "ai_strategy":
+        return validate_signal_ai_strategy(signal_raw)
+    if signal_type == "compiled_playbook":
+        return validate_signal_compiled_playbook(signal_raw)
     raise ParamsValidationError(f"Unsupported signal type: {signal_type}", field="signal.type")
 
 
@@ -141,10 +150,15 @@ def validate_params(preset: StrategyPreset, params: dict[str, Any]) -> dict[str,
     execution = validate_execution(params.get("execution"), schema=schema.get("execution"))
     min_candles = validate_min_candles(params.get("min_candles"), params={**partial, "exits": exits})
 
-    return {
+    result: dict[str, Any] = {
         **partial,
         "min_candles": min_candles,
         "exits": exits,
         "risk": risk,
         "execution": execution,
     }
+    # Persist top-level ``ai`` only when present or when the preset is AI Strategy
+    # (otherwise unknown top-level keys remain dropped by design).
+    if "ai" in params or preset.id == "ai_strategy" or signal_type == "ai_strategy":
+        result["ai"] = validate_ai_section(params.get("ai"))
+    return result

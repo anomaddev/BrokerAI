@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Timeframe } from "../../../lib/strategyParams";
 
 type TimeframeOption = {
@@ -12,6 +13,8 @@ type TimeframeSelectProps = {
   value: Timeframe;
   options: TimeframeOption[];
   readOnly?: boolean;
+  /** Optional helper control shown next to the label. */
+  labelHelp?: ReactNode;
   onChange: (value: Timeframe) => void;
 };
 
@@ -22,19 +25,43 @@ export default function TimeframeSelect({
   value,
   options,
   readOnly,
+  labelHelp,
   onChange,
 }: TimeframeSelectProps) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
+  const requiredBadge = required ? <span className="param-control-required">Required</span> : null;
+  const labelInner = (
+    <>
+      {label}
+      {requiredBadge}
+    </>
+  );
+  const labelNode =
+    label && labelHelp ? (
+      <div className="param-control-label-with-help">
+        {readOnly ? (
+          <span className="param-control-label">{labelInner}</span>
+        ) : (
+          <label htmlFor={id} className="param-control-label">
+            {labelInner}
+          </label>
+        )}
+        {labelHelp}
+      </div>
+    ) : label ? (
+      readOnly ? (
+        <span className="param-control-label">{labelInner}</span>
+      ) : (
+        <label htmlFor={id} className="param-control-label">
+          {labelInner}
+        </label>
+      )
+    ) : null;
 
   if (readOnly) {
     return (
       <div className="param-control param-control--readonly">
-        {label ? (
-          <span className="param-control-label">
-            {label}
-            {required ? <span className="param-control-required">Required</span> : null}
-          </span>
-        ) : null}
+        {labelNode}
         <span className="param-control-value param-control-value--locked">{selectedLabel}</span>
       </div>
     );
@@ -42,12 +69,7 @@ export default function TimeframeSelect({
 
   return (
     <div className="param-control">
-      {label ? (
-        <label htmlFor={id} className="param-control-label">
-          {label}
-          {required ? <span className="param-control-required">Required</span> : null}
-        </label>
-      ) : null}
+      {labelNode}
       <div className="research-select-wrap">
         <select
           id={id}

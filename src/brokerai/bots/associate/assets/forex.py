@@ -64,6 +64,12 @@ class ForexAssociate(AssetAssociate):
                 intent.pair,
             )
             return
+        from brokerai.ai_strategy.shadow_dispatch import refuse_non_live_placement
+
+        refuse = refuse_non_live_placement(strategy)
+        if refuse:
+            logger.warning("Refusing live placement for %s: %s", intent.pair, refuse)
+            return
         params = strategy_params(strategy)
         effective = effective_session_ids(settings.get("enabled_sessions"), params)
         if not effective or not is_effective_session_coverage(now, effective):

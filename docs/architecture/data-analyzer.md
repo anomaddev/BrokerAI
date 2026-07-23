@@ -4,7 +4,7 @@ The **Forex Data Analyst** is an **ephemeral worker** under the Secretary pipeli
 
 It is **not** a persistent bot. There is no analyzer tick loop and no Executor handoff.
 
-See also: [The Loop](./the-loop.md), [Data Manager](./data-manager.md), [Strategy params schema](../strategies/params-schema.md).
+See also: [The Loop](./the-loop.md), [Data Manager](./data-manager.md), [Strategy params schema](../strategies/params-schema.md), [AI Strategy](../strategies/ai-strategy.md).
 
 ## Role in the system
 
@@ -42,7 +42,9 @@ Under `src/brokerai/bots/data_analyzer/`:
 | `worker.py` | `ForexDataAnalystWorker` — per-pipeline strategy analysis |
 | `assets/` | Asset-class stubs / registration hooks |
 
-Shared trading logic lives in `src/brokerai/trading/pipeline.py`, `indicator_cache.py`, `candle_context.py`, and strategy evaluators under `src/brokerai/strategies/`.
+Shared trading logic lives in `src/brokerai/trading/pipeline.py`, `indicator_cache.py`, `candle_context.py`, and strategy evaluators under `src/brokerai/strategies/` / `src/brokerai/trading/presets/`.
+
+**AI Strategy** (`signal.type=ai_strategy`) uses `ModelSignalRuntime`: sync `evaluate()` is fail-closed (no LLM); the async analysis path may call the model when `params.ai.llm_mode` allows it, subject to catchup gates and `llm_guard` spend limits. Research reports inject bias only.
 
 ## Worker (`ForexDataAnalystWorker.run`)
 
@@ -82,4 +84,5 @@ The Analysis UI (`/research/analysis`) reads this table via `/api/strategy-analy
 - [The Loop](./the-loop.md)
 - [Data Manager](./data-manager.md)
 - [Orchestrator and bot loops](./orchestrator-and-bot-loops.md)
+- [AI Strategy](../strategies/ai-strategy.md) — warm-up, shadow, learning
 - [OANDA entity linkages](./oanda-entity-linkages.md) — ledger after Broker acts

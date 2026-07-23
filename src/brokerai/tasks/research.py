@@ -116,6 +116,7 @@ async def start_research_task(
     *,
     force: bool,
     manual: bool,
+    relax_daily_prereqs: bool = False,
     start_message: str | None = None,
 ) -> tuple[str | None, str | None]:
     spec = task_kind_spec(kind)
@@ -126,14 +127,17 @@ async def start_research_task(
         runner_fn: ResearchRunner = run_daily_report
         payload_fn = run_daily_report_result_payload
         default_message = "Starting daily report…" if kind == "research_daily" else "Re-running daily report…"
+        relax = False
     elif kind == "research_weekly_brief":
         runner_fn = run_weekly_brief
         payload_fn = weekly_run_result_payload
         default_message = "Starting weekly brief…"
+        relax = relax_daily_prereqs
     elif kind == "research_weekly_debrief":
         runner_fn = run_weekly_debrief
         payload_fn = weekly_run_result_payload
         default_message = "Starting weekly debrief…"
+        relax = relax_daily_prereqs
     else:
         return None, f"Unsupported research kind: {kind}"
 
@@ -143,7 +147,15 @@ async def start_research_task(
         update_task("start", message, 5)
         token.check()
         on_progress = _progress_wrapped(make_progress_callback(), token)
-        result = await runner_fn(force=force, manual=manual, on_progress=on_progress)
+        if kind in ("research_weekly_brief", "research_weekly_debrief"):
+            result = await runner_fn(
+                force=force,
+                manual=manual,
+                relax_daily_prereqs=relax,
+                on_progress=on_progress,
+            )
+        else:
+            result = await runner_fn(force=force, manual=manual, on_progress=on_progress)
         await _execute_run_result(kind, result, payload_fn, record_activity=True)
 
     return await start_task(
@@ -162,12 +174,32 @@ async def start_daily_rerun_task(*, force: bool = True) -> tuple[str | None, str
     return await start_research_task("research_daily_rerun", force=force, manual=True)
 
 
-async def start_weekly_brief_task(*, force: bool, manual: bool) -> tuple[str | None, str | None]:
-    return await start_research_task("research_weekly_brief", force=force, manual=manual)
+async def start_weekly_brief_task(
+    *,
+    force: bool,
+    manual: bool,
+    relax_daily_prereqs: bool = False,
+) -> tuple[str | None, str | None]:
+    return await start_research_task(
+        "research_weekly_brief",
+        force=force,
+        manual=manual,
+        relax_daily_prereqs=relax_daily_prereqs,
+    )
 
 
-async def start_weekly_debrief_task(*, force: bool, manual: bool) -> tuple[str | None, str | None]:
-    return await start_research_task("research_weekly_debrief", force=force, manual=manual)
+async def start_weekly_debrief_task(
+    *,
+    force: bool,
+    manual: bool,
+    relax_daily_prereqs: bool = False,
+) -> tuple[str | None, str | None]:
+    return await start_research_task(
+        "research_weekly_debrief",
+        force=force,
+        manual=manual,
+        relax_daily_prereqs=relax_daily_prereqs,
+    )
 
 
 async def start_scheduled_daily_task() -> tuple[str | None, str | None]:

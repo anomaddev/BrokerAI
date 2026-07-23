@@ -4,6 +4,7 @@ import {
   candleWindowStartAtMs,
   isKnownTimeframe,
   nextCandleCloseAtMs,
+  timeframeToMs,
 } from "./candleSchedule";
 import { hasEnabledForexTradingSessions, type ForexTradingSessions } from "./forexTradingSessions";
 import { formatAppTimeOfDay, type TimeFormatOptions } from "./formatTime";
@@ -312,21 +313,53 @@ function resolveNextCandleUpdateAction(
   nextCandleFetches: Record<string, string> | null | undefined,
   now: Date,
   candleTimeframe?: Timeframe | null,
+  analysisTimeframes?: readonly string[] | null,
 ): NextActionState {
   const nowMs = now.getTime();
-  let bestTimeframe: Timeframe | null = null;
-  let bestTargetAt = Number.POSITIVE_INFINITY;
+  const primary = new Set(
+    (analysisTimeframes ?? []).filter((tf): tf is Timeframe => isKnownTimeframe(tf)),
+  );
 
-  if (nextCandleFetches) {
-    for (const [timeframe, iso] of Object.entries(nextCandleFetches)) {
+  const pickBest = (entries: Iterable<[string, string]>): Timeframe | null => {
+    let bestTimeframe: Timeframe | null = null;
+    let bestTargetAt = Number.POSITIVE_INFINITY;
+    let bestDuration = Number.POSITIVE_INFINITY;
+
+    for (const [timeframe, iso] of entries) {
       if (!isKnownTimeframe(timeframe)) continue;
       const parsed = Date.parse(iso);
       if (Number.isNaN(parsed)) continue;
       const targetAt = parsed <= nowMs ? nextCandleCloseAtMs(nowMs, timeframe) : parsed;
-      if (targetAt < bestTargetAt) {
+      const duration = timeframeToMs(timeframe);
+      // Prefer earlier close; on ties prefer shorter TF (M15 over H4).
+      if (
+        targetAt < bestTargetAt ||
+        (targetAt === bestTargetAt && duration < bestDuration)
+      ) {
         bestTargetAt = targetAt;
+        bestDuration = duration;
         bestTimeframe = timeframe;
       }
+    }
+    return bestTimeframe;
+  };
+
+  let bestTimeframe: Timeframe | null = null;
+  let bestTargetAt = Number.POSITIVE_INFINITY;
+
+  if (nextCandleFetches) {
+    const preferredEntries =
+      primary.size > 0
+        ? Object.entries(nextCandleFetches).filter(([tf]) => primary.has(tf as Timeframe))
+        : [];
+    bestTimeframe = pickBest(preferredEntries.length > 0 ? preferredEntries : Object.entries(nextCandleFetches));
+    if (bestTimeframe) {
+      const iso = nextCandleFetches[bestTimeframe];
+      const parsed = Date.parse(iso);
+      bestTargetAt =
+        Number.isNaN(parsed) || parsed <= nowMs
+          ? nextCandleCloseAtMs(nowMs, bestTimeframe)
+          : parsed;
     }
   }
 
@@ -356,6 +389,7 @@ export function computeNextAction(input: {
   now?: Date;
   candleTimeframe?: Timeframe | null;
   nextCandleFetches?: Record<string, string> | null;
+  analysisCandleTimeframes?: readonly string[] | null;
 }): NextActionState | null {
   const now = input.now ?? new Date();
   const nowMs = now.getTime();
@@ -365,7 +399,12 @@ export function computeNextAction(input: {
   };
 
   if (input.status === "running" && input.orchestratorRunning) {
-    return resolveNextCandleUpdateAction(input.nextCandleFetches, now, input.candleTimeframe);
+    return resolveNextCandleUpdateAction(
+      input.nextCandleFetches,
+      now,
+      input.candleTimeframe,
+      input.analysisCandleTimeframes,
+    );
   }
 
   if (input.researchSettings?.daily_report_enabled) {
@@ -454,7 +493,12 @@ export function formatNextActionTargetUtc(
 export function resolveOverallStatusExplainer(
   status: OverallBotStatus,
   nextAction: NextActionState | null,
-  options?: { orchestratorRunning?: boolean; anyAssetClassEnabled?: boolean },
+  options?: {
+    orchestratorRunning?: boolean;
+    anyAssetClassEnabled?: boolean;
+    /** Concrete bot error text for the status bar when status is error. */
+    errorSummary?: string | null;
+  },
 ): string {
   if (status === "stopped") {
     if (options?.orchestratorRunning && options.anyAssetClassEnabled === false) {
@@ -464,7 +508,8 @@ export function resolveOverallStatusExplainer(
   }
 
   if (status === "error") {
-    return "One or more modules reported an error.";
+    const summary = options?.errorSummary?.trim();
+    return summary || "One or more modules reported an error.";
   }
 
   if (nextAction?.kind === "none" && nextAction.label === "No trading sessions enabled") {

@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
   applySuggestionsToParams,
   clearBacktestAiDraft,
+  isAiStrategyDailyOrigin,
   loadBacktestAiDraft,
   storeBacktestAiDraft,
   suggestionDisplayValue,
@@ -71,6 +72,18 @@ describe("applySuggestionsToParams", () => {
     const atr = patched.filters.find((f) => f.type === "atr");
     expect(atr && "min_value" in atr ? atr.min_value : null).toBe(0.0008);
     expect(patched.risk.max_trades_per_day).toBe(1);
+  });
+
+  it("does not patch params for ai_strategy_daily origin", () => {
+    expect(isAiStrategyDailyOrigin("ai_strategy_daily")).toBe(true);
+    const patched = applySuggestionsToParams(
+      baseParams,
+      [{ id: "atr", path: "filters.atr.min_value", to: 0.05 }],
+      undefined,
+      { origin: "ai_strategy_daily" },
+    );
+    const atr = patched.filters.find((f) => f.type === "atr");
+    expect(atr && "min_value" in atr ? atr.min_value : null).toBe(0.0008);
   });
 });
 

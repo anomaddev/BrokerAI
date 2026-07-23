@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from brokerai.bots.data_manager.candle_schedule import next_candle_close_at
+from brokerai.bots.data_manager.candle_schedule import next_candle_close_at, timeframe_to_duration
 from brokerai.bots.data_manager.forex_strategies import load_runnable_forex_strategies
 from brokerai.config.settings import get_settings
 from brokerai.strategies.params.constants import TIMEFRAMES
@@ -44,19 +44,34 @@ def _parse_fetch_time(iso: str) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _timeframe_rank(timeframe: str) -> int:
+    """Shorter bars rank first so M15 beats H4 on equal close times."""
+    try:
+        return int(timeframe_to_duration(timeframe).total_seconds())
+    except ValueError:
+        return 10**9
+
+
 def _resolve_target_timeframe(
     next_candle_fetches: dict[str, str] | None,
     *,
     now: datetime,
     work_plan_timeframes: tuple[str, ...],
 ) -> str | None:
-    """Pick the earliest upcoming candle close timeframe (mirrors frontend logic)."""
-    now_ms = int(now.timestamp() * 1000)
-    best_timeframe: str | None = None
-    best_target_at = float("inf")
+    """Pick the earliest upcoming *analysis* candle close (mirrors frontend logic).
 
-    if next_candle_fetches:
-        for timeframe, iso in next_candle_fetches.items():
+    Prefers primary work-plan timeframes over HTF extras (e.g. htf_bias H4). On equal
+    close times, prefers the shorter timeframe so alphabetical H4/M15 ties do not
+    surface as "Next candle (4H)".
+    """
+    now_ms = int(now.timestamp() * 1000)
+    primary = set(work_plan_timeframes)
+
+    def _pick(candidates: dict[str, str]) -> str | None:
+        best_timeframe: str | None = None
+        best_target_at = float("inf")
+        best_rank = float("inf")
+        for timeframe, iso in candidates.items():
             if timeframe not in TIMEFRAMES:
                 continue
             parsed = _parse_fetch_time(iso)
@@ -65,15 +80,29 @@ def _resolve_target_timeframe(
             target_ms = int(parsed.timestamp() * 1000)
             if target_ms <= now_ms:
                 target_ms = int(next_candle_close_at(now, timeframe).timestamp() * 1000)
-            if target_ms < best_target_at:
+            rank = _timeframe_rank(timeframe)
+            if target_ms < best_target_at or (
+                target_ms == best_target_at and rank < best_rank
+            ):
                 best_target_at = target_ms
+                best_rank = rank
                 best_timeframe = timeframe
-
-    if best_timeframe:
         return best_timeframe
 
+    if next_candle_fetches:
+        if primary:
+            preferred = {
+                tf: iso for tf, iso in next_candle_fetches.items() if tf in primary
+            }
+            picked = _pick(preferred)
+            if picked:
+                return picked
+        picked = _pick(next_candle_fetches)
+        if picked:
+            return picked
+
     if work_plan_timeframes:
-        return work_plan_timeframes[0]
+        return min(work_plan_timeframes, key=_timeframe_rank)
 
     for timeframe in get_settings().candle_default_timeframes.split(","):
         tf = timeframe.strip()

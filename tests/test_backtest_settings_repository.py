@@ -22,6 +22,8 @@ def test_normalize_ai_feedback_defaults():
     assert settings["ai_feedback_model_id"] is None
     assert settings["ai_feedback_model_name"] is None
     assert settings["ai_feedback_reasoning_effort"] == "medium"
+    assert settings["daily_ai_strategy_backtest_enabled"] is False
+    assert settings["daily_ai_strategy_backtest_period"] == "6m"
 
 
 def test_normalize_ai_feedback_invalid_effort_falls_back():
@@ -45,6 +47,8 @@ async def test_get_and_update_settings():
         ai_feedback_model_id="model-1",
         ai_feedback_model_name="gpt-4o",
         ai_feedback_reasoning_effort="high",
+        daily_ai_strategy_backtest_enabled=True,
+        daily_ai_strategy_backtest_period="1y",
     )
     assert updated["max_concurrent"] == 4
     assert updated["auto_start"] is False
@@ -53,6 +57,8 @@ async def test_get_and_update_settings():
     assert updated["ai_feedback_model_id"] == "model-1"
     assert updated["ai_feedback_model_name"] == "gpt-4o"
     assert updated["ai_feedback_reasoning_effort"] == "high"
+    assert updated["daily_ai_strategy_backtest_enabled"] is True
+    assert updated["daily_ai_strategy_backtest_period"] == "1y"
 
     again = await repo.get()
     assert again == updated

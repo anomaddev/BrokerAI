@@ -108,5 +108,28 @@ async def test_instrument_exposure_repository_recompute():
     assert roundtrip is not None
     assert roundtrip.total_qty == 1000
 
+    # Second upsert of the same natural key must be idempotent (no UniqueViolation).
+    exposure.total_qty = 1500
+    await repo.upsert_rollup(exposure, account_id="acct")
+    updated = await repo.get_for_symbol(
+        exchange_id="oanda",
+        account_id="acct",
+        symbol="EUR_USD",
+        direction="long",
+    )
+    assert updated is not None
+    assert updated.total_qty == 1500
+    stored_after = await repo.list_for_account(exchange_id="oanda", account_id="acct")
+    assert len(stored_after) == 1
+
+    # Recompute drops symbols that are no longer open.
+    cleared = await repo.recompute_for_account(
+        exchange_id="oanda",
+        account_id="acct",
+        open_lots=[],
+    )
+    assert cleared == 0
+    assert await repo.list_for_account(exchange_id="oanda", account_id="acct") == []
+
     payload = json.loads(json.dumps(serialized, default=str))
     assert payload["symbol"] == "EUR_USD"

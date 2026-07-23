@@ -34,6 +34,7 @@ from brokerai.db.pg.models import (
 from sqlalchemy import func, select
 from brokerai.web.routes.bot_activity import router as bot_activity_router
 from brokerai.web.routes.cost_ledger import router as cost_ledger_router
+from brokerai.web.routes.llm_budget_settings import router as llm_budget_settings_router
 from brokerai.web.routes.assets_settings import router as assets_settings_router
 from brokerai.web.routes.auth import require_auth, router as auth_router
 from brokerai.web.routes.backups_settings import router as backups_settings_router
@@ -49,6 +50,7 @@ from brokerai.web.routes.rss_feeds_settings import router as rss_feeds_router
 from brokerai.web.routes.settings import router as settings_router
 from brokerai.web.routes.backtest_runs import router as backtest_runs_router
 from brokerai.web.routes.backtest_settings import router as backtest_settings_router
+from brokerai.web.routes.ai_strategy_settings import router as ai_strategy_settings_router
 from brokerai.web.routes.strategies import router as strategies_router
 from brokerai.web.routes.strategy_analysis_runs import router as strategy_analysis_runs_router
 from brokerai.web.routes.trades import router as trades_router
@@ -109,6 +111,31 @@ async def _trade_sync_loop() -> None:
         await asyncio.sleep(interval)
 
 
+async def _ai_strategy_startup_drain_loop() -> None:
+    """Advance create-time AI Strategy startup jobs even if the orchestrator is stale.
+
+    Secretary also drains these on its tick; this loop covers the common case where
+    the API was reloaded (uvicorn --reload) but ``brokerai run orchestrator`` was not.
+    """
+    while True:
+        try:
+            from brokerai.ai_strategy.startup import drain_queued_startup_jobs
+
+            summary = await drain_queued_startup_jobs(limit=2)
+            if summary.get("advanced"):
+                logger.info(
+                    "API — AI startup drain advanced=%s completed=%s failed=%s",
+                    summary.get("advanced"),
+                    summary.get("completed"),
+                    summary.get("failed"),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("AI Strategy startup drain loop failed", exc_info=True)
+        await asyncio.sleep(15)
+
+
 async def _backup_schedule_loop() -> None:
     """Create scheduled full backups when due."""
     from brokerai.config_backup.service import ConfigBackupService
@@ -162,6 +189,7 @@ async def _app_lifespan(_app: FastAPI):
         logger.warning("Background task reconciliation failed", exc_info=True)
     trade_sync_task = asyncio.create_task(_trade_sync_loop())
     backup_schedule_task = asyncio.create_task(_backup_schedule_loop())
+    ai_startup_drain_task = asyncio.create_task(_ai_strategy_startup_drain_loop())
     backtest_coordinator = None
     try:
         from brokerai.backtesting.coordinator import get_backtest_coordinator
@@ -173,12 +201,18 @@ async def _app_lifespan(_app: FastAPI):
     yield
     trade_sync_task.cancel()
     backup_schedule_task.cancel()
+    ai_startup_drain_task.cancel()
     if backtest_coordinator is not None:
         try:
             await backtest_coordinator.stop()
         except Exception:
             logger.warning("Backtest coordinator stop failed", exc_info=True)
-    await asyncio.gather(trade_sync_task, backup_schedule_task, return_exceptions=True)
+    await asyncio.gather(
+        trade_sync_task,
+        backup_schedule_task,
+        ai_startup_drain_task,
+        return_exceptions=True,
+    )
     from brokerai.integrations.oanda_client import close_oanda_client
 
     await close_oanda_client()
@@ -207,11 +241,13 @@ app.include_router(research_router)
 app.include_router(strategies_router)
 app.include_router(backtest_runs_router)
 app.include_router(backtest_settings_router)
+app.include_router(ai_strategy_settings_router)
 app.include_router(strategy_analysis_runs_router)
 app.include_router(trades_router)
 app.include_router(system_router)
 app.include_router(bot_activity_router)
 app.include_router(cost_ledger_router)
+app.include_router(llm_budget_settings_router)
 app.include_router(tasks_router)
 
 if STATIC_DIR.exists():
@@ -444,3 +480,30 @@ async def stop_bot(name: str, _username: str = Depends(require_auth)) -> JSONRes
     if not result.ok:
         raise HTTPException(status_code=500, detail=result.message)
     return JSONResponse({"action": "stop", "bot": name, "status": "accepted"}, status_code=202)
+
+
+@app.post("/api/bots/{name}/restart")
+async def restart_bot(name: str, _username: str = Depends(require_auth)) -> JSONResponse:
+    """Restart one orchestrator module without restarting the API or host."""
+    bot_name = name.strip()
+    if not bot_name:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    client = ControlClient()
+    try:
+        # Allow any loaded module (including auto-injected secretary/broker), not
+        # only names listed in enabled_bots.
+        result = await asyncio.to_thread(client.submit, "restart", bot_name, timeout=15.0)
+    except ControlTimeout as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not result.ok:
+        status = 404 if "not found" in result.message.lower() else 500
+        raise HTTPException(status_code=status, detail=result.message)
+    return JSONResponse(
+        {
+            "action": "restart",
+            "bot": bot_name,
+            "status": "accepted",
+            "bot_status": result.bot_status,
+        },
+        status_code=202,
+    )

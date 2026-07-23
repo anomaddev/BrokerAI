@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from brokerai.db.pg.client import session_scope
 from brokerai.db.pg.models import StrategyRow
@@ -145,6 +146,11 @@ def _normalize_doc_params(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def serialize_strategy(doc: dict[str, Any]) -> dict[str, Any]:
+    from brokerai.ai_strategy.lifecycle import (
+        is_ai_strategy_doc,
+        normalize_lifecycle,
+    )
+
     asset_class = doc["asset_class"]
     params = _normalize_doc_params(doc)
     payload: dict[str, Any] = {
@@ -168,6 +174,20 @@ def serialize_strategy(doc: dict[str, Any]) -> dict[str, Any]:
     }
     if doc.get("instrument_selection"):
         payload["instrument_selection"] = doc["instrument_selection"]
+    if is_ai_strategy_doc(doc):
+        lifecycle = normalize_lifecycle(doc)
+        payload["execution_phase"] = lifecycle["execution_phase"]
+        warmup = dict(lifecycle["warmup"])
+        # Surface effective target when null so UI can show completed/target.
+        if warmup.get("target_days") is None:
+            try:
+                default_days = int(doc.get("_warmup_default_days") or 5)
+            except (TypeError, ValueError):
+                default_days = 5
+            warmup["target_days"] = max(1, default_days)
+        payload["warmup"] = warmup
+        if doc.get("ai_improve"):
+            payload["ai_improve"] = doc["ai_improve"]
     return payload
 
 
@@ -208,6 +228,50 @@ class StrategiesRepository:
                 return None
             return serialize_strategy(dict(row.doc))
 
+    async def find_ai_strategy_for_instrument(
+        self,
+        symbol: str,
+        *,
+        exclude_strategy_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the AI Strategy that owns *symbol*, if any.
+
+        App-level uniqueness: at most one ``ai_strategy`` row may target a given
+        forex pair. Matching uses denormalized ``instruments`` and
+        ``instrument_selection.forex`` in the JSONB doc.
+        """
+        async with session_scope() as session:
+            return await self._find_ai_strategy_for_instrument(
+                session,
+                symbol,
+                exclude_strategy_id=exclude_strategy_id,
+            )
+
+    async def _find_ai_strategy_for_instrument(
+        self,
+        session: AsyncSession,
+        symbol: str,
+        *,
+        exclude_strategy_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        from brokerai.ai_strategy.instruments import ai_strategy_owns_instrument
+        from brokerai.ai_strategy.lifecycle import AI_STRATEGY_PRESET_ID
+
+        needle = (symbol or "").strip()
+        if not needle:
+            return None
+        exclude = (exclude_strategy_id or "").strip() or None
+
+        stmt = select(StrategyRow).where(StrategyRow.preset_id == AI_STRATEGY_PRESET_ID)
+        rows = (await session.execute(stmt)).scalars().all()
+        for row in rows:
+            if exclude and row.id == exclude:
+                continue
+            doc = dict(row.doc)
+            if ai_strategy_owns_instrument(doc, needle):
+                return serialize_strategy(doc)
+        return None
+
     async def create(
         self,
         *,
@@ -247,6 +311,27 @@ class StrategiesRepository:
             "created_at": now,
             "updated_at": now,
         }
+        if preset_id == "ai_strategy":
+            from brokerai.ai_strategy.instruments import (
+                conflict_message,
+                resolve_ai_strategy_name,
+                validate_ai_strategy_instrument_selection,
+            )
+            from brokerai.ai_strategy.lifecycle import ensure_lifecycle_on_create
+            from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+
+            symbol = validate_ai_strategy_instrument_selection(cleaned_selection)
+            owner = await self.find_ai_strategy_for_instrument(symbol)
+            if owner:
+                raise ValueError(conflict_message(str(owner.get("name") or ""), symbol))
+            doc["name"] = resolve_ai_strategy_name(doc.get("name"), symbol)
+            # AI Strategies start enabled so startup (reports → backtests → seed)
+            # and shadow warm-up can run immediately. Live trading still requires
+            # explicit promote once warm-up reaches ready.
+            doc["enabled"] = True
+            forex_settings = await AssetSettingsRepository().get("forex")
+            default_days = int(forex_settings.get("default_warmup_trading_days") or 5)
+            doc = ensure_lifecycle_on_create(doc, default_warmup_trading_days=default_days)
 
         async with session_scope() as session:
             row = StrategyRow(
@@ -280,6 +365,16 @@ class StrategiesRepository:
         definition_changed = any(
             value is not None for value in (name, description, params, instrument_selection)
         )
+        warmup_default_days = 5
+        if enabled is True:
+            try:
+                from brokerai.db.repositories.asset_settings import AssetSettingsRepository
+
+                forex = await AssetSettingsRepository().get("forex")
+                warmup_default_days = int(forex.get("default_warmup_trading_days") or 5)
+            except Exception:
+                warmup_default_days = 5
+
         async with session_scope() as session:
             row = await session.get(StrategyRow, strategy_id)
             if not row:
@@ -294,7 +389,22 @@ class StrategiesRepository:
             if description is not None:
                 updates["description"] = description.strip()
             if enabled is not None:
+                was_enabled = bool(existing.get("enabled"))
                 updates["enabled"] = enabled
+                # Re-enable always starts a new warm-up episode — never resume live.
+                if enabled and not was_enabled:
+                    from brokerai.ai_strategy.lifecycle import (
+                        is_ai_strategy_doc,
+                        reset_warmup_episode,
+                    )
+
+                    if is_ai_strategy_doc(existing):
+                        reset = reset_warmup_episode(
+                            {**existing, **updates},
+                            default_warmup_trading_days=warmup_default_days,
+                        )
+                        updates["execution_phase"] = reset["execution_phase"]
+                        updates["warmup"] = reset["warmup"]
 
             if params is not None:
                 preset_id = existing.get("preset_id")
@@ -315,6 +425,25 @@ class StrategiesRepository:
                 updates["instrument_selection"] = cleaned_selection
                 updates["instruments"] = flatten_instruments(cleaned_selection)
                 updates["asset_class"] = derive_asset_class(cleaned_selection)
+
+                from brokerai.ai_strategy.lifecycle import is_ai_strategy_doc
+
+                if is_ai_strategy_doc({**existing, **updates}):
+                    from brokerai.ai_strategy.instruments import (
+                        conflict_message,
+                        validate_ai_strategy_instrument_selection,
+                    )
+
+                    symbol = validate_ai_strategy_instrument_selection(cleaned_selection)
+                    owner = await self._find_ai_strategy_for_instrument(
+                        session,
+                        symbol,
+                        exclude_strategy_id=strategy_id,
+                    )
+                    if owner:
+                        raise ValueError(conflict_message(str(owner.get("name") or ""), symbol))
+                    updates["instruments"] = [symbol]
+                    updates["asset_class"] = "forex"
 
             existing.update(updates)
             _sync_row_columns(row, existing)
@@ -338,6 +467,33 @@ class StrategiesRepository:
                     change_label=change_label or "Strategy updated",
                 )
 
+        return await self.get_by_id(strategy_id)
+
+    async def promote_to_live(self, strategy_id: str) -> dict[str, Any] | None:
+        from brokerai.ai_strategy.lifecycle import is_ai_strategy_doc, promote_to_live
+
+        async with session_scope() as session:
+            row = await session.get(StrategyRow, strategy_id)
+            if not row:
+                return None
+            existing = dict(row.doc)
+            if not is_ai_strategy_doc(existing):
+                raise ValueError("Only AI Strategies can be promoted")
+            updated = promote_to_live(existing)
+            updated["updated_at"] = _now_iso()
+            _sync_row_columns(row, updated)
+        return await self.get_by_id(strategy_id)
+
+    async def save_lifecycle(self, strategy_id: str, doc_updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Persist lifecycle fields (phase/warmup) without creating a params version."""
+        async with session_scope() as session:
+            row = await session.get(StrategyRow, strategy_id)
+            if not row:
+                return None
+            existing = dict(row.doc)
+            existing.update(doc_updates)
+            existing["updated_at"] = _now_iso()
+            _sync_row_columns(row, existing)
         return await self.get_by_id(strategy_id)
 
     async def delete(self, strategy_id: str) -> bool:

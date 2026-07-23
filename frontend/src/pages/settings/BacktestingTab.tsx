@@ -23,7 +23,18 @@ const DEFAULT_SETTINGS: BacktestSettings = {
   ai_feedback_model_id: null,
   ai_feedback_model_name: null,
   ai_feedback_reasoning_effort: "medium",
+  daily_ai_strategy_backtest_enabled: false,
+  daily_ai_strategy_backtest_period: "6m",
 };
+
+const PERIOD_OPTIONS: { value: string; label: string }[] = [
+  { value: "1m", label: "1 month" },
+  { value: "3m", label: "3 months" },
+  { value: "6m", label: "6 months" },
+  { value: "1y", label: "1 year" },
+  { value: "2y", label: "2 years" },
+  { value: "5y", label: "5 years" },
+];
 
 const REASONING_OPTIONS: { value: ReasoningEffort; label: string }[] = [
   { value: "none", label: "None" },
@@ -333,6 +344,63 @@ export default function BacktestingTab() {
                         ))}
                       </select>
                     </div>
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <section className="account-section-card">
+              <div className="settings-section-intro">
+                <div className="settings-section-intro-row">
+                  <div>
+                    <h3 className="settings-subsection-title">AI Strategy daily backtest</h3>
+                    <p className="settings-panel-desc">
+                      Queue a compiled-playbook backtest once per ET day for enabled AI Strategies
+                      with learning on. Auto AI feedback writes to memory digests, not the EMA
+                      builder.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="general-settings-stack">
+                <div className="general-settings-group">
+                  <div className="research-source-row">
+                    <div className="research-source-main">
+                      <span className="research-source-name">Enable daily AI Strategy backtest</span>
+                      <span className="settings-muted">
+                        Off by default. Requires a non-empty memory digest per strategy.
+                      </span>
+                    </div>
+                    <ToggleSwitch
+                      label="Enable daily AI Strategy backtest"
+                      checked={Boolean(settings.daily_ai_strategy_backtest_enabled)}
+                      disabled={saving}
+                      onChange={(daily_ai_strategy_backtest_enabled) =>
+                        update({ daily_ai_strategy_backtest_enabled })
+                      }
+                    />
+                  </div>
+
+                  <label className="general-settings-field">
+                    <span className="general-settings-field-label">Lookback period</span>
+                    <div className="research-select-wrap">
+                      <select
+                        className="research-select"
+                        disabled={saving || !settings.daily_ai_strategy_backtest_enabled}
+                        value={settings.daily_ai_strategy_backtest_period || "6m"}
+                        onChange={(event) =>
+                          update({ daily_ai_strategy_backtest_period: event.target.value })
+                        }
+                      >
+                        {PERIOD_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <span className="settings-field-hint">Default is 6 months.</span>
                   </label>
                 </div>
               </div>

@@ -324,6 +324,7 @@ export const api = {
         started_at?: string | null;
         last_error?: string | null;
         next_candle_fetches?: Record<string, string>;
+        analysis_candle_timeframes?: string[];
       }>;
     }>("/api/bots"),
   dbStats: () =>
@@ -367,8 +368,21 @@ export const api = {
     request<{ action: string; status: string; message: string }>("/api/system/shutdown", {
       method: "POST",
     }),
+  restartOrchestrator: () =>
+    request<{
+      action: string;
+      target: string;
+      status: string;
+      mode: string;
+      message: string;
+    }>("/api/system/orchestrator/restart", { method: "POST" }),
   startBot: (name: string) => request(`/api/bots/${name}/start`, { method: "POST" }),
   stopBot: (name: string) => request(`/api/bots/${name}/stop`, { method: "POST" }),
+  restartBot: (name: string) =>
+    request<{ action: string; bot: string; status: string; bot_status?: Record<string, unknown> }>(
+      `/api/bots/${encodeURIComponent(name)}/restart`,
+      { method: "POST" },
+    ),
 
   listModels: () => request<{ models: AiModel[] }>("/api/settings/models"),
   createModel: (data: CreateModelInput) =>
@@ -659,6 +673,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  promoteStrategy: (id: string) =>
+    request<Strategy>(`/api/strategies/${encodeURIComponent(id)}/promote`, {
+      method: "POST",
+    }),
   deleteStrategy: (id: string) =>
     request<{ status: string; id: string }>(`/api/strategies/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -777,6 +795,40 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+
+  getAiStrategySettings: () => request<AiStrategySettings>("/api/settings/ai-strategies"),
+
+  updateAiStrategySettings: (data: Partial<AiStrategySettings>) =>
+    request<AiStrategySettings>("/api/settings/ai-strategies", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  getStrategyStartup: (strategyId: string) =>
+    request<{ job: AiStrategyStartupJob | null }>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/startup`,
+    ),
+
+  getStrategyActivity: (strategyId: string, params?: { limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const qs = search.toString();
+    return request<AiStrategyActivityResponse>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/activity${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  retryStrategyStartup: (strategyId: string) =>
+    request<{ job: AiStrategyStartupJob }>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/startup`,
+      { method: "POST" },
+    ),
+
+  cancelStrategyStartup: (strategyId: string) =>
+    request<{ job: AiStrategyStartupJob | null }>(
+      `/api/strategies/${encodeURIComponent(strategyId)}/startup/cancel`,
+      { method: "POST" },
+    ),
 
   requestBacktestAiFeedback: (runId: string) =>
     request<BacktestRun>(
@@ -1650,6 +1702,15 @@ export type BacktestAiSuggestion = {
   test_alone?: boolean;
 };
 
+export type BacktestAiMemoryNote = {
+  id: string;
+  kind: "standing_rule" | "anti_rule" | "lesson" | "note" | string;
+  text: string;
+  bias?: string | null;
+  keywords?: string[];
+  priority?: number;
+};
+
 export type BacktestAiFeedback = {
   status: BacktestAiFeedbackStatus;
   model_id: string | null;
@@ -1657,6 +1718,7 @@ export type BacktestAiFeedback = {
   reasoning_effort: ReasoningEffort | null;
   markdown: string | null;
   suggestions?: BacktestAiSuggestion[];
+  memory_notes?: BacktestAiMemoryNote[];
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -1691,6 +1753,9 @@ export type BacktestRun = {
   equity_curve?: BacktestEquityPoint[];
   params_snapshot?: Record<string, unknown> | null;
   ai_feedback?: BacktestAiFeedback | null;
+  origin?: string | null;
+  cadence_key?: string | null;
+  digest_version?: string | number | null;
 };
 
 export type BacktestLog = {
@@ -1721,6 +1786,88 @@ export type BacktestSettings = {
   ai_feedback_model_id: string | null;
   ai_feedback_model_name: string | null;
   ai_feedback_reasoning_effort: ReasoningEffort;
+  daily_ai_strategy_backtest_enabled?: boolean;
+  daily_ai_strategy_backtest_period?: BacktestPeriod | string;
+};
+
+export type AiStrategySettings = {
+  startup_enabled: boolean;
+  startup_loop_count: number;
+  startup_backtest_period: BacktestPeriod | string;
+  startup_timeout_minutes: number;
+};
+
+export type AiStrategyStartupJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type AiStrategyStartupJobPhase =
+  | "ensuring_reports"
+  | "seeding_digest"
+  | "looping"
+  | "done";
+
+export type AiStrategyStartupJob = {
+  id: string;
+  strategy_id: string;
+  status: AiStrategyStartupJobStatus;
+  phase: AiStrategyStartupJobPhase;
+  loop_index?: number;
+  loop_target?: number;
+  required_reports?: string[];
+  skipped_reports?: string[];
+  pending_reports?: string[];
+  current_backtest_run_id?: string | null;
+  seed_digest_version?: number | null;
+  status_message?: string | null;
+  last_seed_wait?: string | null;
+  error?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+  finished_at?: string | null;
+};
+
+export type AiStrategyActivityKind =
+  | "startup"
+  | "backtest"
+  | "digest"
+  | "learning"
+  | "lifecycle"
+  | "version";
+
+export type AiStrategyActivityEvent = {
+  id: string;
+  kind: AiStrategyActivityKind | string;
+  status: string;
+  title: string;
+  detail?: string | null;
+  occurred_at: string;
+  href?: string | null;
+  meta?: Record<string, unknown>;
+};
+
+export type AiStrategyDigestSummary = {
+  id?: string;
+  version?: number | null;
+  created_at?: string | null;
+  source?: string | null;
+  summary?: string | null;
+  standing_rule_count?: number;
+  anti_rule_count?: number;
+  standing_rules?: string[];
+  anti_rules?: string[];
+};
+
+export type AiStrategyActivityResponse = {
+  strategy: Strategy;
+  startup_job: AiStrategyStartupJob | null;
+  latest_digest: AiStrategyDigestSummary | null;
+  events: AiStrategyActivityEvent[];
+  active: boolean;
 };
 
 export type BacktestRunsResponse = {
@@ -1736,6 +1883,29 @@ export type StrategyStats = {
   realized_pnl: number;
   open_positions: number;
   last_trade_at: string | null;
+};
+
+/** AI Strategy lifecycle phase (strategy doc, not params). */
+export type StrategyExecutionPhase = "warming" | "ready" | "live";
+
+export type StrategyWarmup = {
+  unit?: string;
+  target_days?: number | null;
+  min_closed_bars_per_day?: number;
+  episode_id?: string;
+  started_at?: string | null;
+  eligible_trading_days?: string[];
+  completed_days?: number;
+  bars_today_et?: number;
+  current_trading_day_et?: string | null;
+  ready_at?: string | null;
+  live_at?: string | null;
+};
+
+export type StrategyAiImprove = {
+  enabled?: boolean;
+  last_queued_et_date?: string | null;
+  skip_reason?: string | null;
 };
 
 export type Strategy = {
@@ -1757,6 +1927,10 @@ export type Strategy = {
   route?: string | null;
   params?: StrategyParamsV1;
   params_schema_version?: number;
+  /** Present on AI Strategy docs after create. */
+  execution_phase?: StrategyExecutionPhase;
+  warmup?: StrategyWarmup;
+  ai_improve?: StrategyAiImprove;
 };
 
 export type StrategyInstrumentSelection = Partial<Record<AssetClass, string[]>>;

@@ -81,7 +81,7 @@ function seedComponents(
   initialParams: CustomBuilderParams | undefined,
   initialV1: StrategyParamsV1 | undefined,
 ): StrategyBuilderComponent[] {
-  if (initialV1) return componentsFromParamsV1(initialV1, initialParams?.minCandles ?? 50);
+  if (initialV1) return componentsFromParamsV1(initialV1, initialParams?.minCandles ?? 200);
   if (initialParams) {
     try {
       const v1 = customBuilderParamsToV1(initialParams);

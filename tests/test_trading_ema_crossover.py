@@ -51,7 +51,7 @@ def _ema_strategy_params() -> dict:
     }
 
 
-def test_run_strategy_analysis_returns_result():
+async def test_run_strategy_analysis_returns_result():
     register_ema_crossover()
     candles = generate_mock_candles(120)
     strategy = {
@@ -62,7 +62,7 @@ def test_run_strategy_analysis_returns_result():
         "params": _ema_strategy_params(),
     }
     cache = IndicatorCache().warm("EUR/USD", "M15", candles, [strategy["params"]])
-    result = run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
+    result = await run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
 
     assert result.strategy_id == "test-strategy"
     assert result.pair == "EUR/USD"
@@ -118,7 +118,7 @@ def test_filters_evaluated_at_crossover_time():
     assert cross_meta["adx"]["adx"] == 28.0
 
 
-def test_filter_chain_can_block_signal():
+async def test_filter_chain_can_block_signal():
     register_ema_crossover()
     candles = generate_mock_candles(120)
     params = _ema_strategy_params()
@@ -131,13 +131,13 @@ def test_filter_chain_can_block_signal():
         "params": params,
     }
     cache = IndicatorCache().warm("EUR/USD", "M15", candles, [params])
-    result = run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
+    result = await run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
     assert result.metadata.get("filters_passed") is False
     if result.direction is not None:
         assert result.confidence > 0
 
 
-def test_run_strategy_analysis_rejects_insufficient_candles():
+async def test_run_strategy_analysis_rejects_insufficient_candles():
     register_ema_crossover()
     candles = generate_mock_candles(10)
     strategy = {
@@ -148,7 +148,7 @@ def test_run_strategy_analysis_rejects_insufficient_candles():
         "params": _ema_strategy_params(),
     }
     cache = IndicatorCache().warm("EUR/USD", "M15", candles, [strategy["params"]])
-    result = run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
+    result = await run_strategy_analysis(strategy, "EUR/USD", candles, cache, timeframe="M15")
 
     assert result.direction is None
     assert result.confidence == 0.0

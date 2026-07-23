@@ -7,10 +7,12 @@ import logging
 import traceback
 from typing import Any
 
-from brokerai.backtesting.engine import run_backtest_engine
+from brokerai.backtesting.engine import LostWorkerClaim, run_backtest_engine
 from brokerai.backtesting.logging import attach_backtest_logger
 from brokerai.db.pg.client import close_pg, init_pg, reset_pg_runtime_for_new_loop, session_scope
 from brokerai.db.pg.models import BacktestRunRow
+from brokerai.db.repositories.backtest_actions import BacktestActionsRepository
+from brokerai.db.repositories.backtest_logs import BacktestLogsRepository
 from brokerai.db.repositories.backtest_runs import (
     BACKTEST_RUN_STATUS_CANCELLED,
     BACKTEST_RUN_STATUS_COMPLETED,
@@ -44,9 +46,18 @@ async def _set_strategy_status(strategy_id: str, status: str) -> None:
         logger.exception("Failed to update strategy backtest_status for %s", strategy_id)
 
 
-async def _execute(run_id: str) -> dict[str, Any]:
+async def _execute(run_id: str, worker_token: str = "") -> dict[str, Any]:
     await init_pg()
     runs_repo = BacktestRunsRepository()
+    claim = (worker_token or "").strip()
+    if claim:
+        if not await runs_repo.worker_owns(run_id, claim):
+            logger.warning("Backtest %s refused: worker claim %s not held", run_id, claim[:8])
+            return {"ok": False, "error": "lost worker claim"}
+        # Restart-safe: drop any partial rows from a previous overlapping worker.
+        await BacktestActionsRepository().delete_for_run(run_id)
+        await BacktestLogsRepository().delete_for_run(run_id)
+
     run_doc = await runs_repo.get_raw_doc(run_id)
     if run_doc is None:
         return {"ok": False, "error": "run not found"}
@@ -58,6 +69,8 @@ async def _execute(run_id: str) -> dict[str, Any]:
     async def cancel_check() -> bool:
         if handler.should_flush():
             await handler.flush_async()
+        if claim and not await runs_repo.worker_owns(run_id, claim):
+            raise LostWorkerClaim(f"lost worker claim for backtest {run_id}")
         return await runs_repo.is_cancel_requested(run_id)
 
     try:
@@ -65,6 +78,7 @@ async def _execute(run_id: str) -> dict[str, Any]:
             run_doc,
             log=log,
             cancel_check=cancel_check,
+            worker_token=claim or None,
         )
         await handler.flush_async()
         status = str(result.get("status") or BACKTEST_RUN_STATUS_COMPLETED)
@@ -94,6 +108,14 @@ async def _execute(run_id: str) -> dict[str, Any]:
         else:
             await _set_strategy_status(strategy_id, BACKTEST_STATUS_FAILED)
         return {"ok": True, "status": status, "run": finished}
+    except LostWorkerClaim:
+        try:
+            await handler.flush_async()
+        except Exception:
+            pass
+        log.warning("Backtest %s exiting — worker claim lost (another worker owns it)", run_id)
+        # Do not finish_run: the active lease holder owns terminal status.
+        return {"ok": False, "error": "lost worker claim"}
     except Exception as exc:
         try:
             await handler.flush_async()
@@ -105,6 +127,8 @@ async def _execute(run_id: str) -> dict[str, Any]:
             await handler.flush_async()
         except Exception:
             pass
+        if claim and not await runs_repo.worker_owns(run_id, claim):
+            return {"ok": False, "error": "lost worker claim"}
         await runs_repo.finish_run(
             run_id,
             status=BACKTEST_RUN_STATUS_FAILED,
@@ -129,16 +153,16 @@ async def _execute(run_id: str) -> dict[str, Any]:
             reset_pg_runtime_for_new_loop()
 
 
-def run_backtest_job(run_id: str) -> dict[str, Any]:
-    """Picklable process-pool entrypoint. Receives only ``run_id``."""
+def run_backtest_job(run_id: str, worker_token: str = "") -> dict[str, Any]:
+    """Picklable process-pool entrypoint. Receives only ``run_id`` (+ lease token)."""
     _reset_worker_runtime()
     try:
-        return asyncio.run(_execute(run_id))
+        return asyncio.run(_execute(run_id, worker_token))
     finally:
         # Ensure the next pooled job never sees loop-bound leftovers.
         _reset_worker_runtime()
 
 
-async def run_backtest_job_async(run_id: str) -> dict[str, Any]:
+async def run_backtest_job_async(run_id: str, worker_token: str = "") -> dict[str, Any]:
     """In-process async entrypoint (tests / fallback without a process pool)."""
-    return await _execute(run_id)
+    return await _execute(run_id, worker_token)

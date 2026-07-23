@@ -65,7 +65,9 @@ Proxmox Host
 Secretary ──► Data Manager worker ──► Postgres market_candles
          ──► Data Analyst worker ──► strategy_analysis_runs
          ──► Broker ──► Associate workers ──► broker_lots
+              └── AI Strategy (warming/ready) ──► shadow_intents / shadow_lots
 Researcher worker (on demand) ──► research_cache
+Secretary (daily, optional) ──► AI Strategy compiled-playbook backtests
 ```
 
 At each due candle close (e.g. M15):
@@ -73,7 +75,7 @@ At each due candle close (e.g. M15):
 1. Secretary creates a `CandleJob` and dispatches parallel pipelines (capped by `BROKERAI_PIPELINE_CONCURRENCY`)
 2. Data Manager worker upserts closed bars into `market_candles`
 3. Data Analyst worker evaluates enabled strategies
-4. Broker applies execution gates, resolves priority conflicts, dispatches Associates
+4. Broker applies execution gates, resolves priority conflicts, dispatches Associates (AI Strategy in warm-up uses an isolated shadow ledger instead)
 5. Broker exit monitors evaluate open lots for crossover / trail stops
 
 Broker also syncs OANDA state on startup and on a slow tick (~30s). The web API runs a separate background sync loop (default 5 min).
@@ -98,7 +100,7 @@ Open **http://\<container-ip\>:1989**, or **https://\<BROKERAI_DOMAIN\>** when T
 | **Reports** | `/research/reports` | Daily/weekly research reports, signals panel, run/rerun |
 | **Strategies** | `/research/strategies` | List, enable/disable, create from preset, edit |
 | **Analysis** | `/research/analysis` | Analyzer run history with recency, filters, direction, confidence, gate results, and candle context |
-| **Backtesting** | `/research/backtest` | Placeholder — coming next |
+| **Backtesting** | `/research/backtest` | Manual runs, metrics/actions, Auto AI feedback; daily AI Strategy improve toggles |
 | **Explore** | `/trading/explore` | Candle chart, pair search, timeframe/history, live revision stream |
 | **Forex** | `/trading/forex` | Trade ledger with filters, sync, reconciliation badges, detail chart |
 | **Activity** | `/activity` | Bot event timeline with job-ID correlation |
@@ -130,13 +132,27 @@ Older paths such as `/daily-reports`, `/trading/strategies`, and `/trading/trade
 | Preset | Description |
 |--------|-------------|
 | **EMA Crossover** | Fast/slow EMA cross with ADX + ATR filters, ATR-based stops, RR take-profit |
+| **AI Strategy** | Model-derived signals with research bias, shadow warm-up, explicit promote to live, outcome learning, and daily compiled-playbook backtests |
 | **Custom** | Blank template for manual parameter configuration |
 
-Params use **schema v1** with sections: `timeframe`, `indicators`, `signal`, `filters`, `exits`, `risk`, `execution`. See [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md).
+Params use **schema v1** with sections: `timeframe`, `indicators`, `signal`, `filters`, `exits`, `risk`, `execution`, and optional `ai` (AI Strategy). See [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md) and [`docs/strategies/ai-strategy.md`](docs/strategies/ai-strategy.md).
 
 Default EMA Crossover: M15 timeframe, ADX ≥ 25, London + NY sessions, 1% risk per trade, max 3 trades/day per strategy/pair.
 
 **Indicators:** EMA, SMA, RSI, ADX, ATR.
+
+### AI Strategy
+
+Creates as `execution_phase=warming` and records would-have trades in `shadow_*` tables (not `broker_lots`) until you **Promote to live** after warm-up completes (default 5 ET trading days; configurable under Settings → Broker → Forex).
+
+- Research reports (daily / weekly brief / debrief) inject **bias only** — not per-candle LLM
+- LLM decisions are throttled (`params.ai.llm_mode`, interval/caps) and gated by `llm_guard` / `BROKERAI_LLM_KILL_SWITCH`
+- Catchup/bootstrap never calls the LLM or advances warm-up
+- Optional learning digests from closed shadow/live outcomes; at-most-daily compiled-playbook backtests with Auto AI feedback (Apply-in-builder blocked for those runs)
+
+### Backtesting
+
+The Backtesting page runs historical simulations against saved strategies (candles from Postgres). AI Strategy **daily improve** can auto-queue compiled-playbook runs (no live LLM in the bar loop) when enabled in backtest settings.
 
 ### Execution
 
@@ -195,6 +211,14 @@ BrokerAI uses the Docker stack under [`deploy/supabase/`](deploy/supabase/) (see
 | `research_settings` | Research scheduling and model selection |
 | `asset_settings` | Per-asset-class broker config (forex pairs, sessions) |
 | `user_profiles` / `onboarding` | Auth profile prefs + wizard progress |
+| `backtest_runs` / `backtest_logs` / `backtest_actions` | Backtest jobs, logs, and simulated actions |
+| `backtest_settings` | Manual + daily AI Strategy backtest toggles |
+| `shadow_intents` / `shadow_lots` | AI Strategy warm-up would-have ledger (isolated from `broker_lots`) |
+| `trade_outcome_records` | Normalized shadow/live outcomes for learning |
+| `strategy_memory_digests` | Compiled memory digests for AI Strategy |
+| `learning_jobs` | Queued outcome → digest work |
+| `strategy_guidance` | Research bias snapshots for AI Strategy |
+| `llm_budget_settings` / `llm_budget_days` / `llm_call_reservations` | LLM spend gate and reservations |
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -334,6 +358,7 @@ Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev). Template: [`co
 | `BROKERAI_LOG_DIR` | `/var/log/brokerai` | Logs |
 | `BROKERAI_AUTO_UPDATE` | `true` | Enable automatic updates |
 | `BROKERAI_UPDATE_TRACK` | `branch` | `branch` \| `release` \| `latest-release` \| `next-major` |
+| `BROKERAI_LLM_KILL_SWITCH` | `false` | When `true`, deny all gated LLM calls (AI Strategy + research spend path) |
 
 ## Web API
 
@@ -344,8 +369,9 @@ Edit `/etc/brokerai/config.env` (or `.env` in repo root for dev). Template: [`co
 | `/api/bots`, `/api/bots/{name}/start\|stop` | Yes | Sub-bot statuses and IPC control |
 | `/api/pipeline/status` | Yes | Secretary pipeline state |
 | `/api/trades` | Yes | Ledger list, detail, candles, sync, reconciliation, close |
-| `/api/strategies` | Yes | Presets, CRUD, enable/disable |
+| `/api/strategies` | Yes | Presets, CRUD, enable/disable, AI Strategy promote |
 | `/api/strategy-analysis-runs` | Yes | Analyzer run history and detail |
+| `/api/backtest-runs`, `/api/backtest/settings` | Yes | Backtests, AI feedback, daily AI Strategy improve toggles |
 | `/api/market-data/candles`, `/delta`, `/stream` | Yes | Candle data and SSE revision stream |
 | `/api/market-status` | Yes | Forex session and asset-class status |
 | `/api/research/*` | Yes | Reports, signals, run daily/weekly |
@@ -409,6 +435,7 @@ Index: [`docs/README.md`](docs/README.md).
 | [`docs/architecture/caching.md`](docs/architecture/caching.md) | Cache behavior |
 | [`docs/architecture/oanda-entity-linkages.md`](docs/architecture/oanda-entity-linkages.md) | OANDA sync, broker ledger, entity mapping |
 | [`docs/strategies/params-schema.md`](docs/strategies/params-schema.md) | Strategy params v1 |
+| [`docs/strategies/ai-strategy.md`](docs/strategies/ai-strategy.md) | AI Strategy warm-up, shadow, learning, daily backtests |
 | [`docs/auth/self-hosted-oidc.md`](docs/auth/self-hosted-oidc.md) | Builtin vs OIDC auth |
 | [`docs/dev/onboarding-preview.md`](docs/dev/onboarding-preview.md) | Clean-DB onboarding preview |
 
@@ -427,7 +454,10 @@ BrokerAI/
 │   │   ├── data_analyzer/          Strategy analysis worker
 │   │   └── associate/              Per-asset-class order placement
 │   ├── strategies/                 Presets, params v1, evaluators
-│   ├── trading/                    Indicators, broker models, sync
+│   ├── trading/                    Indicators, broker models, sync, AI runtime
+│   ├── ai_strategy/                Lifecycle, shadow, learning, daily improve
+│   ├── backtesting/                Historical engine + AI feedback
+│   ├── cost/                       LLM spend gate (llm_guard)
 │   ├── db/                         Postgres client + repositories (SQLAlchemy)
 │   ├── cli/                        brokerai command
 │   ├── core/                       Orchestrator + control IPC
@@ -454,7 +484,7 @@ Planned improvements that are not implemented yet:
 
 - **Forex execution only** — other asset classes have stub associates and data paths
 - **Practice account strongly recommended** — live OANDA execution uses real money
-- **Backtesting not implemented** — placeholder page only
+- **AI Strategy is forex-only** — shadow ledger ≠ paper/OANDA lots; no auto-promote; daily improve uses compiled playbook (not live LLM)
 - **Research trade-analysis mode** — not implemented
 - **Fixed account balance for sizing** — forex associate uses 10,000 default when OANDA balance is unavailable
 

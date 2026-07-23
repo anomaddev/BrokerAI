@@ -39,6 +39,7 @@ DEFAULT_PARAMS: dict = {
         "late_market_hours": 2,
         "post_stop_cooldown_bars": 0,
     },
+    "min_candles": 200,
 }
 
 PARAM_SCHEMA: dict = {

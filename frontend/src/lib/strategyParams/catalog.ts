@@ -163,7 +163,7 @@ export type SignalCatalogType = (typeof SIGNAL_CATALOG)[number]["type"];
 export type FilterCatalogType = (typeof FILTER_CATALOG)[number]["type"];
 export type IndicatorCatalogType = (typeof INDICATOR_CATALOG)[number]["type"];
 
-export function findSignalCatalogEntry(type: SignalCatalogType) {
+export function findSignalCatalogEntry(type: string) {
   return SIGNAL_CATALOG.find((item) => item.type === type);
 }
 

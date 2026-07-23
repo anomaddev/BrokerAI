@@ -105,7 +105,7 @@ export function createId(prefix: string): string {
 
 export function createPrimaryTimeframe(
   timeframe: Timeframe = "M15",
-  minCandles = 50,
+  minCandles = 200,
 ): TimeframeComponent {
   return {
     id: "timeframe_primary",
@@ -309,7 +309,7 @@ export function nextAvailableEmaPeriod(
 export function ensurePrimaryTimeframe(
   components: StrategyBuilderComponent[],
   timeframe: Timeframe = "M15",
-  minCandles = 50,
+  minCandles = 200,
 ): StrategyBuilderComponent[] {
   if (hasPrimaryTimeframe(components)) return sortComponents(components);
   return sortComponents([createPrimaryTimeframe(timeframe, minCandles), ...components]);
@@ -565,11 +565,11 @@ export function reconcileCrossoverEmaSelection(
   return sortComponents(changed ? next : components);
 }
 
-export function seedCustomComponents(minCandles = 50): StrategyBuilderComponent[] {
+export function seedCustomComponents(minCandles = 200): StrategyBuilderComponent[] {
   return sortComponents([createPrimaryTimeframe("M15", minCandles), createMarketsComponent()]);
 }
 
-export function seedEmaCrossoverComponents(minCandles = 50): StrategyBuilderComponent[] {
+export function seedEmaCrossoverComponents(minCandles = 200): StrategyBuilderComponent[] {
   const ema9 = createEmaComponent(9, DEFAULT_EMA_COLORS[0]);
   const ema21 = createEmaComponent(21, DEFAULT_EMA_COLORS[1], [ema9]);
   const signal = createSignalComponent("ema_crossover", {

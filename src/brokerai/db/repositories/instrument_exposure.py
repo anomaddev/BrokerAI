@@ -4,12 +4,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from brokerai.db.pg.client import session_scope
 from brokerai.db.pg.models import InstrumentExposureRow
 from brokerai.trading.analysis_runs import _format_dt
-from brokerai.trading.broker.models import InstrumentExposure, PositionLot
+from brokerai.trading.broker.models import InstrumentExposure
 
 logger = logging.getLogger(__name__)
 
@@ -69,36 +70,82 @@ class InstrumentExposureRepository:
     COLLECTION = "instrument_exposure"
 
     async def upsert_rollup(self, exposure: InstrumentExposure, *, account_id: str) -> None:
+        """Idempotently write one exposure rollup.
+
+        Concurrent broker sync / secretary ticks can both observe a missing row and
+        race on INSERT against ``uq_instrument_exposure``. Retry on IntegrityError;
+        on Postgres also use ON CONFLICT so the losing writer updates instead of failing.
+        """
         now = datetime.now(timezone.utc)
-        doc = {
+        base_doc = {
             **exposure.to_dict(),
             "account_id": account_id,
             "updated_at": now,
         }
 
-        async with session_scope() as session:
-            stmt = select(InstrumentExposureRow).where(
-                InstrumentExposureRow.exchange_id == exposure.exchange_id,
-                InstrumentExposureRow.account_id == account_id,
-                InstrumentExposureRow.symbol == exposure.symbol,
-                InstrumentExposureRow.direction == exposure.direction,
-            )
-            row = (await session.execute(stmt)).scalar_one_or_none()
-            if row is None:
-                doc["created_at"] = now
-                session.add(
-                    InstrumentExposureRow(
-                        exchange_id=exposure.exchange_id,
-                        account_id=account_id,
-                        symbol=exposure.symbol,
-                        direction=exposure.direction,
-                        doc=doc,
+        for attempt in range(3):
+            try:
+                async with session_scope() as session:
+                    bind = session.get_bind()
+                    dialect = bind.dialect.name if bind is not None else ""
+
+                    row = (
+                        await session.execute(
+                            select(InstrumentExposureRow).where(
+                                InstrumentExposureRow.exchange_id == exposure.exchange_id,
+                                InstrumentExposureRow.account_id == account_id,
+                                InstrumentExposureRow.symbol == exposure.symbol,
+                                InstrumentExposureRow.direction == exposure.direction,
+                            )
+                        )
+                    ).scalar_one_or_none()
+
+                    if row is not None:
+                        existing = dict(row.doc)
+                        row.doc = {
+                            **base_doc,
+                            "created_at": existing.get("created_at", now),
+                        }
+                        return
+
+                    insert_doc = {**base_doc, "created_at": now}
+                    if dialect == "postgresql":
+                        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                        stmt = pg_insert(InstrumentExposureRow).values(
+                            exchange_id=exposure.exchange_id,
+                            account_id=account_id,
+                            symbol=exposure.symbol,
+                            direction=exposure.direction,
+                            doc=insert_doc,
+                        )
+                        stmt = stmt.on_conflict_do_update(
+                            constraint="uq_instrument_exposure",
+                            set_={"doc": stmt.excluded.doc},
+                        )
+                        await session.execute(stmt)
+                        return
+
+                    session.add(
+                        InstrumentExposureRow(
+                            exchange_id=exposure.exchange_id,
+                            account_id=account_id,
+                            symbol=exposure.symbol,
+                            direction=exposure.direction,
+                            doc=insert_doc,
+                        )
                     )
+                    return
+            except IntegrityError:
+                if attempt >= 2:
+                    raise
+                logger.debug(
+                    "instrument_exposure upsert race on %s %s %s %s — retrying",
+                    exposure.exchange_id,
+                    account_id,
+                    exposure.symbol,
+                    exposure.direction,
                 )
-            else:
-                existing = dict(row.doc)
-                doc["created_at"] = existing.get("created_at", now)
-                row.doc = doc
 
     async def recompute_for_account(
         self,
@@ -107,17 +154,28 @@ class InstrumentExposureRepository:
         account_id: str,
         open_lots: list[dict[str, Any]],
     ) -> int:
-        """Rebuild all exposure rollups for an account from open lot documents."""
-        async with session_scope() as session:
-            await session.execute(
-                delete(InstrumentExposureRow).where(
-                    InstrumentExposureRow.exchange_id == exchange_id,
-                    InstrumentExposureRow.account_id == account_id,
-                )
-            )
+        """Rebuild all exposure rollups for an account from open lot documents.
+
+        Upserts current keys first, then deletes orphans. Avoids delete-then-insert
+        windows that race under concurrent syncs.
+        """
         rollups = _rollup_from_lot_docs(open_lots, exchange_id=exchange_id)
+        keep_keys = {(rollup.symbol, rollup.direction) for rollup in rollups}
         for rollup in rollups:
             await self.upsert_rollup(rollup, account_id=account_id)
+
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(InstrumentExposureRow).where(
+                        InstrumentExposureRow.exchange_id == exchange_id,
+                        InstrumentExposureRow.account_id == account_id,
+                    )
+                )
+            ).scalars().all()
+            for row in rows:
+                if (row.symbol, row.direction) not in keep_keys:
+                    await session.delete(row)
         return len(rollups)
 
     async def list_for_account(

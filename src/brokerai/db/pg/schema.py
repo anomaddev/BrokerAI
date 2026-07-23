@@ -132,6 +132,31 @@ async def ensure_schema() -> None:
                     """
                 )
             )
+            # Dedupe overlapping worker writes, then enforce unique (run_id, sequence).
+            await conn.execute(
+                text(
+                    f"""
+                    DELETE FROM {SCHEMA}.backtest_actions a
+                    USING {SCHEMA}.backtest_actions b
+                    WHERE a.run_id = b.run_id
+                      AND a.sequence = b.sequence
+                      AND a.id > b.id
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    f"DROP INDEX IF EXISTS {SCHEMA}.ix_backtest_actions_run_sequence"
+                )
+            )
+            await conn.execute(
+                text(
+                    f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_backtest_actions_run_sequence
+                    ON {SCHEMA}.backtest_actions (run_id, sequence)
+                    """
+                )
+            )
             for statement in _PRIVACY_STATEMENTS:
                 await conn.execute(text(statement))
             for table in _RLS_TABLES:

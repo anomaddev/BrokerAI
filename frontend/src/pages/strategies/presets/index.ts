@@ -1,4 +1,4 @@
-import { LineChart, SlidersHorizontal } from "lucide-react";
+import { Brain, LineChart, SlidersHorizontal } from "lucide-react";
 import { ROUTES } from "../../../lib/routes";
 import { ALL_ASSET_CLASSES } from "../../../lib/strategies/instruments";
 import type { StrategyPreset } from "./types";
@@ -26,13 +26,23 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     tags: ["Trend"],
     locked: true,
   },
+  {
+    id: "ai_strategy",
+    label: "AI Strategy",
+    description:
+      "Model-derived strategy for a single forex pair. Created enabled — runs reports and improve backtests, then learns in shadow until you promote it to live. One AI Strategy per instrument.",
+    assetClasses: ["forex"],
+    enabledPills: [{ label: "Forex", assetClass: "forex" }],
+    route: ROUTES.research.strategyNew("ai-strategy"),
+    icon: Brain,
+    tags: ["AI"],
+    locked: true,
+  },
 ];
 
-/** Presets shown in the Build Strategy overlay (Custom always first). */
+/** Presets shown in the Build Strategy overlay (standard strategies only). */
 export function getBuildStrategyPresets(): StrategyPreset[] {
-  const custom = STRATEGY_PRESETS.find((p) => p.id === "custom");
-  const rest = STRATEGY_PRESETS.filter((p) => p.id !== "custom");
-  return custom ? [custom, ...rest] : [...STRATEGY_PRESETS];
+  return STRATEGY_PRESETS.filter((p) => p.id !== "ai_strategy");
 }
 
 export function getPresetById(id: string): StrategyPreset | undefined {

@@ -114,6 +114,10 @@ def _operation_label(operation: str) -> str:
         "weekly_brief": "Weekly brief",
         "weekly_debrief": "Weekly debrief",
         "backtest_ai_feedback": "Backtest AI feedback",
+        "ai_strategy_daily_feedback": "AI Strategy daily feedback",
+        "ai_strategy_decision": "AI Strategy decision",
+        "strategy_learn": "AI Strategy learning",
+        "strategy_startup_seed": "AI Strategy startup seed",
         "connection_test": "Connection test",
         "llm_call": "LLM call",
     }
@@ -780,25 +784,95 @@ async def analyze_with_model(
     reasoning_effort: str | None = None,
     cost_context: CostContext | None = None,
 ) -> str:
-    if model_type == "open_webui":
-        return await analyze_with_open_webui(
-            base_url,
-            model_name,
-            messages,
-            api_key,
-            reasoning_effort=reasoning_effort,
-            cost_context=cost_context,
-        )
-    if model_type in _OPENAI_COMPAT_TYPES:
-        label = _PROVIDER_LABELS.get(model_type, model_type)
-        return await analyze_openai_compatible(
-            base_url,
-            model_name,
-            messages,
-            api_key,
-            provider_label=label,
-            reasoning_effort=reasoning_effort,
+    """Run a chat completion behind the LLM spend gate (reserve → call → settle)."""
+    from brokerai.cost.llm_guard import (
+        LlmBudgetExceeded,
+        LlmCallRequest,
+        build_cache_key,
+        settle_llm_call,
+        should_call_llm,
+    )
+    from brokerai.cost.llm_pricing import estimate_llm_cost_usd
+    from brokerai.cost.llm_usage import LlmUsage
+
+    ctx = dict(cost_context or {})
+    operation = str(ctx.get("operation") or "llm_call")
+    billable = bool(ctx.get("billable", True))
+    # Connection tests are non-billable and must not be blocked by daily caps.
+    skip_gate = (not billable) or operation == "connection_test"
+
+    reservation_id: str | None = None
+    if not skip_gate:
+        import hashlib
+
+        payload_material = repr(messages)[:8000]
+        payload_hash = hashlib.sha256(payload_material.encode("utf-8")).hexdigest()
+        cache_key = build_cache_key(
+            operation=operation,
             provider_type=model_type,
-            cost_context=cost_context,
+            model_name=model_name,
+            entity_scope=str(ctx.get("strategy_id") or ctx.get("source") or "global"),
+            asof_id=str(ctx.get("asof_id") or ctx.get("backtest_run_id") or ctx.get("report_date") or "na"),
+            payload_hash=payload_hash,
         )
-    raise RuntimeError(f"Provider type '{model_type}' is not supported yet")
+        # Conservative pre-estimate: unknown pricing uses guard floor.
+        estimate, _ = estimate_llm_cost_usd(
+            model_type,
+            model_name,
+            LlmUsage(
+                input_tokens=2000,
+                output_tokens=1000,
+                total_tokens=3000,
+                raw_usage={},
+            ),
+        )
+        decision = await should_call_llm(
+            LlmCallRequest(
+                operation=operation,
+                source=str(ctx.get("source") or "llm"),
+                provider_type=model_type,
+                model_name=model_name,
+                cache_key=cache_key,
+                estimated_cost_usd=float(estimate or 0.0),
+                cost_context=ctx,
+            ),
+            fail_closed=True,
+        )
+        if not decision.allowed:
+            raise LlmBudgetExceeded(decision.reason or "budget_denied")
+        if decision.reason == "cache_hit" and decision.cached_content is not None:
+            return decision.cached_content
+        reservation_id = decision.reservation_id
+
+    try:
+        if model_type == "open_webui":
+            content = await analyze_with_open_webui(
+                base_url,
+                model_name,
+                messages,
+                api_key,
+                reasoning_effort=reasoning_effort,
+                cost_context=cost_context,
+            )
+        elif model_type in _OPENAI_COMPAT_TYPES:
+            label = _PROVIDER_LABELS.get(model_type, model_type)
+            content = await analyze_openai_compatible(
+                base_url,
+                model_name,
+                messages,
+                api_key,
+                provider_label=label,
+                reasoning_effort=reasoning_effort,
+                provider_type=model_type,
+                cost_context=cost_context,
+            )
+        else:
+            raise RuntimeError(f"Provider type '{model_type}' is not supported yet")
+    except Exception:
+        if reservation_id:
+            await settle_llm_call(reservation_id, actual_cost_usd=None, content=None, ok=False)
+        raise
+
+    if reservation_id:
+        await settle_llm_call(reservation_id, actual_cost_usd=None, content=content, ok=True)
+    return content

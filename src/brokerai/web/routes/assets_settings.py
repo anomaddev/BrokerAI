@@ -19,6 +19,7 @@ class AssetSettingsBody(BaseModel):
     pair_order: list[str] | None = None
     enabled_sessions: dict[str, bool] | None = None
     only_one_position_per_pair: bool | None = None
+    default_warmup_trading_days: int | None = Field(default=None, ge=1, le=60)
     primary_exchange: str | None = None
 
 
@@ -95,6 +96,9 @@ async def save_asset_settings(
                 body.only_one_position_per_pair if asset_class == "forex" else None
             ),
             primary_exchange=body.primary_exchange,
+            default_warmup_trading_days=(
+                body.default_warmup_trading_days if asset_class == "forex" else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

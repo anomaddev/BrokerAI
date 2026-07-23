@@ -6238,6 +6238,44 @@
   font-size: 0.9rem;
 }
 
+.strategy-builder-ai-intro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.65rem;
+  min-height: 16rem;
+  margin: 1rem;
+  padding: 1.25rem 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+}
+
+.strategy-builder-ai-intro-icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+.strategy-builder-ai-intro-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.strategy-builder-ai-intro-body {
+  margin: 0;
+  max-width: 36rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.strategy-builder-ai-intro-note {
+  margin: 0;
+  max-width: 36rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
 .backtest-overview-hero {
   padding: 0.9rem 1rem;
   border: 1px solid var(--border);
@@ -6822,5 +6860,321 @@
 
   .backtest-overview-hero-value {
     font-size: 1.45rem;
+  }
+}
+
+/* AI Strategy activity log */
+.ai-strategy-log {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 72rem;
+}
+
+.ai-strategy-log-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.ai-strategy-log-hero-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ai-strategy-log-back {
+  align-self: flex-start;
+}
+
+.ai-strategy-log-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.ai-strategy-log-actions .btn,
+.ai-strategy-log-back.btn {
+  min-height: 2.4rem;
+}
+
+.ai-strategy-log-title {
+  margin: 0.15rem 0 0;
+}
+
+.ai-strategy-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.ai-strategy-log-meta-sep {
+  opacity: 0.55;
+}
+
+.ai-strategy-log-live {
+  color: var(--accent);
+}
+
+.ai-strategy-log-subtitle {
+  margin: 0.15rem 0 0;
+  max-width: 48rem;
+}
+
+.ai-strategy-log-panel {
+  background: color-mix(in srgb, var(--panel, #141820) 92%, transparent);
+  border: 1px solid var(--border, #2a3140);
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem;
+}
+
+.ai-strategy-log-panel-header {
+  margin-bottom: 0.75rem;
+}
+
+.ai-strategy-log-panel-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.ai-strategy-log-startup-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.ai-strategy-log-startup-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.ai-strategy-log-status-message {
+  margin: 0.35rem 0 0;
+  line-height: 1.45;
+  font-size: 0.95rem;
+  max-width: 42rem;
+  color: var(--muted);
+}
+
+.ai-strategy-log-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ai-strategy-log-steps--row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.ai-strategy-log-step {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg, #0b0e13) 55%, transparent);
+}
+
+.ai-strategy-log-step-marker {
+  flex: 0 0 auto;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-top: 0.32rem;
+  border-radius: 50%;
+  background: var(--border, #8884);
+}
+
+.ai-strategy-log-step--done .ai-strategy-log-step-marker {
+  background: var(--success, #2a8f4c);
+}
+
+.ai-strategy-log-step--active .ai-strategy-log-step-marker {
+  background: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3b82f6) 25%, transparent);
+}
+
+.ai-strategy-log-step--failed .ai-strategy-log-step-marker {
+  background: var(--danger, #c44);
+}
+
+.ai-strategy-log-step-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.ai-strategy-log-step-label {
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.ai-strategy-log-step--pending .ai-strategy-log-step-label {
+  color: var(--muted);
+}
+
+.ai-strategy-log-step-detail {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.ai-strategy-log-live-hint {
+  margin: 0.7rem 0 0;
+  font-size: 0.8rem;
+}
+
+.ai-strategy-log-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-strategy-log-feed-row {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: 0.65rem 0.85rem;
+  align-items: start;
+  padding: 0.85rem 0;
+  border-top: 1px solid color-mix(in srgb, var(--border, #2a3140) 80%, transparent);
+}
+
+.ai-strategy-log-feed-row:first-child {
+  border-top: 0;
+  padding-top: 0.15rem;
+}
+
+.ai-strategy-log-feed-time {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  padding-top: 0.2rem;
+}
+
+.ai-strategy-log-feed-body {
+  min-width: 0;
+}
+
+.ai-strategy-log-feed-headline {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.65rem;
+  row-gap: 0.25rem;
+}
+
+.ai-strategy-log-feed-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.ai-strategy-log-feed-detail {
+  margin: 0.3rem 0 0;
+  padding-left: calc(5.5rem + 0.65rem);
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.ai-strategy-log-status--failed .ai-strategy-log-feed-title {
+  color: var(--danger, #c44);
+}
+
+.ai-strategy-log-status--active .ai-strategy-log-feed-title {
+  color: var(--text, inherit);
+}
+
+.ai-strategy-log-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.ai-strategy-log-link:hover {
+  text-decoration: underline;
+}
+
+.ai-strategy-log-kind {
+  font-size: 0.72rem;
+  justify-self: start;
+  width: fit-content;
+  text-align: center;
+}
+
+.ai-strategy-log-memory-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+}
+
+.ai-strategy-log-memory-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.ai-strategy-log-digest-summary {
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.ai-strategy-log-rules {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.ai-strategy-log-rules-toggle {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 820px) {
+  .ai-strategy-log-steps--row {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-strategy-log-feed-row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+
+  .ai-strategy-log-feed-headline {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ai-strategy-log-feed-detail {
+    padding-left: 0;
   }
 }

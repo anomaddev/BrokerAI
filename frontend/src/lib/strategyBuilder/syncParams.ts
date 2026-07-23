@@ -111,7 +111,7 @@ export function applyComponentsToBuilderFields(
   const { fastEma, slowEma } = emaPeriodsFromComponents(components);
   return {
     timeframe: primary?.timeframe ?? "M15",
-    minCandles: primary?.minCandles ?? 50,
+    minCandles: primary?.minCandles ?? 200,
     fastEma,
     slowEma,
     additionalTimeframes: additional?.timeframes ?? [],
@@ -198,7 +198,7 @@ export function mergeComponentsIntoParamsV1(
 
 export function componentsFromParamsV1(
   params: StrategyParamsV1,
-  fallbackMinCandles = 50,
+  fallbackMinCandles = 200,
 ): StrategyBuilderComponent[] {
   const primary = createPrimaryTimeframe(params.timeframe, params.min_candles ?? fallbackMinCandles);
   const additional =

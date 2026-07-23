@@ -285,7 +285,9 @@ class BacktestActionRow(Base):
 
     __tablename__ = "backtest_actions"
     __table_args__ = (
-        Index("ix_backtest_actions_run_sequence", "run_id", "sequence"),
+        UniqueConstraint(
+            "run_id", "sequence", name="uq_backtest_actions_run_sequence"
+        ),
         Index("ix_backtest_actions_run_bar", "run_id", "bar_time"),
         {"schema": "brokerai"},
     )
@@ -489,4 +491,223 @@ class OnboardingRow(Base):
     __table_args__ = {"schema": "brokerai"}
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default="default")
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class ShadowIntentRow(Base):
+    """Hypothetical trade intent during AI Strategy warm-up (not sent to broker)."""
+
+    __tablename__ = "shadow_intents"
+    __table_args__ = (
+        Index("ix_shadow_intents_strategy_pair", "strategy_id", "pair"),
+        Index("ix_shadow_intents_created", "created_at"),
+        UniqueConstraint(
+            "strategy_id",
+            "pair",
+            "entry_candle_open",
+            "direction",
+            name="uq_shadow_intents_natural",
+        ),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    pair: Mapped[str] = mapped_column(Text, nullable=False)
+    timeframe: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    analysis_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phase: Mapped[str] = mapped_column(Text, nullable=False, default="warming")
+    direction: Mapped[str] = mapped_column(Text, nullable=False)
+    entry_candle_open: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class ShadowLotRow(Base):
+    """Shadow position ledger isolated from broker_lots / OANDA reconcile."""
+
+    __tablename__ = "shadow_lots"
+    __table_args__ = (
+        Index("ix_shadow_lots_strategy_state", "strategy_id", "state"),
+        Index("ix_shadow_lots_pair_state", "pair", "state"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    pair: Mapped[str] = mapped_column(Text, nullable=False)
+    timeframe: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="open")
+    direction: Mapped[str] = mapped_column(Text, nullable=False)
+    shadow_intent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class TradeOutcomeRecordRow(Base):
+    """Append-only shadow/live trade outcomes for learning (Slice 1 writes shadow)."""
+
+    __tablename__ = "trade_outcome_records"
+    __table_args__ = (
+        Index("ix_trade_outcomes_strategy_exit", "strategy_id", "exit_ts"),
+        Index("ix_trade_outcomes_mode", "mode"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)  # shadow | live
+    pair: Mapped[str] = mapped_column(Text, nullable=False)
+    timeframe: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    direction: Mapped[str] = mapped_column(Text, nullable=False)
+    entry_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    exit_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class StrategyMemoryDigestRow(Base):
+    """Versioned compact memory digest for AI Strategy (standing/anti rules)."""
+
+    __tablename__ = "strategy_memory_digests"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_id",
+            "version",
+            name="uq_strategy_memory_digests_strategy_version",
+        ),
+        Index(
+            "ix_strategy_memory_digests_strategy_version",
+            "strategy_id",
+            "version",
+        ),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class LearningJobRow(Base):
+    """Batched outcome-learning jobs (never per-close LLM)."""
+
+    __tablename__ = "learning_jobs"
+    __table_args__ = (
+        Index("ix_learning_jobs_strategy_status", "strategy_id", "status"),
+        Index("ix_learning_jobs_status_created", "status", "created_at"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class AiStrategySettingsRow(Base):
+    """Singleton AI Strategy settings (startup sequence knobs)."""
+
+    __tablename__ = "ai_strategy_settings"
+    __table_args__ = {"schema": "brokerai"}
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default="default")
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class AiStrategyStartupJobRow(Base):
+    """Durable create-time AI Strategy startup workflow (reports → seed → loops)."""
+
+    __tablename__ = "ai_strategy_startup_jobs"
+    __table_args__ = (
+        Index("ix_ai_startup_jobs_strategy_status", "strategy_id", "status"),
+        Index("ix_ai_startup_jobs_status_created", "status", "created_at"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    strategy_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    phase: Mapped[str] = mapped_column(Text, nullable=False, default="ensuring_reports")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class StrategyGuidanceRow(Base):
+    """Structured research bias for AI Strategy (hot path; no markdown)."""
+
+    __tablename__ = "strategy_guidance"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_type",
+            "source_key",
+            "symbol",
+            name="uq_strategy_guidance_source_symbol",
+        ),
+        Index("ix_strategy_guidance_symbol_as_of", "symbol", "as_of_date"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_key: Mapped[str] = mapped_column(Text, nullable=False)
+    symbol: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    as_of_date: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="ok")
+    parsed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class LlmBudgetSettingsRow(Base):
+    """Singleton LLM spend controls."""
+
+    __tablename__ = "llm_budget_settings"
+    __table_args__ = {"schema": "brokerai"}
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default="default")
+    doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)
+
+
+class LlmBudgetDayRow(Base):
+    """ET calendar-day spend / reserved totals."""
+
+    __tablename__ = "llm_budget_days"
+    __table_args__ = {"schema": "brokerai"}
+
+    day_et: Mapped[str] = mapped_column(Text, primary_key=True)
+    spent_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reserved_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deny_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LlmCallReservationRow(Base):
+    """Idempotent LLM call reservation / cache."""
+
+    __tablename__ = "llm_call_reservations"
+    __table_args__ = (
+        UniqueConstraint("cache_key", name="uq_llm_call_reservations_cache_key"),
+        Index("ix_llm_call_reservations_day_status", "day_et", "status"),
+        {"schema": "brokerai"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    cache_key: Mapped[str] = mapped_column(Text, nullable=False)
+    day_et: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="reserved")
+    estimated_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    actual_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    operation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     doc: Mapped[dict[str, Any]] = mapped_column(JsonType, nullable=False)

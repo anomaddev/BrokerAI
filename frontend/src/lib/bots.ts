@@ -20,6 +20,7 @@ export type BotStatusItem = {
   started_at?: string | null;
   last_error?: string | null;
   next_candle_fetches?: Record<string, string>;
+  analysis_candle_timeframes?: string[];
 };
 
 export function formatBotName(name: string): string {
@@ -132,6 +133,43 @@ export function overallStatusTone(status: OverallBotStatus): OverallBotStatus {
   return status;
 }
 
+export type BotErrorDetail = {
+  name: string;
+  message: string | null;
+};
+
+/** Error-state bots in display order, with optional last_error text. */
+export function listBotErrors(bots: BotStatusItem[]): BotErrorDetail[] {
+  return sortBots(bots)
+    .filter((bot) => bot.state === "error")
+    .map((bot) => ({
+      name: formatBotName(bot.name),
+      message: bot.last_error?.trim() || null,
+    }));
+}
+
+/** Compact one-line summary for the top status bar when overall status is error. */
+export function formatOverallErrorSummary(bots: BotStatusItem[]): string | null {
+  const errors = listBotErrors(bots);
+  if (errors.length === 0) return null;
+
+  const first = errors[0];
+  const head = first.message ? `${first.name}: ${first.message}` : `${first.name} reported an error.`;
+  if (errors.length === 1) return head;
+  return `${head} (+${errors.length - 1} more)`;
+}
+
+/** Full multi-line error text for clipboard copy. */
+export function formatBotErrorsForClipboard(bots: BotStatusItem[]): string | null {
+  const errors = listBotErrors(bots);
+  if (errors.length === 0) return null;
+  return errors
+    .map((error) =>
+      error.message ? `${error.name}: ${error.message}` : `${error.name} reported an error.`,
+    )
+    .join("\n");
+}
+
 export function resolveOverallStatusTooltip(input: {
   status: OverallBotStatus;
   bots: BotStatusItem[];
@@ -141,7 +179,16 @@ export function resolveOverallStatusTooltip(input: {
   const title = `Bot: ${overallStatusLabel(input.status)}`;
   const lines: string[] = [];
 
-  if (input.status === "sleeping") {
+  if (input.status === "error") {
+    const errors = listBotErrors(input.bots);
+    if (errors.length === 0) {
+      lines.push("One or more modules reported an error.");
+    } else {
+      for (const error of errors) {
+        lines.push(error.message ? `${error.name}: ${error.message}` : `${error.name} reported an error.`);
+      }
+    }
+  } else if (input.status === "sleeping") {
     lines.push("Forex markets are closed.");
   } else if (input.status === "waiting") {
     lines.push("Forex is open — no enabled trading session is active.");
@@ -160,11 +207,6 @@ export function resolveOverallStatusTooltip(input: {
     lines.push(
       ...sortedBots.map((bot) => `${formatBotName(bot.name)}: ${botStateLabel(bot.state)}`),
     );
-  }
-
-  const errorBot = sortedBots.find((bot) => bot.state === "error" && bot.last_error?.trim());
-  if (errorBot?.last_error?.trim()) {
-    lines.push(errorBot.last_error.trim());
   }
 
   return { title, lines };

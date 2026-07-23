@@ -72,11 +72,21 @@ function setByPath(params: StrategyParamsV1, path: string, value: unknown): void
   cur[parts[parts.length - 1]] = value;
 }
 
+/** Daily AI Strategy playbook runs feed memory digests — never the EMA builder. */
+export function isAiStrategyDailyOrigin(origin: string | null | undefined): boolean {
+  return origin === "ai_strategy_daily";
+}
+
 export function applySuggestionsToParams(
   params: StrategyParamsV1,
   suggestions: AiFeedbackSuggestion[],
   selectedIds?: Set<string>,
+  options?: { origin?: string | null },
 ): StrategyParamsV1 {
+  if (isAiStrategyDailyOrigin(options?.origin)) {
+    // Memory-oriented daily feedback must not patch builder params.
+    return structuredClone(params);
+  }
   const result = structuredClone(params);
   for (const suggestion of suggestions) {
     if (selectedIds && !selectedIds.has(suggestion.id)) continue;

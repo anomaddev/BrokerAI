@@ -5,8 +5,10 @@ import { ROUTES } from "../../lib/routes";
 import { clearBacktestAiDraft, loadBacktestAiDraft } from "../../lib/backtests/applyAiSuggestions";
 import EmaCrossoverBuilder from "./presets/emaCrossover/EmaCrossoverBuilder";
 import CustomBuilder from "./presets/custom/CustomBuilder";
+import AiStrategyBuilder from "./presets/aiStrategy/AiStrategyBuilder";
 import { v1ToEmaCrossoverParams } from "./presets/emaCrossover/apiParams";
 import { v1ToCustomBuilderParams } from "./presets/custom/defaults";
+import { v1ToAiStrategyParams } from "./presets/aiStrategy/apiParams";
 
 export default function StrategyEditPage() {
   const { id } = useParams<{ id: string }>();
@@ -51,7 +53,9 @@ export default function StrategyEditPage() {
 
   if (!id) return <Navigate to={ROUTES.research.strategies} replace />;
   if (loading) return <div className="center-page">Loading strategy…</div>;
-  if (error || !strategy) return <Navigate to={ROUTES.research.strategies} replace />;
+  if (error || !strategy) {
+    return <Navigate to={ROUTES.research.strategies} replace />;
+  }
 
   const params = draftParams ?? strategy.params;
 
@@ -95,5 +99,27 @@ export default function StrategyEditPage() {
     );
   }
 
-  return <Navigate to={ROUTES.research.strategies} replace />;
+  if (strategy.preset_id === "ai_strategy" && params) {
+    return (
+      <>
+        {banner}
+        <AiStrategyBuilder
+          {...commonProps}
+          initialParams={v1ToAiStrategyParams(params)}
+          initialParamsV1={params}
+        />
+      </>
+    );
+  }
+
+  return (
+    <Navigate
+      to={
+        strategy.preset_id === "ai_strategy"
+          ? ROUTES.research.aiStrategies
+          : ROUTES.research.strategies
+      }
+      replace
+    />
+  );
 }

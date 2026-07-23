@@ -66,6 +66,15 @@ def test_build_queued_run_document_snapshots_strategy():
     assert doc["progress_pct"] == 0.0
 
 
+def test_build_queued_run_document_persists_loop_mode():
+    doc = build_queued_run_document(_sample_strategy(), loop_mode="explore")
+    assert doc["loop_mode"] == "explore"
+    payload = serialize_backtest_run(doc)
+    assert payload["loop_mode"] == "explore"
+    ignored = build_queued_run_document(_sample_strategy(), loop_mode="nope")
+    assert ignored["loop_mode"] is None
+
+
 def test_build_queued_run_document_persists_account_margin():
     doc = build_queued_run_document(_sample_strategy(), account_margin=50_000)
     assert doc["account_margin"] == 50_000.0

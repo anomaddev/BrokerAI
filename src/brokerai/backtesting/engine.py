@@ -48,6 +48,10 @@ HEARTBEAT_INTERVAL_S = 1.5
 HEARTBEAT_EVERY_N_BARS = 25
 ACTION_FLUSH_SIZE = 50
 
+
+class LostWorkerClaim(RuntimeError):
+    """Raised when another worker stole the exclusive lease for this run."""
+
 # Re-export for callers/tests that historically imported from this module.
 __all__ = ("blocks_same_bar_entry", "run_backtest_engine")
 
@@ -162,12 +166,14 @@ async def run_backtest_engine(
     log: logging.Logger,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     candles_override: list[dict[str, Any]] | None = None,
+    worker_token: str | None = None,
 ) -> dict[str, Any]:
     """Execute a full backtest for *run_doc*. Returns finish payload fields."""
     ensure_trading_registries()
     runs_repo = BacktestRunsRepository()
     actions_repo = BacktestActionsRepository()
     run_id = str(run_doc["id"])
+    claim_token = (worker_token or "").strip() or None
     strategy_id = str(run_doc.get("strategy_id") or "")
     pair = str(run_doc.get("instrument") or (run_doc.get("instruments") or [None])[0] or "")
     if not pair:
@@ -303,19 +309,27 @@ async def run_backtest_engine(
     total_bars = max(1, len(all_candles) - period_start_idx)
     last_stop_exit_time: str | None = None
     cooldown_bars = int((params.get("execution") or {}).get("post_stop_cooldown_bars") or 0)
+    # Explore loops (AI Strategy startup loop 0) emit signals only — no fills.
+    signal_only = str(run_doc.get("loop_mode") or "").strip().lower() == "explore"
 
     # Seed live stats so the UI shows 0s instead of blanks while the bar loop runs.
-    await runs_repo.update_progress(
+    seeded = await runs_repo.update_progress(
         run_id,
         progress_pct=2,
-        status_message="Simulating",
+        status_message="Exploring patterns" if signal_only else "Simulating",
         stats=compute_stats([], equity_curve=[], initial_equity=account_margin),
+        worker_token=claim_token,
     )
+    if claim_token and not seeded:
+        raise LostWorkerClaim(f"lost worker claim for backtest {run_id}")
 
     async def flush_actions() -> None:
         nonlocal action_buffer
         if not action_buffer:
             return
+        if claim_token and not await runs_repo.worker_owns(run_id, claim_token):
+            action_buffer = []
+            raise LostWorkerClaim(f"lost worker claim for backtest {run_id}")
         batch = action_buffer
         action_buffer = []
         await actions_repo.insert_many(run_id, batch)
@@ -387,13 +401,17 @@ async def run_backtest_engine(
                 last_stop_exit_time = through_time
 
         # 2) Live-parity analysis on the prefix window.
-        analysis = run_strategy_analysis(
+        # AI Strategy live LLM must never run inside historical bar loops —
+        # catchup=True fail-closes ModelSignalRuntime (compiled_playbook is unaffected).
+        signal_type = str((params.get("signal") or {}).get("type") or "")
+        analysis_catchup = signal_type == "ai_strategy"
+        analysis = await run_strategy_analysis(
             strategy,
             pair,
             window,
             indicators,
             timeframe=timeframe,
-            catchup=False,
+            catchup=analysis_catchup,
         )
 
         open_pairs = {pair} if sim.has_open_position() else set()
@@ -439,8 +457,10 @@ async def run_backtest_engine(
         # Live-parity: approaching / none signals are watch-only and must not enter.
         # Without this gate, backtests opened trades with no preceding SIGNAL action,
         # so the next real crossover looked "out of order" after an orphan ENTRY.
+        # Explore loops skip fills entirely (pattern pass / signal_only).
         if (
-            gate_passed
+            not signal_only
+            and gate_passed
             and is_executor_eligible(analysis)
             and not sim.has_open_position()
         ):
@@ -484,17 +504,20 @@ async def run_backtest_engine(
                 equity_curve=sim.equity_curve,
                 initial_equity=account_margin,
             )
-            await runs_repo.update_progress(
+            ok = await runs_repo.update_progress(
                 run_id,
                 progress_pct=pct,
                 current_bar=_candle_dt(candle),
                 status_message=f"Processing {through_time}",
                 stats=live_stats,
+                worker_token=claim_token,
             )
+            if claim_token and not ok:
+                raise LostWorkerClaim(f"lost worker claim for backtest {run_id}")
             last_heartbeat = now
 
     # Force-close any open position at the last bar close.
-    if sim.has_open_position() and all_candles:
+    if (not signal_only) and sim.has_open_position() and all_candles:
         last = all_candles[-1]
         closed = sim._close(
             price=float(last["close"]),

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, History, Minus, Plus, Trash2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api, type AssetClass, type Strategy } from "../api/client";
+import {
+  api,
+  type AiStrategyStartupJob,
+  type AssetClass,
+  type Strategy,
+  type StrategyExecutionPhase,
+} from "../api/client";
 import { ROUTES } from "../lib/routes";
 import AssetClassFilterSelect from "../components/AssetClassFilterSelect";
 import CreateStrategyOverlay from "../components/strategies/CreateStrategyOverlay";
@@ -9,6 +15,7 @@ import QueueBacktestOverlay, {
   type QueueBacktestParams,
 } from "../components/strategies/QueueBacktestOverlay";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
+import { startupStatusLabel } from "../lib/aiStrategy/activityLabels";
 import {
   backtestStatusLabel,
   normalizeBacktestStatus,
@@ -68,6 +75,29 @@ function pnlClass(value: number): string {
   return "strategy-stat--neutral";
 }
 
+function executionPhaseLabel(phase: StrategyExecutionPhase): string {
+  if (phase === "warming") return "Warming";
+  if (phase === "ready") return "Ready";
+  return "Live";
+}
+
+
+function isAiStrategy(strategy: Strategy): boolean {
+  return strategy.preset_id === "ai_strategy";
+}
+
+function warmupProgressLabel(strategy: Strategy): string | null {
+  if (strategy.preset_id !== "ai_strategy") return null;
+  if (strategy.execution_phase !== "warming" && strategy.execution_phase !== "ready") {
+    return null;
+  }
+  const completed = Number(strategy.warmup?.completed_days ?? 0);
+  const targetRaw = strategy.warmup?.target_days;
+  const target =
+    targetRaw == null || Number(targetRaw) <= 0 ? "?" : String(Math.max(1, Number(targetRaw)));
+  return `${completed}/${target} ET days`;
+}
+
 function normalizeStrategies(apiStrategies: Strategy[]): Strategy[] {
   return apiStrategies.map((strategy) => ({
     ...strategy,
@@ -106,9 +136,16 @@ function SortableHeader({ label, sortKey, activeKey, direction, onSort }: Sortab
   );
 }
 
-export default function Strategies() {
+export type StrategiesListVariant = "standard" | "ai";
+
+type StrategiesProps = {
+  variant?: StrategiesListVariant;
+};
+
+export default function Strategies({ variant = "standard" }: StrategiesProps) {
   const navigate = useNavigate();
   const { formatInstant } = useGeneralSettings();
+  const isAiList = variant === "ai";
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -124,19 +161,69 @@ export default function Strategies() {
   const [backtestOverlayError, setBacktestOverlayError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<StrategySortKey>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [promotingId, setPromotingId] = useState<string | null>(null);
+  const [startupJobs, setStartupJobs] = useState<Record<string, AiStrategyStartupJob>>({});
   const selectAllRef = useRef<HTMLInputElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api
       .listStrategies()
-      .then((data) => setStrategies(normalizeStrategies(data.strategies)))
+      .then((data) => {
+        const all = normalizeStrategies(data.strategies);
+        setStrategies(
+          isAiList ? all.filter(isAiStrategy) : all.filter((strategy) => !isAiStrategy(strategy)),
+        );
+      })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Failed to load strategies");
         setStrategies([]);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [isAiList]);
+
+  useEffect(() => {
+    if (!isAiList) {
+      setStartupJobs({});
+      return;
+    }
+    const aiIds = strategies.filter(isAiStrategy).map((strategy) => strategy.id);
+    if (aiIds.length === 0) {
+      setStartupJobs({});
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadStartupJobs() {
+      const entries = await Promise.all(
+        aiIds.map(async (id) => {
+          try {
+            const response = await api.getStrategyStartup(id);
+            return [id, response.job] as const;
+          } catch {
+            return [id, null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const next: Record<string, AiStrategyStartupJob> = {};
+      for (const [id, job] of entries) {
+        if (job) next[id] = job;
+      }
+      setStartupJobs(next);
+    }
+
+    void loadStartupJobs();
+    const timer = window.setInterval(() => {
+      void loadStartupJobs();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [strategies, isAiList]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -158,6 +245,14 @@ export default function Strategies() {
     });
     return sortStrategies(matched, sortKey, sortDirection);
   }, [strategies, query, assetClassFilter, sortKey, sortDirection]);
+
+  function handleBuildClick() {
+    if (isAiList) {
+      navigate(ROUTES.research.strategyNew("ai-strategy"));
+      return;
+    }
+    setCreateOpen(true);
+  }
 
   const filteredIds = useMemo(() => filtered.map((strategy) => strategy.id), [filtered]);
   const selectedFilteredCount = useMemo(
@@ -385,26 +480,50 @@ export default function Strategies() {
   }
 
   function openStrategy(strategy: Strategy) {
+    if (isAiStrategy(strategy)) {
+      navigate(ROUTES.research.aiStrategyView(strategy.id));
+      return;
+    }
     navigate(ROUTES.research.strategyEdit(strategy.id));
+  }
+
+  async function promoteStrategy(strategy: Strategy) {
+    if (strategy.execution_phase !== "ready" || promotingId) return;
+    setPromotingId(strategy.id);
+    setBulkError(null);
+    try {
+      const updated = await api.promoteStrategy(strategy.id);
+      setStrategies((current) =>
+        current.map((row) => (row.id === updated.id ? { ...row, ...updated } : row)),
+      );
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "Could not promote strategy");
+    } finally {
+      setPromotingId(null);
+    }
   }
 
   const hasFilteredResults = filtered.length > 0;
   const hasSelection = selectedFilteredCount > 0;
   const emptyMessage = loading
-    ? "Loading strategies…"
+    ? isAiList
+      ? "Loading AI strategies…"
+      : "Loading strategies…"
     : error
       ? error
       : strategies.length === 0
-        ? "No strategies yet. Use Build Strategy to create your first one."
+        ? isAiList
+          ? "No AI Strategies yet. Build one for a single forex pair — it starts enabled, runs reports and backtests, then learns in shadow until you promote it."
+          : "No strategies yet. Use Build Strategy to create your first one."
         : "No strategies match your filters.";
 
   return (
     <div>
       <div className="strategy-list-header">
-        <h1 className="page-title">Strategies</h1>
-        <button type="button" className="btn" onClick={() => setCreateOpen(true)}>
+        <h1 className="page-title">{isAiList ? "AI Strategies" : "Strategies"}</h1>
+        <button type="button" className="btn" onClick={handleBuildClick}>
           <Plus size={16} aria-hidden />
-          Build Strategy
+          {isAiList ? "Build AI Strategy" : "Build Strategy"}
         </button>
       </div>
 
@@ -687,13 +806,51 @@ export default function Strategies() {
                       </td>
                       <td>{strategy.asset_class_label}</td>
                       <td>
-                        <span
-                          className={`research-tag strategy-status--${
-                            strategy.enabled ? "enabled" : "disabled"
-                          }`}
-                        >
-                          {strategy.enabled ? "Enabled" : "Disabled"}
-                        </span>
+                        <div className="strategy-status-cell">
+                          <span
+                            className={`research-tag strategy-status--${
+                              strategy.enabled ? "enabled" : "disabled"
+                            }`}
+                          >
+                            {strategy.enabled ? "Enabled" : "Disabled"}
+                          </span>
+                          {strategy.execution_phase ? (
+                            <span
+                              className={`research-tag strategy-phase--${strategy.execution_phase}`}
+                              title={
+                                warmupProgressLabel(strategy)
+                                  ? `Warm-up ${warmupProgressLabel(strategy)}`
+                                  : undefined
+                              }
+                            >
+                              {executionPhaseLabel(strategy.execution_phase)}
+                              {warmupProgressLabel(strategy)
+                                ? ` · ${warmupProgressLabel(strategy)}`
+                                : ""}
+                            </span>
+                          ) : null}
+                          {startupJobs[strategy.id] ? (
+                            <span
+                              className={`research-tag strategy-startup--${startupJobs[strategy.id].status}`}
+                              title={startupJobs[strategy.id].error || undefined}
+                            >
+                              {startupStatusLabel(startupJobs[strategy.id])}
+                            </span>
+                          ) : null}
+                          {strategy.execution_phase === "ready" ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm strategy-promote-btn"
+                              disabled={promotingId === strategy.id || bulkPending}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void promoteStrategy(strategy);
+                              }}
+                            >
+                              {promotingId === strategy.id ? "Promoting…" : "Promote"}
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                       <td>
                         <span className={`research-tag strategy-backtest--${backtestStatus}`}>

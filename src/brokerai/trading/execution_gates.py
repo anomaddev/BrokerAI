@@ -266,10 +266,19 @@ def passes_execution_gates(
 
 def resolve_priority_conflicts(
     candidates: list[tuple[AnalysisResult, dict[str, Any]]],
+    *,
+    strategies_by_id: dict[str, dict] | None = None,
 ) -> list[tuple[AnalysisResult, dict[str, Any]]]:
-    """Pick winning analysis per pair when multiple strategies signal."""
+    """Pick winning analysis per pair when multiple strategies signal.
+
+    Warming/ready AI Strategies never win the *live* dispatch slot so they
+    cannot starve live EMA (or other live) strategies. They may still produce
+    shadow intents via a separate dispatch path.
+    """
     if not candidates:
         return []
+
+    from brokerai.ai_strategy.shadow_dispatch import strategy_allows_live_dispatch
 
     by_pair: dict[str, list[tuple[AnalysisResult, dict[str, Any]]]] = {}
     for result, params in candidates:
@@ -285,6 +294,16 @@ def resolve_priority_conflicts(
         ]
         pool = overrides or entries
         pool.sort(key=lambda entry: int((entry[1].get("execution") or {}).get("priority", 50)))
-        winners.append(pool[0])
+
+        live_pool = [
+            entry
+            for entry in pool
+            if strategy_allows_live_dispatch((strategies_by_id or {}).get(entry[0].strategy_id))
+        ]
+        if live_pool:
+            winners.append(live_pool[0])
+        else:
+            # Only shadow-phase strategies gated — pick one for shadow recording.
+            winners.append(pool[0])
 
     return winners

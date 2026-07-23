@@ -140,15 +140,19 @@ const BASE_DEFAULTS = {
 
 export const DEFAULT_EMA_CROSSOVER_PARAMS: EmaCrossoverParams = {
   ...BASE_DEFAULTS,
-  minCandles: computeBuilderMinCandles({
-    fastEma: BASE_DEFAULTS.fastEma,
-    slowEma: BASE_DEFAULTS.slowEma,
-    adxFilter: BASE_DEFAULTS.adxFilter,
-    atrFilter: BASE_DEFAULTS.atrFilter,
-    adxPeriod: BASE_DEFAULTS.adxPeriod,
-    atrPeriod: BASE_DEFAULTS.atrPeriod,
-    slStructureLookback: BASE_DEFAULTS.slStructureLookback,
-  }),
+  // Floor above indicator warmup so new strategies have a consistent lookback.
+  minCandles: Math.max(
+    200,
+    computeBuilderMinCandles({
+      fastEma: BASE_DEFAULTS.fastEma,
+      slowEma: BASE_DEFAULTS.slowEma,
+      adxFilter: BASE_DEFAULTS.adxFilter,
+      atrFilter: BASE_DEFAULTS.atrFilter,
+      adxPeriod: BASE_DEFAULTS.adxPeriod,
+      atrPeriod: BASE_DEFAULTS.atrPeriod,
+      slStructureLookback: BASE_DEFAULTS.slStructureLookback,
+    }),
+  ),
 };
 
 export { SESSION_OPTIONS };

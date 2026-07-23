@@ -158,6 +158,24 @@ async def test_insert_from_result_retries_after_duplicate_key_error():
     assert listed[0]["run_type"] == "manual"
 
 
+@pytest.mark.asyncio
+async def test_insert_dedupes_naive_and_aware_candle_times():
+    """Postgres stores timestamptz; naive UTC keys must still match."""
+    repo = StrategyAnalysisRunsRepository()
+    naive = datetime(2026, 7, 22, 5, 0)
+    aware = datetime(2026, 7, 22, 5, 0, tzinfo=timezone.utc)
+    nano = "2026-07-22T05:00:00.000000000Z"
+
+    first = await repo.insert_from_result(_sample_result(), candle_time=naive)
+    second = await repo.insert_from_result(_sample_result(), candle_time=aware)
+    third = await repo.insert_from_result(_sample_result(), candle_time=nano)
+
+    assert second["id"] == first["id"]
+    assert third["id"] == first["id"]
+    listed = await repo.list_recent(strategy_id="strategy-1", limit=10)
+    assert len(listed) == 1
+
+
 def test_serialize_analysis_run_formats_datetimes():
     doc = analysis_result_to_document(
         _sample_result(),
