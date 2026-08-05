@@ -83,6 +83,25 @@ def print_help(version: str, topic: str | None = None) -> None:
                     "brokerai research test-model [--json]",
                 ]
             ),
+            "candles": "\n".join(
+                [
+                    "brokerai candles sync --symbol PAIR --timeframe TF [--json]",
+                    "brokerai candles backfill --symbol PAIR --timeframe TF --start DATE [--end DATE]",
+                    "brokerai candles status [--symbol PAIR] [--timeframe TF] [--json]",
+                ]
+            ),
+            "backtest": "\n".join(
+                [
+                    "brokerai backtest strategies [--json]",
+                    "brokerai backtest list [--strategy-id ID] [--status STATUS] [--limit N] [--json]",
+                    "brokerai backtest show <run_id> [--json]",
+                    "brokerai backtest run --strategy-id ID [--instrument PAIR] [--period 1m|3m|6m|1y|2y|5y]",
+                    "                     [--margin USD] [--name LABEL] [--verbose] [--json]",
+                    "                     [--step] [--break-on action,signal,entry,exit,bar,filter_fail]",
+                    "                     [--until TIME] [--pdb]",
+                    "brokerai backtest run --run-id ID [--step] [--break-on …] [--pdb]",
+                ]
+            ),
         }
         detail = topics.get(topic)
         if detail is None:
@@ -109,6 +128,10 @@ Commands:
   research show       Print a research report
   research test-news  Test NewsAPI connection
   research test-model Test selected research model
+  backtest strategies List strategies available for backtests
+  backtest list       List recent backtest runs
+  backtest show       Show one backtest run
+  backtest run        Run a backtest in-process (optional --step / --pdb)
   update check        Check for available updates (exit 1 if available)
   update apply        Apply updates now (requires root)
   services status     Show systemd service status
@@ -123,11 +146,14 @@ Examples:
   brokerai bots list
   brokerai bots stop research
   brokerai research run-daily --force
+  brokerai backtest run --strategy-id <id> --instrument EUR/USD --period 1m --step
+  brokerai backtest run --strategy-id <id> --break-on signal,entry,exit --step
   brokerai run data-manager --interval 10
   brokerai run data-manager --once
   brokerai update check
   sudo brokerai update apply
   brokerai help bots
+  brokerai help backtest
 
 Notes:
   Bot control requires the orchestrator to be running.
