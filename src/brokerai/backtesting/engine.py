@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from datetime import datetime, timezone
@@ -162,8 +163,19 @@ async def run_backtest_engine(
     log: logging.Logger,
     cancel_check: Callable[[], Awaitable[bool]] | None = None,
     candles_override: list[dict[str, Any]] | None = None,
+    on_bar: Callable[[Any], Awaitable[Any] | Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute a full backtest for *run_doc*. Returns finish payload fields."""
+    """Execute a full backtest for *run_doc*. Returns finish payload fields.
+
+    Parameters
+    ----------
+    on_bar:
+        Optional hook invoked after each evaluation bar is fully processed
+        (exits, analysis, gates, entry, equity mark). May be sync or async.
+        Return ``"cancel"`` / ``StepAction.CANCEL`` to abort like a cancel
+        request. See :mod:`brokerai.backtesting.debug` for the snapshot type
+        and interactive stepper.
+    """
     ensure_trading_registries()
     runs_repo = BacktestRunsRepository()
     actions_repo = BacktestActionsRepository()
@@ -466,6 +478,55 @@ async def run_backtest_engine(
                 log.info(action_buffer[-1]["message"])
 
         sim.mark_equity(candle)
+
+        # Capture actions emitted on this bar before the flush clears them.
+        bar_actions = [
+            action
+            for action in action_buffer
+            if str(action.get("bar_time") or "") == through_time
+        ]
+
+        if on_bar is not None:
+            # Local import avoids a circular dependency at module load time.
+            from brokerai.backtesting.debug import (
+                BacktestBarSnapshot,
+                StepAction,
+                serialize_position,
+            )
+
+            done_for_snap = i - period_start_idx + 1
+            snapshot = BacktestBarSnapshot(
+                bar_index=i,
+                period_start_idx=period_start_idx,
+                bars_done=done_for_snap,
+                total_bars=total_bars,
+                bar_time=through_time,
+                candle=candle,
+                analysis=analysis,
+                gate_passed=gate_passed,
+                gate_reasons=list(gate_reasons),
+                gate_details=dict(gate_details),
+                closed_trade=closed,
+                position=serialize_position(sim.position),
+                actions=list(bar_actions),
+                equity=float(sim.equity_curve[-1]["equity"]) if sim.equity_curve else float(sim.equity),
+                closed_trade_count=len(sim.closed_trades),
+            )
+            decision = on_bar(snapshot)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            if decision == StepAction.CANCEL or decision == "cancel":
+                await flush_actions()
+                return {
+                    "status": "cancelled",
+                    "stats": compute_stats(
+                        sim.closed_trades,
+                        equity_curve=sim.equity_curve,
+                        initial_equity=account_margin,
+                    ),
+                    "equity_curve": downsample_equity_curve(sim.equity_curve),
+                    "status_message": "Cancelled",
+                }
 
         if len(action_buffer) >= ACTION_FLUSH_SIZE:
             await flush_actions()

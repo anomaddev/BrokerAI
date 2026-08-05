@@ -20,6 +20,7 @@ from brokerai.cli.helpers import (
 from brokerai.cli.output import print_bot_result, print_bots, print_help, print_json, print_status
 from brokerai.cli.research import register_research_commands
 from brokerai.cli.candles import register_candles_commands
+from brokerai.cli.backtest import register_backtest_commands
 from brokerai.config.settings import get_settings
 from brokerai.core.control import ControlClient, ControlError, ControlTimeout
 from brokerai.core.orchestrator import run_orchestrator
@@ -140,7 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     help_cmd = sub.add_parser("help", help="Show help")
-    help_cmd.add_argument("topic", nargs="?", help="Command group (status, bots, update, services, run, version, research)")
+    help_cmd.add_argument(
+        "topic",
+        nargs="?",
+        help="Command group (status, bots, update, services, run, version, research, candles, backtest)",
+    )
     help_cmd.set_defaults(func=_cmd_help)
 
     status = sub.add_parser("status", help="Show orchestrator and bot status")
@@ -188,6 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_research_commands(sub)
     register_candles_commands(sub)
+    register_backtest_commands(sub)
 
     version = sub.add_parser("version", help="Show version information")
     version.add_argument("--json", action="store_true")
