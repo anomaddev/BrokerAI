@@ -16,6 +16,18 @@
   --chart-grid: rgba(45, 58, 79, 0.4);
   --panel-width: 400px;
   --app-chrome-height: 3.5rem;
+  /* Mobile chrome height (sessions bar hidden; keep compact single row). */
+  --app-chrome-height-mobile: 3.5rem;
+  /*
+   * App chrome switches to hamburger + drawer at this width.
+   * CSS @media queries must use the literal 768px (custom props are invalid in media queries);
+   * keep JS in sync via MOBILE_BREAKPOINT_PX in hooks/useMediaQuery.ts.
+   */
+  --bp-mobile: 768px;
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
   --radius-sm: 6px;
   --radius-md: 10px;
 }

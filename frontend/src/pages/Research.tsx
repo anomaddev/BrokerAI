@@ -392,7 +392,7 @@ export default function Research() {
                   <th>Type</th>
                   <th>Model</th>
                   <th>Generated</th>
-                  <th>File</th>
+                  <th className="research-file-col">File</th>
                   <th className="research-actions-col">Actions</th>
                 </tr>
               </thead>

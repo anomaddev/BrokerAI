@@ -74,12 +74,24 @@ type SortableHeaderProps = {
   activeKey: BacktestRunSortKey;
   direction: SortDirection;
   onSort: (key: BacktestRunSortKey) => void;
+  className?: string;
 };
 
-function SortableHeader({ label, sortKey, activeKey, direction, onSort }: SortableHeaderProps) {
+function SortableHeader({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+  className,
+}: SortableHeaderProps) {
   const active = activeKey === sortKey;
   return (
-    <th scope="col" aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+    <th
+      scope="col"
+      className={className}
+      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}
+    >
       <button
         type="button"
         className={`strategy-table-sort-btn${active ? " strategy-table-sort-btn--active" : ""}`}
@@ -528,6 +540,7 @@ export default function Backtesting() {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-sticky"
                 />
                 <SortableHeader
                   label="Strategy"
@@ -549,6 +562,7 @@ export default function Backtesting() {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Status"
@@ -563,6 +577,7 @@ export default function Backtesting() {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Finished"
@@ -570,6 +585,7 @@ export default function Backtesting() {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Trades"
@@ -584,6 +600,7 @@ export default function Backtesting() {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Realized P&L"
@@ -644,14 +661,14 @@ export default function Backtesting() {
                           />
                         </label>
                       </td>
-                      <td>
+                      <td className="col-sticky">
                         <div className="strategy-name-cell">
                           <span className="strategy-name">{backtestRunNameLabel(run)}</span>
                         </div>
                       </td>
                       <td>{run.strategy_name || "—"}</td>
                       <td>{backtestRunTimeframeLabel(run)}</td>
-                      <td>{run.asset_class_label || "—"}</td>
+                      <td className="col-hide-sm">{run.asset_class_label || "—"}</td>
                       <td>
                         <span className={`research-tag strategy-backtest--${status}`}>
                           {backtestRunStatusLabel(status)}
@@ -672,14 +689,14 @@ export default function Backtesting() {
                           </div>
                         ) : null}
                       </td>
-                      <td className="settings-muted">
+                      <td className="settings-muted col-hide-sm">
                         {formatInstant(run.created_at, "short")}
                       </td>
-                      <td className="settings-muted">
+                      <td className="settings-muted col-hide-sm">
                         {formatInstant(run.finished_at, "short")}
                       </td>
                       <td>{formatTrades(run.stats.total_trades)}</td>
-                      <td>{formatWinRate(run.stats.win_rate)}</td>
+                      <td className="col-hide-sm">{formatWinRate(run.stats.win_rate)}</td>
                       <td className={pnlClass(run.stats.realized_pnl)}>
                         {formatPnl(run.stats.realized_pnl)}
                       </td>

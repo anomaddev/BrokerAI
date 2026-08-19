@@ -14,6 +14,7 @@ import {
   AnalysisRunHeaderSkeleton,
 } from "../components/analysis/AnalysisRunViewSkeleton";
 import ExploreCandleChart from "../components/explore/ExploreCandleChart";
+import MobileSheetAside from "../components/MobileSheetAside";
 import { ROUTES } from "../lib/routes";
 import { useGeneralSettings } from "../hooks/useGeneralSettings";
 import {
@@ -400,9 +401,9 @@ export default function StrategyAnalysisRunView() {
               />
             )}
           </div>
-          <aside className="analysis-run-panel-col">
+          <MobileSheetAside className="analysis-run-panel-col" fabLabel="Details">
             <AnalysisRunDetailPanel run={run} recency={recency} />
-          </aside>
+          </MobileSheetAside>
         </div>
       ) : null}
 

@@ -45,8 +45,12 @@ export default function CandleTimeTable({ summaries }: CandleTimeTableProps) {
         <table className="research-table research-table--clickable analysis-runs-table analysis-candle-table">
           <thead>
             <tr>
-              <th scope="col">Candle Time</th>
-              <th scope="col">Source</th>
+              <th scope="col" className="col-sticky">
+                Candle Time
+              </th>
+              <th scope="col" className="col-hide-sm">
+                Source
+              </th>
               <th scope="col">TFs</th>
               <th scope="col">Assets</th>
               <th scope="col">Strategies</th>
@@ -66,7 +70,7 @@ export default function CandleTimeTable({ summaries }: CandleTimeTableProps) {
                   className={rowClassName || undefined}
                   onClick={() => openCandle(summary)}
                 >
-                  <td>
+                  <td className="col-sticky">
                     <span className="analysis-candle-time-cell">
                       <span>{summary.label}</span>
                       {summary.exitMonitorTradeCount > 0 ? (
@@ -77,7 +81,7 @@ export default function CandleTimeTable({ summaries }: CandleTimeTableProps) {
                       ) : null}
                     </span>
                   </td>
-                  <td>
+                  <td className="col-hide-sm">
                     <SummaryTags items={summary.sources} />
                   </td>
                   <td>

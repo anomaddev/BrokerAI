@@ -112,12 +112,24 @@ type SortableHeaderProps = {
   activeKey: StrategySortKey;
   direction: SortDirection;
   onSort: (key: StrategySortKey) => void;
+  className?: string;
 };
 
-function SortableHeader({ label, sortKey, activeKey, direction, onSort }: SortableHeaderProps) {
+function SortableHeader({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+  className,
+}: SortableHeaderProps) {
   const active = activeKey === sortKey;
   return (
-    <th scope="col" aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+    <th
+      scope="col"
+      className={className}
+      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}
+    >
       <button
         type="button"
         className={`strategy-table-sort-btn${active ? " strategy-table-sort-btn--active" : ""}`}
@@ -662,6 +674,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-sticky"
                 />
                 <SortableHeader
                   label="Timeframe"
@@ -676,6 +689,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Asset class"
@@ -683,6 +697,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Status"
@@ -698,7 +713,9 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                   direction={sortDirection}
                   onSort={handleSort}
                 />
-                <th scope="col">Instruments</th>
+                <th scope="col" className="col-hide-sm">
+                  Instruments
+                </th>
                 <SortableHeader
                   label="Trades"
                   sortKey="trades"
@@ -712,6 +729,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Realized P&L"
@@ -726,6 +744,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
                 <SortableHeader
                   label="Last trade"
@@ -733,6 +752,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                   activeKey={sortKey}
                   direction={sortDirection}
                   onSort={handleSort}
+                  className="col-hide-sm"
                 />
               </tr>
             </thead>
@@ -786,7 +806,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                           />
                         </label>
                       </td>
-                      <td>
+                      <td className="col-sticky">
                         <div className="strategy-name-cell">
                           <span className="strategy-name">{strategy.name}</span>
                           {strategy.description ? (
@@ -795,7 +815,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                         </div>
                       </td>
                       <td>{strategyTimeframeLabel(strategy)}</td>
-                      <td>
+                      <td className="col-hide-sm">
                         <span
                           className={`research-tag strategy-type-tag strategy-type-tag--${
                             strategy.strategy_type === "preset" ? "template" : "custom"
@@ -804,7 +824,7 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                           {strategyTypeLabel(strategy)}
                         </span>
                       </td>
-                      <td>{strategy.asset_class_label}</td>
+                      <td className="col-hide-sm">{strategy.asset_class_label}</td>
                       <td>
                         <div className="strategy-status-cell">
                           <span
@@ -857,14 +877,14 @@ export default function Strategies({ variant = "standard" }: StrategiesProps) {
                           {backtestStatusLabel(backtestStatus)}
                         </span>
                       </td>
-                      <td className="settings-muted">{instrumentSummary(strategy)}</td>
+                      <td className="settings-muted col-hide-sm">{instrumentSummary(strategy)}</td>
                       <td>{strategy.stats.total_trades}</td>
-                      <td>{formatWinRate(strategy.stats.win_rate)}</td>
+                      <td className="col-hide-sm">{formatWinRate(strategy.stats.win_rate)}</td>
                       <td className={pnlClass(strategy.stats.realized_pnl)}>
                         {formatPnl(strategy.stats.realized_pnl)}
                       </td>
-                      <td>{strategy.stats.open_positions}</td>
-                      <td className="settings-muted">
+                      <td className="col-hide-sm">{strategy.stats.open_positions}</td>
+                      <td className="settings-muted col-hide-sm">
                         {formatInstant(strategy.stats.last_trade_at, "short")}
                       </td>
                     </tr>

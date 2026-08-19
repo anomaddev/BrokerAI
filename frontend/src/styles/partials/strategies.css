@@ -4434,6 +4434,52 @@
   }
 }
 
+@media (max-width: 768px) {
+  .trades-page {
+    gap: 0.75rem;
+  }
+
+  .trades-page-lead {
+    font-size: 0.875rem;
+  }
+
+  .trades-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.625rem;
+  }
+
+  .trades-toolbar-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .trades-toolbar-filters .research-select-wrap,
+  .trades-toolbar-filters .trades-status-select-wrap,
+  .trades-toolbar-filters .research-search {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .trades-toolbar-filters .trades-sync-btn {
+    margin-left: 0;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .trades-section {
+    max-height: calc(100dvh - 8.5rem);
+  }
+
+  .trades-table th,
+  .trades-table td {
+    padding: 0.45rem 0.5rem;
+    font-size: 0.75rem;
+  }
+}
+
 /* Strategy list redesign */
 .strategy-list-header {
   display: flex;
@@ -7176,5 +7222,48 @@
 
   .ai-strategy-log-feed-detail {
     padding-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .strategy-builder-panel-fab {
+    right: max(1rem, var(--safe-area-right));
+    bottom: max(4.75rem, calc(3.5rem + var(--safe-area-bottom)));
+  }
+
+  .analysis-run-header,
+  .backtest-run-header-row {
+    gap: 0.5rem;
+  }
+
+  .analysis-run-header-actions,
+  .backtest-run-actions {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .analysis-run-header-actions .btn,
+  .backtest-run-actions .btn {
+    font-size: 0.8125rem;
+  }
+
+  .trades-detail-header {
+    padding: 0.75rem;
+  }
+
+  .trades-detail-header .toggle-switch,
+  .trades-detail-utc-toggle {
+    /* keep UTC control reachable but compact */
+    transform: scale(0.92);
+    transform-origin: right center;
+  }
+
+  .backtest-overview-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .backtest-step-controls .btn {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.5rem;
   }
 }

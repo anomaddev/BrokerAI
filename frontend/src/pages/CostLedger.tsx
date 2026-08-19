@@ -61,11 +61,11 @@ export default function CostLedger() {
   }, [load]);
 
   return (
-    <div>
+    <div className="cost-ledger-page">
       <h1 className="page-title">Cost Ledger</h1>
 
-      <div className="settings-panel" style={{ marginBottom: "1rem" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+      <div className="settings-panel cost-ledger-panel">
+        <div className="cost-ledger-period-bar">
           {SUMMARY_PERIOD_OPTIONS.map((option) => (
             <button
               key={option.id}
@@ -76,9 +76,11 @@ export default function CostLedger() {
               {option.label}
             </button>
           ))}
-          <span className="settings-muted" style={{ marginLeft: "auto" }}>
+          <span className="settings-muted cost-ledger-period-total">
             Total: {formatCostUsd(summary?.grand_total_usd ?? 0)}
-            {summary?.totals?.[0]?.count != null ? ` (${summary.totals.reduce((n, t) => n + t.count, 0)} entries)` : ""}
+            {summary?.totals?.[0]?.count != null
+              ? ` (${summary.totals.reduce((n, t) => n + t.count, 0)} entries)`
+              : ""}
           </span>
         </div>
       </div>
@@ -94,23 +96,23 @@ export default function CostLedger() {
             <table className="research-table">
               <thead>
                 <tr>
-                  <th>Time</th>
+                  <th className="col-sticky">Time</th>
                   <th>Category</th>
                   <th>Cost</th>
-                  <th>Description</th>
-                  <th>Source</th>
-                  <th>Details</th>
+                  <th className="col-hide-sm">Description</th>
+                  <th className="col-hide-sm">Source</th>
+                  <th className="col-hide-sm">Details</th>
                 </tr>
               </thead>
               <tbody>
                 {entries.map((entry) => (
                   <tr key={entry.id}>
-                    <td className="settings-muted">{formatInstant(entry.occurred_at)}</td>
+                    <td className="settings-muted col-sticky">{formatInstant(entry.occurred_at)}</td>
                     <td>{costCategoryLabel(entry.category)}</td>
                     <td>{formatCostUsd(entry.amount_usd)}</td>
-                    <td>{entry.description}</td>
-                    <td className="settings-muted">{sourceLabel(entry.source)}</td>
-                    <td className="settings-muted">{costEntryDetail(entry) ?? "—"}</td>
+                    <td className="col-hide-sm">{entry.description}</td>
+                    <td className="settings-muted col-hide-sm">{sourceLabel(entry.source)}</td>
+                    <td className="settings-muted col-hide-sm">{costEntryDetail(entry) ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
